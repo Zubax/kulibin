@@ -1,0 +1,9 @@
+// FIR kernel for computing the convolution for the Adams-Moulton 4 (AM4) integrator.
+// See online_integrator.v for details.
+//
+// print('\n'.join(to_fixpoint_bin((1, 16), x) for x in [+9/24, +19/24, -5/24, +1/24]))
+
+00110000000000000   //  +9/24; the form is 0011(0)
+01100101010101011   // +19/24; the form is 01100(10), with optional rounding at the LSb
+11100101010101011   //  -5/24; the form is 11100(10), with optional rounding at the LSb
+00000101010101011   //  +1/24; the form is 00000(10), with optional rounding at the LSb

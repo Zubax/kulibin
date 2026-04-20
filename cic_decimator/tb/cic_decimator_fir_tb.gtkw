@@ -1,0 +1,119 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Thu Oct  2 12:17:21 2025
+[*]
+[dumpfile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/cic_decimator_fir_tb.vcd"
+[dumpfile_mtime] "Thu Oct  2 12:13:29 2025"
+[dumpfile_size] 10592500
+[savefile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/cic_decimator_fir_tb.gtkw"
+[timestart] 23200
+[size] 3556 1564
+[pos] -1 -1
+*-15.000000 392600 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] cic_decimator_fir_tb.
+[treeopen] cic_decimator_fir_tb.dut.
+[sst_width] 283
+[signals_width] 557
+[sst_expanded] 1
+[sst_vpaned_height] 417
+@28
+cic_decimator_fir_tb.rst
+cic_decimator_fir_tb.clk
+@200
+-
+-CICFIR input
+@8420
+[color] 1
+cic_decimator_fir_tb.sd_input
+@20000
+-
+-
+@28
+[color] 3
+cic_decimator_fir_tb.cicfir_enable
+cic_decimator_fir_tb.sd_mod
+@200
+-
+-CIC internal
+@28
+[color] 3
+cic_decimator_fir_tb.dut.cic.in_valid
+@420
+[color] 1
+cic_decimator_fir_tb.dut.cic.in_data[19:0]
+@28
+[color] 3
+cic_decimator_fir_tb.dut.cic.decimate
+[color] 3
+cic_decimator_fir_tb.dut.cic.out_valid
+@8420
+[color] 1
+cic_decimator_fir_tb.dut.cic.out_data[19:0]
+@28
+[color] 1
+cic_decimator_fir_tb.dut.cic.out_data[19:0]
+@200
+-
+-Cast internal
+@28
+[color] 3
+cic_decimator_fir_tb.dut.cast.in_valid
+@29
+[color] 1
+cic_decimator_fir_tb.dut.cast.in_data[19:0]
+@28
+[color] 3
+cic_decimator_fir_tb.dut.cast.s1_valid
+@29
+[color] 1
+cic_decimator_fir_tb.dut.cast.dsat[18:0]
+@28
+[color] 3
+cic_decimator_fir_tb.dut.cast.out_valid
+@29
+[color] 1
+cic_decimator_fir_tb.dut.cast.out_data[16:0]
+@200
+-
+-FIR internal
+@28
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.in_ready
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.in_valid
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.mul0_valid
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.mul1_valid
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.mul2_valid
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.acc_valid
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.out_valid
+@20000
+-
+-
+@28
+[color] 3
+cic_decimator_fir_tb.dut.u_fir.out_valid
+@420
+[color] 1
+cic_decimator_fir_tb.dut.u_fir.out_data[15:0]
+@200
+-
+-CICFIR output
+@28
+[color] 3
+cic_decimator_fir_tb.out_valid
+@8420
+[color] 1
+cic_decimator_fir_tb.out_data[15:0]
+@20000
+-
+-
+@420
+[color] 1
+cic_decimator_fir_tb.out_data[15:0]
+[pattern_trace] 1
+[pattern_trace] 0

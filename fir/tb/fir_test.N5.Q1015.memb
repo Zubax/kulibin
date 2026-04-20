@@ -1,0 +1,8 @@
+// A test FIR kernel used for verification of the fir module.
+// It is non-symmetric to ensure the indexing is done correctly by the filter.
+// https://chummersone.github.io/qformat.html#converter
+0100000000000000
+0000000000000000
+0001100110011010
+0010011001100110
+1001001000110100

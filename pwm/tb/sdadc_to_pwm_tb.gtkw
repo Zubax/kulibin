@@ -1,0 +1,88 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Thu Oct  9 13:10:56 2025
+[*]
+[dumpfile] "/home/pavel/test/waveform_amplifier/hdl/sdadc_to_pwm_tb.vcd"
+[dumpfile_mtime] "Thu Oct  9 13:10:34 2025"
+[dumpfile_size] 17424717
+[savefile] "/home/pavel/test/waveform_amplifier/hdl/sdadc_to_pwm_tb.gtkw"
+[timestart] 0
+[size] 3798 1210
+[pos] -1 -1
+*-14.591114 92300 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] sdadc_to_pwm_tb.
+[treeopen] sdadc_to_pwm_tb.dut.
+[treeopen] sdadc_to_pwm_tb.dut.scaled_cast.g_cast.
+[sst_width] 283
+[signals_width] 404
+[sst_expanded] 1
+[sst_vpaned_height] 343
+@28
+sdadc_to_pwm_tb.rst
+sdadc_to_pwm_tb.clk
+@200
+-
+-ΔΣ input bitstream
+@28
+[color] 6
+sdadc_to_pwm_tb.sd_enable
+@8028
+[color] 1
+sdadc_to_pwm_tb.sd_value
+@20000
+-
+-
+@200
+-ΔΣ to PCM stage
+@28
+sdadc_to_pwm_tb.dut.in_sd_bit_valid
+sdadc_to_pwm_tb.dut.in_sd_bit
+@25
+[color] 5
+sdadc_to_pwm_tb.dut.cicfir.dec_cnt[6:0]
+@28
+[color] 6
+sdadc_to_pwm_tb.dut.out_pcm_valid
+@8420
+[color] 2
+sdadc_to_pwm_tb.dut.out_pcm[11:0]
+@20000
+-
+-
+@200
+-PCM scaling to PWM range
+@28
+[color] 6
+sdadc_to_pwm_tb.dut.scaled_signed_valid
+@8420
+[color] 2
+sdadc_to_pwm_tb.dut.scaled_signed[11:0]
+@20000
+-
+-
+@28
+[color] 6
+sdadc_to_pwm_tb.dut.scaled_unsigned_valid
+@8024
+sdadc_to_pwm_tb.dut.scaled_unsigned[11:0]
+@20000
+-
+-
+@200
+-PWM outputs
+@28
+[color] 6
+sdadc_to_pwm_tb.out_enable
+[color] 6
+sdadc_to_pwm_tb.dut.pwm_gen.at_bot
+[color] 6
+sdadc_to_pwm_tb.dut.pwm_gen.at_top
+sdadc_to_pwm_tb.dut.pwm_ref
+sdadc_to_pwm_tb.pwm_pos
+sdadc_to_pwm_tb.pwm_neg
+@200
+-Diagnostics
+@28
+sdadc_to_pwm_tb.led[7:0]
+[pattern_trace] 1
+[pattern_trace] 0

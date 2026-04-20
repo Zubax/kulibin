@@ -1,0 +1,56 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Mon Sep 22 19:34:28 2025
+[*]
+[dumpfile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/async_parallel_bus_slave_tb.vcd"
+[dumpfile_mtime] "Mon Sep 22 19:30:31 2025"
+[dumpfile_size] 3581
+[savefile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/async_parallel_bus_slave_tb.gtkw"
+[timestart] 0
+[size] 2861 1200
+[pos] 2246 100
+*-4.740455 465 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] async_parallel_bus_slave_tb.
+[sst_width] 283
+[signals_width] 303
+[sst_expanded] 1
+[sst_vpaned_height] 692
+@28
+async_parallel_bus_slave_tb.rst
+async_parallel_bus_slave_tb.apb_slave.clk
+@200
+-Internal bus
+@28
+[color] 1
+async_parallel_bus_slave_tb.req
+[color] 1
+async_parallel_bus_slave_tb.we
+[color] 1
+async_parallel_bus_slave_tb.ack
+[color] 6
+async_parallel_bus_slave_tb.apb_slave.addr[2:0]
+@22
+[color] 7
+async_parallel_bus_slave_tb.apb_slave.data_i[7:0]
+[color] 7
+async_parallel_bus_slave_tb.apb_slave.data_o[7:0]
+@200
+-External bus
+@28
+[color] 1
+async_parallel_bus_slave_tb.ebus_cs_n
+[color] 1
+async_parallel_bus_slave_tb.ebus_rd_n
+[color] 1
+async_parallel_bus_slave_tb.ebus_wr_n
+[color] 6
+async_parallel_bus_slave_tb.apb_slave.ebus_addr[2:0]
+@22
+[color] 7
+async_parallel_bus_slave_tb.apb_slave.ebus_data[7:0]
+@200
+-Misc introspection
+@24
+async_parallel_bus_slave_tb.apb_slave.state[2:0]
+[pattern_trace] 1
+[pattern_trace] 0

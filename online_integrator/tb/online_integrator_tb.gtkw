@@ -1,0 +1,79 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Mon Oct 13 18:54:50 2025
+[*]
+[dumpfile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/online_integrator_tb.vcd"
+[dumpfile_mtime] "Mon Oct 13 18:52:23 2025"
+[dumpfile_size] 1498921212
+[savefile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/online_integrator_tb.gtkw"
+[timestart] 6340000
+[size] 3446 1084
+[pos] -1 -1
+*-23.000000 32210500 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] online_integrator_tb.
+[sst_width] 283
+[signals_width] 378
+[sst_expanded] 1
+[sst_vpaned_height] 299
+@28
+online_integrator_tb.rst
+online_integrator_tb.clk
+@29
+[color] 6
+online_integrator_tb.enable
+@8420
+[color] 3
+online_integrator_tb.dxdt[15:0]
+@20000
+-
+-
+@200
+-Backward Euler
+@28
+online_integrator_tb.beuler_ready
+[color] 7
+online_integrator_tb.beuler_valid
+@8420
+[color] 3
+online_integrator_tb.beuler_x[31:0]
+@20000
+-
+-
+@200
+-Trapezoidal
+@28
+online_integrator_tb.trapezoidal_ready
+[color] 7
+online_integrator_tb.trapezoidal_valid
+@8420
+[color] 3
+online_integrator_tb.trapezoidal_x[31:0]
+@20000
+-
+-
+@200
+-AM4 17-bit
+@28
+online_integrator_tb.am4_17_ready
+[color] 7
+online_integrator_tb.am4_17_valid
+@8420
+[color] 3
+online_integrator_tb.am4_17_x[31:0]
+@20000
+-
+-
+@200
+-AM4 24-bit
+@28
+online_integrator_tb.am4_24_ready
+[color] 7
+online_integrator_tb.am4_24_valid
+@8420
+[color] 3
+online_integrator_tb.am4_24_x[31:0]
+@20000
+-
+-
+[pattern_trace] 1
+[pattern_trace] 0

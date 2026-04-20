@@ -1,0 +1,55 @@
+[*]
+[*] GTKWave Analyzer v3.3.104 (w)1999-2020 BSI
+[*] Mon Oct 13 14:51:44 2025
+[*]
+[dumpfile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/iir1_tb.vcd"
+[dumpfile_mtime] "Mon Oct 13 14:50:21 2025"
+[dumpfile_size] 78662822
+[savefile] "/home/pavel/test/lattice-machxo-stm32-sdadc-demo/fpga/hdl/iir1_tb.gtkw"
+[timestart] 0
+[size] 3277 1286
+[pos] -1 -1
+*-22.000000 35480000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 283
+[signals_width] 342
+[sst_expanded] 1
+[sst_vpaned_height] 369
+@28
+iir1_tb.rst
+iir1_tb.clk
+[color] 6
+iir1_tb.in_valid
+@8420
+[color] 1
+iir1_tb.in_data[15:0]
+@20000
+-
+-
+@200
+-LPF
+@28
+[color] 6
+iir1_tb.in_lpf_ready
+[color] 6
+iir1_tb.out_lpf_valid
+@8420
+[color] 1
+iir1_tb.out_lpf_data[15:0]
+@20000
+-
+-
+@200
+-HPF
+@28
+[color] 6
+iir1_tb.in_hpf_ready
+[color] 6
+iir1_tb.out_hpf_valid
+@8420
+[color] 1
+iir1_tb.out_hpf_data[15:0]
+@20000
+-
+-
+[pattern_trace] 1
+[pattern_trace] 0
