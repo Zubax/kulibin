@@ -1,0 +1,35 @@
+CAPI=2:
+name: zubax:kulibin:sdadc_to_pwm:0
+description: Sigma-delta ADC to PWM converter; serves as an integration example for the lower-level modules.
+
+filesets:
+  rtl:
+    depend:
+      - zubax:kulibin:numeric
+      - zubax:kulibin:logic
+      - zubax:kulibin:cic_decimator
+      - zubax:kulibin:fir
+      - zubax:kulibin:pwm
+    files:
+      - hdl/sdadc_to_pwm.v
+    file_type: verilogSource
+
+  tb:
+    files:
+      - tb/sdadc_to_pwm_tb.v:
+          file_type: verilogSource
+      - tb/62eab2361fc4dbf9.fir.memb:
+          file_type: user
+          copyto: 62eab2361fc4dbf9.fir.memb
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: sdadc_to_pwm_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

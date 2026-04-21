@@ -1,0 +1,39 @@
+CAPI=2:
+name: zubax:kulibin:logic:0
+description: Logic primitives (freqdivc, deadtime_complementer, reset_synchronizer)
+
+filesets:
+  rtl:
+    files:
+      - hdl/deadtime_complementer.v
+      - hdl/freqdivc.v
+      - hdl/reset_synchronizer.v
+    file_type: verilogSource
+
+  tb_freqdivc:
+    files: [tb/freqdivc_tb.v]
+    file_type: verilogSource
+
+  tb_deadtime_complementer:
+    files: [tb/deadtime_complementer_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_freqdivc:
+    filesets: [rtl, tb_freqdivc]
+    toplevel: freqdivc_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_deadtime_complementer:
+    filesets: [rtl, tb_deadtime_complementer]
+    toplevel: deadtime_complementer_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

@@ -1,0 +1,56 @@
+CAPI=2:
+name: zubax:kulibin:cic_decimator:0
+description: CIC decimator and CIC+FIR cascade
+
+filesets:
+  rtl:
+    depend: [zubax:kulibin:numeric, zubax:kulibin:fir]
+    files:
+      - hdl/cic_comb_m1.v
+      - hdl/cic_decimator.v
+      - hdl/cic_decimator_fir.v
+    file_type: verilogSource
+
+  tb_comb_m1:
+    files: [tb/cic_comb_m1_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator:
+    files: [tb/cic_decimator_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_fir:
+    files:
+      - tb/cic_decimator_fir_tb.v:
+          file_type: verilogSource
+      - tb/62eab2361fc4dbf9.fir.memb:
+          file_type: user
+          copyto: 62eab2361fc4dbf9.fir.memb
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_comb_m1:
+    filesets: [rtl, tb_comb_m1]
+    toplevel: cic_comb_m1_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator:
+    filesets: [rtl, tb_cic_decimator]
+    toplevel: cic_decimator_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_fir:
+    filesets: [rtl, tb_cic_decimator_fir]
+    toplevel: cic_decimator_fir_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

@@ -1,0 +1,32 @@
+CAPI=2:
+name: zubax:kulibin:online_integrator:0
+description: Online integrator with FIR compensation
+
+filesets:
+  rtl:
+    depend: [zubax:kulibin:numeric, zubax:kulibin:fir]
+    files:
+      - hdl/online_integrator.v:
+          file_type: verilogSource
+      - hdl/online_integrator.am4.q1.16.fir.memb:
+          file_type: user
+          copyto: online_integrator.am4.q1.16.fir.memb
+      - hdl/online_integrator.am4.q1.23.fir.memb:
+          file_type: user
+          copyto: online_integrator.am4.q1.23.fir.memb
+
+  tb:
+    files: [tb/online_integrator_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: online_integrator_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

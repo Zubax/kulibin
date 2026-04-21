@@ -1,0 +1,30 @@
+CAPI=2:
+name: zubax:kulibin:fir:0
+description: Fixpoint FIR filter
+
+filesets:
+  rtl:
+    depend: [zubax:kulibin:numeric]
+    files:
+      - hdl/fir.v
+    file_type: verilogSource
+
+  tb:
+    files:
+      - tb/fir_tb.v:
+          file_type: verilogSource
+      - tb/fir_test.N5.Q1015.memb:
+          file_type: user
+          copyto: fir_test.N5.Q1015.memb
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: fir_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

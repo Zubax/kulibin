@@ -5,9 +5,15 @@ A collection of reusable HDL modules.
 Python scripts are provided for analysis and parameter derivation.
 They commonly require NumPy, SciPy, SymPy, matplotlib.
 
-## TODO
+Higher-level modules serve as usage examples for the lower-level ones;
+e.g., there is a sigma-delta ADC to PWM conversion module that aggregates a large number of submodules.
 
-Integrate a verification suite that runs in CI.
+## Verification
 
-The FIR tests are currently dependent on generated kernel coefficient files `*.memb`,
-which is done in the Python scripts. These need to be invoked during verification.
+Each module is wrapped in a FuseSoC `.core` file. All testbenches are run locally with:
+
+    make verify
+
+which invokes `fusesoc run --target=sim[_<name>] zubax:kulibin:<module>` for every registered target.
+
+See CI files in `.github/`.

@@ -1,0 +1,25 @@
+CAPI=2:
+name: zubax:kulibin:iir:0
+description: First-order IIR low-pass and high-pass filters
+
+filesets:
+  rtl:
+    depend: [zubax:kulibin:numeric]
+    files:
+      - hdl/iir1_lpf.v
+      - hdl/iir1_hpf.v
+    file_type: verilogSource
+
+  tb:
+    files: [tb/iir1_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: iir1_tb
+    default_tool: icarus
+    tools: {icarus: {iverilog_options: [-Wall, -Wno-timescale]}}
