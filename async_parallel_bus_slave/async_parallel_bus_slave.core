@@ -1,0 +1,37 @@
+CAPI=2:
+name: zubax:kulibin:async_parallel_bus_slave:0
+description: Asynchronous parallel bus slave interface
+
+filesets:
+  rtl:
+    files:
+      - hdl/async_parallel_bus_slave.v
+    file_type: verilogSource
+
+  tb_unit:
+    files: [tb/async_parallel_bus_slave_tb.v]
+    file_type: verilogSource
+
+  tb_integration:
+    files: [tb/async_parallel_bus_slave_integration_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_unit:
+    filesets: [rtl, tb_unit]
+    toplevel: async_parallel_bus_slave_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_integration:
+    filesets: [rtl, tb_integration]
+    toplevel: async_parallel_bus_slave_integration_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

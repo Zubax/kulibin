@@ -1,13 +1,30 @@
-# Kulibin HDL module library
+<div align="center">
 
-A collection of reusable HDL modules.
+<img src="https://zubax.com/static/assets/logos/zubax-logo-modern.svg" width="130px">
 
-Python scripts are provided for analysis and parameter derivation.
-They commonly require NumPy, SciPy, SymPy, matplotlib.
+<h1>Kulibin HDL library</h1>
 
-## TODO
+_reusable HDL modules_
 
-Integrate a verification suite that runs in CI.
+[![verify](https://github.com/Zubax/kulibin/actions/workflows/verify.yml/badge.svg)](https://github.com/Zubax/kulibin/actions/workflows/verify.yml)
+[![Website](https://img.shields.io/badge/website-zubax.com-black?color=e00000)](https://zubax.com/)
+[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?logo=discourse&color=e00000)](https://forum.zubax.com)
 
-The FIR tests are currently dependent on generated kernel coefficient files `*.memb`,
-which is done in the Python scripts. These need to be invoked during verification.
+</div>
+
+---
+
+Kulibin is a loose collection of reusable HDL modules.
+Auxiliary Python scripts are provided for analysis and parameter derivation;
+they commonly require NumPy, SciPy, SymPy, matplotlib.
+Higher-level modules serve as usage examples for the lower-level ones.
+
+## Verification
+
+Each module is wrapped in a FuseSoC `.core` file. All testbenches are run locally with:
+
+    make verify
+
+which invokes `fusesoc run --target=sim[_<name>] zubax:kulibin:<module>` for every registered target.
+
+See CI files in `.github/`.

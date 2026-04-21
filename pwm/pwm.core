@@ -1,0 +1,21 @@
+CAPI=2:
+name: zubax:kulibin:pwm:0
+description: PWM generators (up-down PWM, sigma-delta ADC to PWM)
+
+filesets:
+  rtl:
+    files:
+      - hdl/up_down_pwm.v
+    file_type: verilogSource
+
+  tb_up_down_pwm: { files: [tb/up_down_pwm_tb.v], file_type: verilogSource }
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_up_down_pwm:
+    filesets: [rtl, tb_up_down_pwm]
+    toplevel: up_down_pwm_tb
+    default_tool: icarus
+    tools: {icarus: {iverilog_options: [-Wall, -Wno-timescale]}}

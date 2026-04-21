@@ -86,7 +86,8 @@ module online_integrator#(
     // We need an intermediate register step because the rounding and subtraction form a very long combinational path.
     localparam WL = WX - LEAK;  // Width after the leak shift
     wire signed [WL-1:0] leak_;
-    round_signed#(WX, WL) round_leak (integrator, leak_);  // computes (integrator>>>LEAK) with rounding
+    // Computes (integrator>>>LEAK) with rounding.
+    round_signed#(.WIN(WX), .WOUT(WL)) round_leak (.din(integrator), .dout(leak_));
     reg  signed [WL-1:0] leak_d;
     wire signed [WX-1:0] leaked_next = integrator - $signed({{LEAK{leak_d[WL-1]}}, leak_d});
 
@@ -172,9 +173,9 @@ module online_integrator#(
             reg [1:0] state;
             reg  signed [WIN-1:0] x[0:1];
             wire signed [WIN-1:0] addend_next;  // (x[n]+x[n-1])/2 with rounding-to-nearest, ties-to-even
-            round_signed#(WIN+1, WIN) avg (
-                $signed({x[0][WIN-1], x[0]}) + $signed({x[1][WIN-1], x[1]}),
-                addend_next
+            round_signed#(.WIN(WIN+1), .WOUT(WIN)) avg (
+                .din($signed({x[0][WIN-1], x[0]}) + $signed({x[1][WIN-1], x[1]})),
+                .dout(addend_next)
             );
             reg  signed [WXIN-1:0] addend;
             wire signed [WX-1:0] next = integrator + $signed({{(WX-WXIN){addend[WXIN-1]}}, addend});
@@ -208,6 +209,7 @@ module online_integrator#(
                             leak_d <= leak_;
                             state <= 0;
                         end
+                        default: state <= 0;
                     endcase
                 end
             end

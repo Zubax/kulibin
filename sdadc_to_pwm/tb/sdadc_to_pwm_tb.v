@@ -70,6 +70,10 @@ module sdadc_to_pwm_tb;
     );
     wire [7:0] led = $unsigned(pcm[W-1:W-8]);
     localparam PWM_TOP = RCIC * FREQ_RATIO;
+    localparam PCM_PERIOD_CLK = RCIC * FREQ_RATIO;
+    localparam PWM_PERIOD_CLK = 2 * PWM_TOP;
+    localparam PCM_UPDATES_PER_PWM_PERIOD = PWM_PERIOD_CLK / PCM_PERIOD_CLK;
+    real PCM_FREQ = $itor(CLK_HZ) / $itor(PCM_PERIOD_CLK);
     real PWM_FREQ = $itor(CLK_HZ) / $itor(2 * PWM_TOP);
 
     // Simple no-shoot-through invariant check at every cycle.
@@ -91,9 +95,12 @@ module sdadc_to_pwm_tb;
         $dumpfile("sdadc_to_pwm_tb.vcd");
         $dumpvars();
 
+        `REQUIRE(PWM_PERIOD_CLK == 2 * PCM_PERIOD_CLK);
         $display("Expected PWM top: %d", PWM_TOP);
-        $display("PWM frequency: %f Hz", PWM_FREQ);
-        $display("PWM period: %f us", 1e6 / PWM_FREQ);
+        $display("PCM update frequency: %f Hz", PCM_FREQ);
+        $display("PWM carrier frequency: %f Hz", PWM_FREQ);
+        $display("PCM updates per PWM period: %0d", PCM_UPDATES_PER_PWM_PERIOD);
+        $display("PWM carrier period: %f us", 1e6 / PWM_FREQ);
 
         rst = 1;
         repeat(2) @(negedge clk);

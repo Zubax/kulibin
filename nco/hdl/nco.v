@@ -11,7 +11,7 @@
 /// The phase of the output signal can be adjusted using phase_control_word, which is a value in the range
 /// [0, 2**PHASE_ACCUMULATOR_WIDTH) that maps to [0, 2 pi).
 ///
-/// Both of the control words can be changed arbitrarily; changes take effect in the next cycle.
+/// Both of the control words can be changed at any moment.
 
 module nco #(
     parameter OUTPUT_WIDTH = 8,                 ///< Larger values reduce phase noise.

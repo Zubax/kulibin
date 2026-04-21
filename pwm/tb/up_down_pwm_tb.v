@@ -7,6 +7,8 @@ module up_down_pwm_tb;
     always #1 clk = !clk;
 
     reg rst = 0;
+    reg [7:0] top     = 8;
+    reg [7:0] compare = 4;
     initial begin
         # 1     rst = 1;
         # 2     rst = 0;
@@ -34,8 +36,6 @@ module up_down_pwm_tb;
         # 1500 $finish;
     end
 
-    reg [7:0] top     = 8;
-    reg [7:0] compare = 4;
     wire at_top;
     wire at_bot;
     wire out;

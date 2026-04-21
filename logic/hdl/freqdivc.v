@@ -22,11 +22,19 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
     output wire out
 );
     generate
-        if (N <= 1) begin
+        if (N <= 1) begin : g_passthrough
             // DEGENERATE CASE --- NO DIVISION
-            assign out = clk & enable;
+            // The enable is sampled while clk is low so that enabling while clk is already high cannot create an
+            // immediate output edge. Reset clears the sampled gate asynchronously; reset assertion may truncate a
+            // high pulse, while reset release and enable changes take effect through the low-phase sample point.
+            reg sampled_gate;
+            assign out = clk & sampled_gate;
+            always @(negedge clk or posedge rst) begin
+                if (rst) sampled_gate <= 1'b0;
+                else sampled_gate <= enable;
+            end
 
-        end else if ((N & (N-1)) == 0) begin
+        end else if ((N & (N-1)) == 0) begin : g_pow2
             // POWER OF 2 DIVISOR CASE
             reg [$clog2(N)-1:0] cnt;
             assign out = cnt[$clog2(N)-1];
@@ -35,7 +43,7 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
                 else cnt <= enable ? (cnt - 1) : 0;
             end
 
-        end else if (N[0] === 0) begin
+        end else if (N[0] === 0) begin : g_even
             // EVEN DIVISOR CASE except powers of 2
             reg [$clog2(N/2)-1:0] cnt;
             reg state;
@@ -59,7 +67,7 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
                 end
             end
 
-        end else begin
+        end else begin : g_odd
             // ODD DIVISOR CASE (N>=3)
             reg state;
             reg [$clog2((N+1)/2)-1:0] cnt;

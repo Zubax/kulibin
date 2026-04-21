@@ -1,0 +1,65 @@
+CAPI=2:
+name: zubax:kulibin:numeric:0
+description: Numeric utility modules (casts, rounding, saturation, q-format, etc.)
+
+filesets:
+  rtl:
+    files:
+      - hdl/q.vh:
+          is_include_file: true
+      - hdl/cast_signed.v
+      - hdl/cast_signed_p.v
+      - hdl/q_cast.v
+      - hdl/q_cast_p.v
+      - hdl/round_signed.v
+      - hdl/saturate_signed.v
+    file_type: verilogSource
+
+  tb_cast_signed:
+    files: [tb/cast_signed_tb.v]
+    file_type: verilogSource
+  tb_cast_signed_p:
+    files: [tb/cast_signed_p_tb.v]
+    file_type: verilogSource
+  tb_q_cast_p:
+    files: [tb/q_cast_p_tb.v]
+    file_type: verilogSource
+  tb_round_signed:
+    files: [tb/round_signed_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_cast_signed:
+    filesets: [rtl, tb_cast_signed]
+    toplevel: cast_signed_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cast_signed_p:
+    filesets: [rtl, tb_cast_signed_p]
+    toplevel: cast_signed_p_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_q_cast_p:
+    filesets: [rtl, tb_q_cast_p]
+    toplevel: q_cast_p_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_round_signed:
+    filesets: [rtl, tb_round_signed]
+    toplevel: round_signed_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

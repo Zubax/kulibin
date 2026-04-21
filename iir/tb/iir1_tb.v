@@ -55,8 +55,29 @@ module iir1_tb;
         .bias()  // unused
     );
 
+    // Dedicated HPF instance for checking input/output sample alignment.
+    reg glitch_valid = 0;
+    reg signed [7:0] glitch_in = 0;
+    wire glitch_ready;
+    wire glitch_out_valid;
+    wire signed [7:0] glitch_out_data;
+    iir1_hpf#(
+        .W(8),
+        .K(2)
+    ) glitch_hpf (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(glitch_valid),
+        .in(glitch_in),
+        .in_ready(glitch_ready),
+        .out_valid(glitch_out_valid),
+        .out(glitch_out_data),
+        .bias()
+    );
+
     integer idx;
     integer sine_freq;
+    integer wait_count;
     localparam PI = 3.141592653589793;
     localparam PI2 = 2.0 * PI;
     initial begin
@@ -66,6 +87,19 @@ module iir1_tb;
         repeat (2) @(negedge clk);
         rst = 0;
         repeat (2) @(negedge clk);
+
+        // The HPF output must use the accepted input sample, not the live input bus later in the LPF pipeline.
+        `REQUIRE(glitch_ready);
+        glitch_in = 8'sd64;
+        glitch_valid = 1;
+        @(negedge clk);
+        glitch_valid = 0;
+        glitch_in = -8'sd64;
+        for (wait_count = 0; (wait_count < 20) && !glitch_out_valid; wait_count = wait_count + 1) begin
+            @(negedge clk);
+        end
+        `REQUIRE(glitch_out_valid);
+        `REQUIRE(glitch_out_data === 8'sd48);
 
         // Sinewave with zero DC bias.
         sine_freq = 3000;
