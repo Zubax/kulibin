@@ -45,8 +45,24 @@ module freqdivc_tb;
     initial begin
         enable = 1;
         rst = 1;
-        repeat (2) @(negedge clk);
+
+        @(posedge clk);
+        #1 `REQUIRE(out1 === 1'b0);  // Reset holds the N=1 gated output low even with clk and enable high.
+
+        @(negedge clk);
+        enable = 0;
+        @(negedge clk);
         rst = 0;
+
+        @(posedge clk);
+        #1 `REQUIRE(out1 === 1'b0);
+        enable = 1;                  // Enable while clk is already high.
+        #1 `REQUIRE(out1 === 1'b0);  // This must not create an immediate output edge.
+        @(negedge clk);
+        #1 `REQUIRE(out1 === 1'b0);
+        @(posedge clk);
+        #1 `REQUIRE(out1 === 1'b1);  // The first enabled output high begins on an input clock posedge.
+
         @(negedge clk);
         #300
         enable = 0;

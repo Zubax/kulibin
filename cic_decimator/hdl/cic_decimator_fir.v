@@ -111,8 +111,9 @@ module cic_decimator_fir#(
     input wire rst,
 
     /// Data input. The data is accepted when in_valid is asserted.
-    /// The in_valid rate divided by RCIC, aka the output rate, expressed in clk cycles, must not exceed the
-    /// FIR computation delay, which is a little more than NFIR clk cycles; otherwise, samples will be skipped.
+    /// The internal FIR is intentionally driven without backpressure, so decimated samples must be spaced no
+    /// shorter than the FIR acceptance interval. For the current FIR this is about NFIR+2 clk cycles.
+    /// Samples presented while the FIR is busy are skipped by design.
     /// For single-bit inputs (WIN=1), the in_data is simply the sign: 1==>-1, 0==>+1.
     input wire in_valid,
     input wire signed [WIN-1:0] in_data,

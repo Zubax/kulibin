@@ -34,6 +34,12 @@ module cic_decimator_fir_tb;
     wire clk = count_200MHz[0];
     reg rst = 0;
 
+    localparam DUT_RCIC = 64;
+    localparam DUT_NFIR = 12;
+    localparam SD_INPUT_PERIOD_CLK = 10;
+    localparam DECIMATED_SAMPLE_PERIOD_CLK = DUT_RCIC * SD_INPUT_PERIOD_CLK;
+    localparam FIR_ACCEPTANCE_INTERVAL_CLK = DUT_NFIR + 2;
+
     reg sd_enable = 0;
     reg cicfir_enable = 0;
     always @(negedge clk) begin
@@ -51,9 +57,9 @@ module cic_decimator_fir_tb;
     wire signed [15:0] out_data;
     cic_decimator_fir#(
         .WIN(1),    // sign bit only
-        .RCIC(64),  // 20 MHz in / 64 = 312.5 kHz out
+        .RCIC(DUT_RCIC),  // 20 MHz in / 64 = 312.5 kHz out
         .NCIC(3),
-        .NFIR(12),  // low order reduces the group delay and the logic pipeline delay
+        .NFIR(DUT_NFIR),  // low order reduces the group delay and the logic pipeline delay
         .WOUT(16),  // mapped into [-32768,+32767] full scale, aka q1.15 [-1,+1)
         .WK(17),    // q1.16 FIR coefficients
         .KERNEL("62eab2361fc4dbf9.fir.memb")
@@ -71,6 +77,9 @@ module cic_decimator_fir_tb;
     localparam PI = 3.141592653589793;
     localparam PI2 = 2.0 * PI;
     initial begin
+        // The default decimated-sample spacing is safely longer than the internal FIR acceptance interval.
+        `REQUIRE(DECIMATED_SAMPLE_PERIOD_CLK >= FIR_ACCEPTANCE_INTERVAL_CLK);
+
         rst = 1;
         repeat (2) @(negedge clk);
         rst = 0;

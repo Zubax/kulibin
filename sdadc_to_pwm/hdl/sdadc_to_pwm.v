@@ -1,6 +1,7 @@
 /// Samples a sigma-delta modulator bitstream and generates a matching center-aligned PWM signal
 /// with complementary outputs with dead time.
-/// The PWM frequency equals the ADC PCM stream rate.
+/// The PWM carrier frequency is half the ADC PCM sample/update rate. The up/down PWM shadow-register
+/// load points provide two compare updates per PWM period, matching the PCM update cadence.
 
 `default_nettype none
 
@@ -71,8 +72,7 @@ module sdadc_to_pwm#(
     //     f_pwm = f_clk / (2 * pwm_top)
     //     f_sd  = f_clk / f_ratio_clk_sd
     //     f_pcm = f_sd / R_cic
-    //     # The PWM frequency can be either equal to PCM or half of that.
-    //     # This is because the shadow registers are reloaded twice per PWM period.
+    //     # The PWM carrier is half the PCM update rate. The shadow registers can be reloaded twice per PWM period.
     //     f_pwm_mult = sp.Rational(1, 2)
     //     sp.solve(sp.Eq(f_pwm, f_pwm_mult * f_pcm), pwm_top, manual=True)
     //

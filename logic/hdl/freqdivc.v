@@ -24,7 +24,15 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
     generate
         if (N <= 1) begin : g_passthrough
             // DEGENERATE CASE --- NO DIVISION
-            assign out = clk & enable;
+            // The enable is sampled while clk is low so that enabling while clk is already high cannot create an
+            // immediate output edge. Reset clears the sampled gate asynchronously; reset assertion may truncate a
+            // high pulse, while reset release and enable changes take effect through the low-phase sample point.
+            reg sampled_gate;
+            assign out = clk & sampled_gate;
+            always @(negedge clk or posedge rst) begin
+                if (rst) sampled_gate <= 1'b0;
+                else sampled_gate <= enable;
+            end
 
         end else if ((N & (N-1)) == 0) begin : g_pow2
             // POWER OF 2 DIVISOR CASE
