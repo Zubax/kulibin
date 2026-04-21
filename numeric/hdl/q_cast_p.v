@@ -1,6 +1,7 @@
 /// Converts a signed fixed-point number from one Q format to another by rounding, saturation, and/or extension,
-/// pipelined into 2 clock cycles with the throughput of one value per cycle (no wait states).
-/// If the output format requires neither saturation nor rounding, the pipeline is shortened to one cycle.
+/// pipelined into 1 or 2 clock cycles with the throughput of one value per cycle (no wait states).
+/// If the output format requires only one of saturation or rounding, the pipeline is 1 cycle.
+/// If the output format requires both saturation and rounding, the pipeline is 2 cycles.
 ///
 /// Saturation is used when Q_WINT(QOUT) < Q_WINT(QIN).
 /// Rounding-to-nearest, ties-to-even is used when Q_WFRC(QOUT) < Q_WFRC(QIN).
@@ -28,7 +29,7 @@ module q_cast_p#(parameter QIN = `Q_DEF(1, 31), parameter QOUT = QIN)(
     localparam LSB = `Q_WFRC(QIN)-`Q_WFRC(QOUT);
     generate
         if ((MSB > 0) || (LSB > 0)) begin : g_cast
-            cast_signed_p2#(.WIN(`Q_WALL(QIN)), .MSB(MSB), .LSB(LSB)) cast (
+            cast_signed_p#(.WIN(`Q_WALL(QIN)), .MSB(MSB), .LSB(LSB)) cast (
                 .clk(clk),
                 .rst(rst),
                 .in_valid(in_valid),

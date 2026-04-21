@@ -168,7 +168,7 @@ module cic_decimator_fir#(
     localparam WF = (WSAT < WFIR) ? WSAT : WFIR;  // Avoid extension, it adds no new information.
     wire cast_out_valid;
     wire signed [(WF-1):0] cast_out;
-    cast_signed_p2#(
+    cast_signed_p#(
         .WIN(WCIC),
         .MSB(WCIC-WSAT),
         .LSB(WSAT-WF)

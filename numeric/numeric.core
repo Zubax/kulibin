@@ -9,7 +9,6 @@ filesets:
           is_include_file: true
       - hdl/cast_signed.v
       - hdl/cast_signed_p.v
-      - hdl/cast_signed_p2.v
       - hdl/q_cast.v
       - hdl/q_cast_p.v
       - hdl/round_signed.v
@@ -22,9 +21,6 @@ filesets:
     file_type: verilogSource
   tb_cast_signed_p:
     files: [tb/cast_signed_p_tb.v]
-    file_type: verilogSource
-  tb_cast_signed_p2:
-    files: [tb/cast_signed_p2_tb.v]
     file_type: verilogSource
   tb_q_cast_p:
     files: [tb/q_cast_p_tb.v]
@@ -51,14 +47,6 @@ targets:
   sim_cast_signed_p:
     filesets: [rtl, tb_cast_signed_p]
     toplevel: cast_signed_p_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_cast_signed_p2:
-    filesets: [rtl, tb_cast_signed_p2]
-    toplevel: cast_signed_p2_tb
     default_tool: icarus
     tools:
       icarus:

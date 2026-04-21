@@ -24,6 +24,17 @@ module q_cast_p_tb;
         .out(out_narrow)
     );
 
+    wire              out_round_valid;
+    wire signed [4:0] out_round;
+    q_cast_p#(.QIN(3005), .QOUT(3002)) cast_round(
+        .clk(clk),
+        .rst(rst),
+        .in_valid(in_valid),
+        .in(in_data),
+        .out_valid(out_round_valid),
+        .out(out_round)
+    );
+
     wire               out_wide_valid;
     wire signed [11:0] out_wide;
     q_cast_p#(.QIN(3005), .QOUT(6006)) cast_wide(
@@ -50,13 +61,17 @@ module q_cast_p_tb;
         in_valid = 0;
         `REQUIRE(out_wide_valid);
         `REQUIRE(out_wide === 12'b000001_110000);
+        `REQUIRE(out_round_valid);
+        `REQUIRE(out_round === 5'b001_11);
         `REQUIRE(!out_narrow_valid);
         @(negedge clk);
         `REQUIRE(!out_wide_valid);
+        `REQUIRE(!out_round_valid);
         `REQUIRE(out_narrow_valid);
         `REQUIRE(out_narrow === 4'b01_11);
         @(negedge clk);
         `REQUIRE(!out_wide_valid);
+        `REQUIRE(!out_round_valid);
         `REQUIRE(!out_narrow_valid);
 
         $finish;

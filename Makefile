@@ -8,7 +8,6 @@ TARGETS = \
 	zubax:kulibin:nco::sim \
 	zubax:kulibin:numeric::sim_cast_signed \
 	zubax:kulibin:numeric::sim_cast_signed_p \
-	zubax:kulibin:numeric::sim_cast_signed_p2 \
 	zubax:kulibin:numeric::sim_q_cast_p \
 	zubax:kulibin:numeric::sim_round_signed \
 	zubax:kulibin:numeric::sim_sine_lookup \
