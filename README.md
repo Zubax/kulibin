@@ -15,9 +15,8 @@ _reusable HDL modules_
 ---
 
 Kulibin is a loose collection of reusable HDL modules.
-Auxiliary Python scripts are provided for analysis and parameter derivation.
-They commonly require NumPy, SciPy, SymPy, matplotlib.
-
+Auxiliary Python scripts are provided for analysis and parameter derivation;
+they commonly require NumPy, SciPy, SymPy, matplotlib.
 Higher-level modules serve as usage examples for the lower-level ones.
 
 ## Verification
