@@ -1,9 +1,11 @@
-/// iverilog -Wall -Wno-timescale -y. nco_tb.v && vvp a.out
+/// iverilog -Wall -Wno-timescale -y hdl/ nco_tb.v && vvp a.out
 
 `timescale 1ns/1ns
 
 module nco_tb;
     reg rst = 0;
+    reg [5:0] fcw = 1;
+    reg [5:0] pcw = 0;
     initial begin
         # 1     rst = 1;
         # 2     rst = 0;
@@ -19,8 +21,6 @@ module nco_tb;
         #1 clk = !clk;
     end
 
-    reg [5:0] fcw = 1;
-    reg [5:0] pcw = 0;
     wire [1:0] out;
     nco #(2, 6) nco_it (clk, rst, fcw, pcw, out);
 

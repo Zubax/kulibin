@@ -22,16 +22,20 @@ module nco #(
     input wire rst,
     input wire [PHASE_ACCUMULATOR_WIDTH-1:0] frequency_control_word,
     input wire [PHASE_ACCUMULATOR_WIDTH-1:0] phase_control_word,
-    output wire [OUTPUT_WIDTH-1:0]           out
+    output reg [OUTPUT_WIDTH-1:0]            out
 );
     reg  [PHASE_ACCUMULATOR_WIDTH-1:0] acc;
-    wire [PHASE_ACCUMULATOR_WIDTH-1:0] acc_phased = acc + phase_control_word;
-    assign out = acc_phased[PHASE_ACCUMULATOR_WIDTH-1:PHASE_ACCUMULATOR_WIDTH-OUTPUT_WIDTH];
+    wire [PHASE_ACCUMULATOR_WIDTH-1:0] phased = acc + phase_control_word;
+    reg  [OUTPUT_WIDTH-1:0] fin;
     always @(posedge clk) begin
         if (rst) begin
             acc <= 0;
+            fin <= 0;
+            out <= 0;
         end else begin
             acc <= acc + frequency_control_word;
+            fin <= phased[PHASE_ACCUMULATOR_WIDTH-1:PHASE_ACCUMULATOR_WIDTH-OUTPUT_WIDTH];
+            out <= fin;
         end
     end
 endmodule
