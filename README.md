@@ -2,6 +2,9 @@
 
 A collection of reusable HDL modules.
 
+Python scripts are provided for analysis and parameter derivation.
+They commonly require NumPy, SciPy, SymPy, matplotlib.
+
 ## TODO
 
 Integrate a verification suite that runs in CI.

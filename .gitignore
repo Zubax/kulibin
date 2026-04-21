@@ -38,3 +38,5 @@ hdr_log
 *.tab
 *.tmp
 *.vcd
+*.memb
+*.png

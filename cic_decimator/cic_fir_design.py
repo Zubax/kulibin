@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 
 """
-A script for designing FIR compensation filters for CIC decimators.
-
+A script for designing FIR compensation filters for CIC decimators, and analysis of the combined CIC+FIR filter.
 For background, see the Verilog implementation modules and the linked references.
 PyFDA can be used to produce additional plots, e.g., phase delay.
 """
 
 import math
+import sys
 from pathlib import Path
-from hashlib import sha256
 
 import numpy as np
 from scipy.signal import freqz, firwin2
 import matplotlib.pyplot as plt
 
+sys.path.append(str(Path(__file__).parent.parent / "fir"))
+from fir import fir_kernel_to_verilog_fixpoint, fir_design_sinc
 from fixpoint import to_fixpoint_bin, from_fixpoint
 
 
@@ -31,7 +32,7 @@ def design_cic_compensation_fir(
     """
     Given a CIC filter parameters and the desired low-pass band, produces the compensation FIR filter kernel that
     mitigates the CIC passband droop and introduces a steeper roll-off. The resulting total gain is very flat from
-    DC up to about f_pass_max, and then drops steeply.
+    DC up to about f_pass_max, and then drops steeply. The FIR is fixed-point Q-format as specified.
     Returns the stem of the generated files.
     """
     f_s_fir = cic_output_frequency(R_cic, f_s_cic)
@@ -60,40 +61,6 @@ def design_cic_compensation_fir(
     )
     return stem
 
-
-def design_dc_removal_fir(
-    *,
-    f_s_cic: float,
-    R_cic: int,
-    M_cic: int,
-    N_cic: int,
-    N_fir: int,
-    Q_kernel: tuple[int, int] = (1, 16),  # (integer bits, fractional bits)
-) -> str:
-    """
-    This is similar to the compensation filter design, but the FIR is optimized to pass only DC and have a very steep
-    roll-off immediately after DC. This is intended for unbiasing signals before an integration stage.
-    This is done with an ordinary sinc low-pass FIR kernel.
-    """
-    f_s_fir = cic_output_frequency(R_cic, f_s_cic)
-    f_c = 0
-    L = N_fir + 1
-    h = np.sinc(2 * f_c / f_s_fir * (np.arange(L) - (L - 1) / 2)) * np.blackman(L)
-    h /= np.sum(h)  # Ensure unity DC gain.
-    # Export the designed kernel for later use in Verilog.
-    stem = fir_kernel_to_verilog_fixpoint(Q_kernel, h)
-    # Construct visualizations.
-    plot_cic_fir(
-        f_s_cic=f_s_cic,
-        R_cic=R_cic,
-        M_cic=M_cic,
-        N_cic=N_cic,
-        fir_kernel_real=h,
-        fir_kernel_quantized=np.array([from_fixpoint(Q_kernel, to_fixpoint_bin(Q_kernel, x)) for x in h]),
-        title=f"{N_fir=} q{Q_kernel[0]}.{Q_kernel[1]}",
-        out=f"{stem}.response.png",
-    )
-    return stem
 
 def cic_fir_kernel(
     *,
@@ -137,6 +104,40 @@ def cic_fir_kernel(
     return kernel / sum(kernel)  # Ensure unity DC gain.
 
 
+def design_dc_removal_fir(
+    *,
+    f_s_cic: float,
+    R_cic: int,
+    M_cic: int,
+    N_cic: int,
+    N_fir: int,
+    Q_kernel: tuple[int, int] = (1, 16),  # (integer bits, fractional bits)
+) -> str:
+    """
+    This is similar to the compensation filter design, but the FIR is optimized to pass only DC and have a very steep
+    roll-off immediately after DC. This is done with an ordinary sinc low-pass FIR kernel.
+    This filter introduces a very large group delay which may limit its utility.
+    """
+    stem, fir_kernel = fir_design_sinc(
+        f_s=cic_output_frequency(R_cic, f_s_cic),
+        f_c=0,
+        N=N_fir,
+        kind="lpf",
+        Q_kernel=Q_kernel,
+    )
+    plot_cic_fir(
+        f_s_cic=f_s_cic,
+        R_cic=R_cic,
+        M_cic=M_cic,
+        N_cic=N_cic,
+        fir_kernel_real=fir_kernel,
+        fir_kernel_quantized=np.array([from_fixpoint(Q_kernel, to_fixpoint_bin(Q_kernel, x)) for x in fir_kernel]),
+        title=f"{N_fir=} q{Q_kernel[0]}.{Q_kernel[1]}",
+        out=f"{stem}.response.png",
+    )
+    return stem
+
+
 def cic_gain(*, R, M, N, f, f_s_in = 1) -> float:
     """
     The gain of a CIC decimator filter at a given frequency f with the input sampling rate f_s_in.
@@ -150,40 +151,6 @@ def cic_gain(*, R, M, N, f, f_s_in = 1) -> float:
 
 def cic_output_frequency(R, f_s_in) -> float:
     return f_s_in / R
-
-
-def fir_kernel_to_verilog_fixpoint(q: tuple[int, int], kernel: np.ndarray) -> str:
-    """
-    Exports FIR coefficients into a Verilog memb file in the specified fixed point q-format that can be read
-    into synthesized logic via $readmemb(). We use binary instead of hex exports because they are single-bit-granular,
-    which is convenient with q-formats that have the total bit counts that are not multiples of 4 bits.
-
-    Kernel fixpoint precision affects frequency response error; input precision sets the noise floor. More coeff bits
-    won't raise SNR beyond the input's quantization limit, but they do preserve stopband attenuation and passband
-    ripple.
-
-    The stem of the file is the 128 MSb (16 MSB) of the SHA-256 of the binary coefficients separated with newlines `n.
-    The stem is returned.
-    """
-    # Analysis for the information comment
-    w, h  = freqz(kernel, fs=1)
-    freqs = np.linspace(0.0, 0.5, 21)
-    gains = np.interp(freqs, w, np.abs(h))
-
-    comment = f"""\
-// Generated using {Path(__file__).name}.
-//
-// Normalized frequency response with f_s=1:
-//  f [Hz]: {' '.join(f'{x:.4f}' for x in freqs)}
-//  G [1]:  {' '.join(f'{x:.4f}' for x in gains)}
-//
-// {len(kernel)} FIR coefficients in q{q[0]}.{q[1]} fixpoint format.
-"""
-    fixpoints = [to_fixpoint_bin(q, x) for x in kernel]
-    stem = sha256("\n".join(fixpoints).encode()).hexdigest()[:16]
-    contents = comment + "\n" + "\n".join(f"{fix}  // {flt:+.12e}" for fix, flt in zip(fixpoints, kernel))
-    Path(f"{stem}.fir.memb").write_text(contents)
-    return stem
 
 
 def plot_cic_fir(
@@ -243,11 +210,10 @@ def plot_cic_fir(
     plt.close(fig)
 
 
-if __name__ == "__main__":
-    # Sigma-delta ADC front-end.
+def main() -> None:
     f_s_sdadc = 20e6
     R_cic_sdadc = 64
-    design_cic_compensation_fir(
+    stem = design_cic_compensation_fir(
         f_s_cic=f_s_sdadc,
         R_cic=R_cic_sdadc,
         M_cic=1,
@@ -256,6 +222,16 @@ if __name__ == "__main__":
         f_pass_max=60e3,
         Q_kernel=(1, 16),
     )
-    # There was an attempt to use a separate CIC+FIR stage for DC bias removal, but it is not an adequate solution
-    # because the large group delay in the CIC+FIR stage causes instability at low frequencies.
-    # We have since switched to a very simple IIR which works well.
+    print(stem)
+    stem = design_dc_removal_fir(
+        f_s_cic=f_s_sdadc,
+        R_cic=R_cic_sdadc,
+        M_cic=1,
+        N_cic=3,
+        N_fir=30,
+    )
+    print(stem)
+
+
+if __name__ == "__main__":
+    main()

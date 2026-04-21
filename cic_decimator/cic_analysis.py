@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+Utilities for basic analysis of a CIC decimation filter.
+Single-bit inputs, which are common in sigma-delta ADCs, are represented as a 2-bit signed integer:
+zero maps to -1, one maps to +1 (values 0 and -2 are unused/inadmissible).
+"""
 
 import math
 import sympy as sp
@@ -53,31 +58,20 @@ def cic_cutoff_frequency(*, R, M, N, f_s_in = 1) -> sp.Float:
 
 def cic_output_bit_width_signed(input_bit_width=2, /, *, R, M, N) -> sp.Expr:
     if input_bit_width < 2:
-        raise ValueError(
-            "Signed int cannot be less than 2 bits wide. "
-            "Single-bit inputs must be mapped to +1/-1 represented as 2 bits."
-        )
+        raise ValueError("Signed int cannot be less than 2 bits wide.")
     return sp.ceiling(input_bit_width + sp.log(cic_gain_dc(R=R, M=M, N=N), 2))
 
 
-def _filt_adc_input():
-    R, M, N = 64, 1, 3
+def main():
+    R, M, N = 128, 1, 3
     f_s_in = 20e6
-    return {
+    res = {
         "W_out": cic_output_bit_width_signed(R=R, M=M, N=N),
         "f_out": cic_output_frequency(R=R, f_s_in=f_s_in),
         "f_c": cic_cutoff_frequency(R=R, M=M, N=N, f_s_in=f_s_in),
     }
+    print(f"{R=} {M=} {N=} {f_s_in=}; single-bit signed input: {res}")
 
 
-def _filt_dc_unbias(input_stage: dict[str, float]):
-    R, M, N = 2**15, 1, 2  # Lower N to manage bit growth
-    f_s_in = input_stage["f_out"]  # One feeds the other
-    return {
-        "W_out": cic_output_bit_width_signed(input_stage["W_out"], R=R, M=M, N=N),
-        "f_out": cic_output_frequency(R=R, f_s_in=f_s_in),
-        "f_c": cic_cutoff_frequency(R=R, M=M, N=N, f_s_in=f_s_in),
-    }
-
-print("ADC input filter:", _filt_adc_input())
-print("DC unbias filter:", _filt_dc_unbias(_filt_adc_input()))
+if __name__ == "__main__":
+   main()
