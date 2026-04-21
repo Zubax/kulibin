@@ -4,7 +4,7 @@
 module sine_lookup_1024_tb;
     reg [9:0] x;
     wire signed [9:0] out;
-    sine_lookup_1024 sine (x, out);
+    sine_lookup_1024 sine (.x(x), .out(out));
 
     integer i;
     initial begin

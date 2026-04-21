@@ -17,7 +17,11 @@ module nco_tb;
     reg [PHASE_ACCUMULATOR_WIDTH-1:0] pcw = 0;
 
     wire [OUTPUT_WIDTH-1:0] out;
-    nco #(OUTPUT_WIDTH, PHASE_ACCUMULATOR_WIDTH) dut (clk, rst, fcw, pcw, out);
+    nco #(.OUTPUT_WIDTH(OUTPUT_WIDTH), .PHASE_ACCUMULATOR_WIDTH(PHASE_ACCUMULATOR_WIDTH)) dut (
+        .clk(clk), .rst(rst),
+        .frequency_control_word(fcw), .phase_control_word(pcw),
+        .out(out)
+    );
 
     integer i;
     reg [OUTPUT_WIDTH-1:0] prev_out;

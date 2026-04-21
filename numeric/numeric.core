@@ -66,7 +66,7 @@ targets:
 
   sim_q_cast_p:
     filesets: [rtl, tb_q_cast_p]
-    toplevel: q_cast_tb
+    toplevel: q_cast_p_tb
     default_tool: icarus
     tools:
       icarus:

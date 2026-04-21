@@ -5,7 +5,7 @@
 
 `define REQUIRE(cond) if(!(cond)) $fatal
 
-module q_cast_tb;
+module q_cast_p_tb;
     reg clk = 0;
     always #1 clk = ~clk;
     reg rst = 0;
@@ -15,7 +15,7 @@ module q_cast_tb;
 
     wire              out_narrow_valid;
     wire signed [3:0] out_narrow;
-    q_cast_p#(3005, 2002) cast_narrow(
+    q_cast_p#(.QIN(3005), .QOUT(2002)) cast_narrow(
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
@@ -26,7 +26,7 @@ module q_cast_tb;
 
     wire               out_wide_valid;
     wire signed [11:0] out_wide;
-    q_cast_p#(3005, 6006) cast_wide(
+    q_cast_p#(.QIN(3005), .QOUT(6006)) cast_wide(
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
@@ -54,7 +54,7 @@ module q_cast_tb;
         @(negedge clk);
         `REQUIRE(!out_wide_valid);
         `REQUIRE(out_narrow_valid);
-        `REQUIRE(out_narrow === 12'b01_11);
+        `REQUIRE(out_narrow === 4'b01_11);
         @(negedge clk);
         `REQUIRE(!out_wide_valid);
         `REQUIRE(!out_narrow_valid);

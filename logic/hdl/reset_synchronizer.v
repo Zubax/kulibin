@@ -17,7 +17,7 @@ module reset_synchronizer#(
 );
     genvar g_idx;
     generate
-        for (g_idx = 0; g_idx < FANOUT; g_idx = g_idx + 1) begin
+        for (g_idx = 0; g_idx < FANOUT; g_idx = g_idx + 1) begin : g_fanout
             (* ASYNC_REG = "TRUE", SHREG_EXTRACT="NO" *)
             reg [DELAY-1:0] ff /* synthesis syn_async_reg=1 */;
             always @(posedge clk or posedge arst) begin

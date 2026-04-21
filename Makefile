@@ -2,6 +2,7 @@
 ## testbench hits `$fatal` (or any other nonzero exit from iverilog/vvp).
 
 FUSESOC ?= fusesoc
+VERIBLE_VERILOG_LINT ?= verible-verilog-lint
 
 TARGETS = \
 	zubax:kulibin:nco::sim \
@@ -24,7 +25,7 @@ TARGETS = \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim
 
-.PHONY: verify library clean
+.PHONY: verify lint library clean
 
 verify: library
 	@set -e; \
@@ -34,6 +35,10 @@ verify: library
 	  $(FUSESOC) run --target=$$target $$core; \
 	done; \
 	echo "All testbenches passed."
+
+lint:
+	@find . -name '*.v' -not -path './build/*' -print0 | \
+		xargs -0 $(VERIBLE_VERILOG_LINT) --rules_config .rules.verible_lint
 
 library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true

@@ -22,11 +22,11 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
     output wire out
 );
     generate
-        if (N <= 1) begin
+        if (N <= 1) begin : g_passthrough
             // DEGENERATE CASE --- NO DIVISION
             assign out = clk & enable;
 
-        end else if ((N & (N-1)) == 0) begin
+        end else if ((N & (N-1)) == 0) begin : g_pow2
             // POWER OF 2 DIVISOR CASE
             reg [$clog2(N)-1:0] cnt;
             assign out = cnt[$clog2(N)-1];
@@ -35,7 +35,7 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
                 else cnt <= enable ? (cnt - 1) : 0;
             end
 
-        end else if (N[0] === 0) begin
+        end else if (N[0] === 0) begin : g_even
             // EVEN DIVISOR CASE except powers of 2
             reg [$clog2(N/2)-1:0] cnt;
             reg state;
@@ -59,7 +59,7 @@ module freqdivc#(parameter N=1, parameter ODD_PERFECT=0)(
                 end
             end
 
-        end else begin
+        end else begin : g_odd
             // ODD DIVISOR CASE (N>=3)
             reg state;
             reg [$clog2((N+1)/2)-1:0] cnt;

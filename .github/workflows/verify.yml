@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  VERIBLE_VERSION: v0.0-4007-g98bdb38a
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -21,6 +25,14 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install fusesoc numpy scipy matplotlib
+
+      - name: Install Verible
+        run: |
+          curl -sL "https://github.com/chipsalliance/verible/releases/download/${VERIBLE_VERSION}/verible-${VERIBLE_VERSION}-linux-static-x86_64.tar.gz" \
+            | sudo tar -xz --strip-components=1 -C /usr/local
+
+      - name: Lint
+        run: make lint
 
       - name: Run all testbenches
         run: make verify

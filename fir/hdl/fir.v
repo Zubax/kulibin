@@ -105,7 +105,7 @@ module fir#(
     // Saturate and round the output per the requested QOUT format. No-op if QOUT == QACC.
     // The input and output are registers so this doesn't affect the critical path.
     wire acc_last_done = acc_valid && !mul2_valid;
-    q_cast_p#(`QACC, QOUT) acc_cast(
+    q_cast_p#(.QIN(`QACC), .QOUT(QOUT)) acc_cast(
         .clk(clk),
         .rst(rst),
         .in_valid(acc_last_done),
