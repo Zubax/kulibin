@@ -1,6 +1,6 @@
 CAPI=2:
 name: zubax:kulibin:numeric:0
-description: Numeric utility modules (casts, rounding, saturation, sine LUT, q-format)
+description: Numeric utility modules (casts, rounding, saturation, q-format, etc.)
 
 filesets:
   rtl:
@@ -13,7 +13,6 @@ filesets:
       - hdl/q_cast_p.v
       - hdl/round_signed.v
       - hdl/saturate_signed.v
-      - hdl/sine_lookup_1024.v
     file_type: verilogSource
 
   tb_cast_signed:
@@ -27,9 +26,6 @@ filesets:
     file_type: verilogSource
   tb_round_signed:
     files: [tb/round_signed_tb.v]
-    file_type: verilogSource
-  tb_sine_lookup:
-    files: [tb/sine_lookup_1024_tb.v]
     file_type: verilogSource
 
 targets:
@@ -63,14 +59,6 @@ targets:
   sim_round_signed:
     filesets: [rtl, tb_round_signed]
     toplevel: round_signed_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_sine_lookup:
-    filesets: [rtl, tb_sine_lookup]
-    toplevel: sine_lookup_1024_tb
     default_tool: icarus
     tools:
       icarus:

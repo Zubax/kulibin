@@ -10,7 +10,6 @@ TARGETS = \
 	zubax:kulibin:numeric::sim_cast_signed_p \
 	zubax:kulibin:numeric::sim_q_cast_p \
 	zubax:kulibin:numeric::sim_round_signed \
-	zubax:kulibin:numeric::sim_sine_lookup \
 	zubax:kulibin:logic::sim_freqdivc \
 	zubax:kulibin:logic::sim_deadtime_complementer \
 	zubax:kulibin:async_parallel_bus_slave::sim_unit \
