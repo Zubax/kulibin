@@ -75,7 +75,12 @@ module sdadc_to_pwm#(
     //     # This is because the shadow registers are reloaded twice per PWM period.
     //     f_pwm_mult = sp.Rational(1, 2)
     //     sp.solve(sp.Eq(f_pwm, f_pwm_mult * f_pcm), pwm_top, manual=True)
-    localparam [W-1:0] PWM_TOP = RCIC * FREQ_RATIO;
+    //
+    // The scaling below uses $signed(PWM_TOP), so PWM_TOP shall fit into a positive signed W-bit integer.
+    localparam integer PWM_TOP_VALUE = RCIC * FREQ_RATIO;
+    localparam [W-1:0] PWM_TOP = PWM_TOP_VALUE;
+    initial if ((PWM_TOP_VALUE <= 0) || (PWM_TOP != PWM_TOP_VALUE) || PWM_TOP[W-1]) $fatal;
+
     reg                  scaled_v[2:0];
     reg signed [W*2-1:0] scaled_d[2:0];  // dummy stages for retiming the multiplication.
     wire                scaled_signed_valid;
