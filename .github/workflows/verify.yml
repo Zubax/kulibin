@@ -28,8 +28,10 @@ jobs:
 
       - name: Install Verible
         run: |
+          mkdir -p "$HOME/verible"
           curl -sL "https://github.com/chipsalliance/verible/releases/download/${VERIBLE_VERSION}/verible-${VERIBLE_VERSION}-linux-static-x86_64.tar.gz" \
-            | sudo tar -xz --strip-components=1 -C /usr/local
+            | tar -xz --strip-components=1 -C "$HOME/verible"
+          echo "$HOME/verible/bin" >> "$GITHUB_PATH"
 
       - name: Lint
         run: make lint
