@@ -58,12 +58,27 @@ module iir1_hpf#(
     );
     assign bias = lpf;
 
+    // Delay the input to ensure the final subtraction is done against the matching input sample in case it is variable.
+    reg signed [W-1:0] in_lpf;
+    reg signed [W-1:0] in_lpf_d;
+    always @(posedge clk) begin
+        if (rst) begin
+            in_lpf   <= {W{1'b0}};
+            in_lpf_d <= {W{1'b0}};
+        end else begin
+            if (in_valid && in_ready) begin
+                in_lpf <= in;
+            end
+            in_lpf_d <= in_lpf;
+        end
+    end
+
     // Subtract the low-frequency signal from the input to get the high-pass result.
     cast_signed_p#(.WIN(W+1), .MSB(1), .LSB(0)) sub (
         .clk(clk),
         .rst(rst),
         .in_valid(lpf_valid),
-        .in_data($signed({in[W-1], in}) - $signed({lpf[W-1], lpf})),
+        .in_data($signed({in_lpf_d[W-1], in_lpf_d}) - $signed({lpf[W-1], lpf})),
         .out_valid(out_valid),
         .out_data(out)
     );
