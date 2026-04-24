@@ -1,0 +1,38 @@
+CAPI=2:
+name: zubax:kulibin:deadtime:0
+description: Complementary output generators with dead time
+
+filesets:
+  rtl:
+    files:
+      - hdl/deadtime_complementer.v
+      - hdl/deadtime_complementer_var.v
+    file_type: verilogSource
+
+  tb_deadtime_complementer:
+    files: [tb/deadtime_complementer_tb.v]
+    file_type: verilogSource
+
+  tb_deadtime_complementer_var:
+    files: [tb/deadtime_complementer_var_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_deadtime_complementer:
+    filesets: [rtl, tb_deadtime_complementer]
+    toplevel: deadtime_complementer_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_deadtime_complementer_var:
+    filesets: [rtl, tb_deadtime_complementer_var]
+    toplevel: deadtime_complementer_var_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
