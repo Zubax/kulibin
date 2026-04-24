@@ -1,0 +1,13 @@
+CAPI=2:
+name: zubax:kulibin:reset:0
+description: Reset conditioning primitives
+
+filesets:
+  rtl:
+    files:
+      - hdl/reset_synchronizer.v
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]

@@ -1,0 +1,25 @@
+CAPI=2:
+name: zubax:kulibin:freqdiv:0
+description: Frequency dividers
+
+filesets:
+  rtl:
+    files:
+      - hdl/freqdivc.v
+    file_type: verilogSource
+
+  tb_freqdivc:
+    files: [tb/freqdivc_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_freqdivc:
+    filesets: [rtl, tb_freqdivc]
+    toplevel: freqdivc_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
