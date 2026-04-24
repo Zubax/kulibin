@@ -9,44 +9,47 @@ module deadtime_complementer_var #(
 )(
     input  wire clk,
     input  wire rst,
+
+    // Inputs.
     input  wire in,                             // ideal input signal
-    input  wire [DEADTIME_WIDTH-1:0] deadtime,  // dead time in clk cycles
+    input  wire [DEADTIME_WIDTH-1:0] deadtime,  // dead time in clk cycles; may be zero
+
+    // Outputs.
     output reg  pos,                            // positive signal -- same polarity as the input
-    output reg  neg                             // negative signal -- opposite polarity of the input
+    output reg  neg,                            // negative signal -- opposite polarity of the input
+
+    // Diagnostics.
+    output wire active                          // dead time is in progress
 );
     reg target;
-    reg active;
     reg [DEADTIME_WIDTH-1:0] t;
+
+    assign active = t != {DEADTIME_WIDTH{1'b0}};
 
     always @(posedge clk) begin
         if (rst) begin
             pos <= 1'b0;
             neg <= 1'b0;
             target <= 1'b0;
-            active <= 1'b0;
             t <= {DEADTIME_WIDTH{1'b0}};
         end else if (in != target) begin  // Edge or reversal: sample the current deadtime and retime.
             target <= in;
             if (deadtime == {DEADTIME_WIDTH{1'b0}}) begin
                 pos <= in;
                 neg <= ~in;
-                active <= 1'b0;
                 t <= {DEADTIME_WIDTH{1'b0}};
             end else begin
                 pos <= 1'b0;
                 neg <= 1'b0;
-                active <= 1'b1;
-                t <= deadtime - 1'b1;
+                t <= deadtime;
             end
-        end else if (active && (t != 0)) begin
+        end else if (t > 1'b1) begin
             pos <= 1'b0;
             neg <= 1'b0;
-            active <= 1'b1;
             t <= t - 1'b1;
         end else begin
             pos <= target;
             neg <= ~target;
-            active <= 1'b0;
             t <= {DEADTIME_WIDTH{1'b0}};
         end
     end
