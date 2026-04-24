@@ -11,6 +11,7 @@ Read the `README.md`.
 - `make lint`: runs `verible-verilog-lint` over all `.v` files outside `build/`.
 - `make clean`: removes generated build artifacts.
 - `fusesoc run --target=sim zubax:kulibin:nco`: runs one core target; use `sim_<name>` targets where defined, such as `sim_round_signed`.
+- `./hierarchy.py`: run this when changing the set of modules or their interdependencies to update the diagram in the README.md.
 
 Python helper scripts commonly require NumPy, SciPy, SymPy, and matplotlib.
 

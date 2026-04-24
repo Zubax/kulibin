@@ -39,13 +39,15 @@ graph TD
     cic_decimator --> fir
     cic_decimator --> numeric
     fir --> numeric
+    freqdiv
     iir --> numeric
     nco
     online_integrator --> fir
     online_integrator --> numeric
+    reset
     sdadc_to_pwm --> cic_decimator
+    sdadc_to_pwm --> deadtime
     sdadc_to_pwm --> fir
-    sdadc_to_pwm --> logic
     sdadc_to_pwm --> numeric
     sdadc_to_pwm --> pwm
 ```
