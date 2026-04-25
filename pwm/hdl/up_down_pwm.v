@@ -1,9 +1,12 @@
 /// Basic pulse-width modulator with a bidirectional counter.
 /// The modulation frequency equals clk / (top * 2).
-/// Inputs top and compare are sampled twice per period: once at the top, once at the bottom.
-/// The at_top and at_bot are pulsed whenever the counter is at the top and the bottom, respectively.
+/// Inputs top and compare are sampled according to SHADOW_RELOAD: 1 = top, 2 = bottom, 3 = both (default).
+/// The at_top and at_bot outputs indicate counter extrema independently of SHADOW_RELOAD.
 
-module up_down_pwm#(parameter W = 16)(
+module up_down_pwm#(
+    parameter W             = 16,
+    parameter SHADOW_RELOAD = 3
+)(
     input wire         clk,
     input wire         rst,
     input wire [W-1:0] top,
@@ -12,13 +15,22 @@ module up_down_pwm#(parameter W = 16)(
     output wire        at_bot,
     output reg         out
 );
-    reg [W-1:0] counter   = 0;
-    reg         reverse   = 0;
-    reg [W-1:0] top_r     = 0;
-    reg [W-1:0] compare_r = 0;
+    reg [W-1:0] counter;
+    reg         reverse;
+    reg [W-1:0] top_r;
+    reg [W-1:0] compare_r;
+
+    localparam SHADOW_RELOAD_TOP = 1;
+    localparam SHADOW_RELOAD_BOT = 2;
+
+    initial if ((SHADOW_RELOAD < 1) || (SHADOW_RELOAD > 3)) $fatal;
 
     assign at_top = (counter == top_r) && !reverse;
     assign at_bot = (counter == 0)     &&  reverse;
+
+    wire reload_at_top = (SHADOW_RELOAD & SHADOW_RELOAD_TOP) != 0;
+    wire reload_at_bot = (SHADOW_RELOAD & SHADOW_RELOAD_BOT) != 0;
+    wire shadow_reload = (reload_at_top && at_top) || (reload_at_bot && at_bot) || ((top_r == 0) && !reload_at_top);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -43,7 +55,7 @@ module up_down_pwm#(parameter W = 16)(
             end
 
             // Shadow register latching logic.
-            if (at_top || at_bot) begin
+            if (shadow_reload) begin
                 top_r       <= top;
                 compare_r   <= compare;
             end
