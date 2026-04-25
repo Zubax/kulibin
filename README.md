@@ -38,6 +38,7 @@ graph TD
     async_parallel_bus_slave
     cic_decimator --> fir
     cic_decimator --> numeric
+    counter
     fir --> numeric
     freqdiv
     iir --> numeric

@@ -6,6 +6,7 @@ VERIBLE_VERILOG_LINT ?= verible-verilog-lint
 
 TARGETS = \
 	zubax:kulibin:nco::sim \
+	zubax:kulibin:counter::sim \
 	zubax:kulibin:numeric::sim_cast_signed \
 	zubax:kulibin:numeric::sim_cast_signed_p \
 	zubax:kulibin:numeric::sim_q_cast_p \

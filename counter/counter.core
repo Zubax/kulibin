@@ -1,0 +1,26 @@
+CAPI=2:
+name: zubax:kulibin:counter:0
+description: Simple sampled-top counter
+
+filesets:
+  rtl:
+    files:
+      - hdl/counter.v
+    file_type: verilogSource
+
+  tb:
+    files:
+      - tb/counter_tb.v
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: counter_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
