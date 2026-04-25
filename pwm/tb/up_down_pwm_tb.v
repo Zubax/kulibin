@@ -56,6 +56,21 @@ module up_down_pwm_tb;
         .out(out_bot)
     );
 
+    reg [W-1:0] top_wave     = 4;
+    reg [W-1:0] compare_wave = 0;
+    wire at_top_wave;
+    wire at_bot_wave;
+    wire out_wave;
+    up_down_pwm#(W) pwm_wave (
+        .clk(clk),
+        .rst(rst),
+        .top(top_wave),
+        .compare(compare_wave),
+        .at_top(at_top_wave),
+        .at_bot(at_bot_wave),
+        .out(out_wave)
+    );
+
     task automatic wait_top_latched;
         integer guard;
         begin
@@ -92,6 +107,81 @@ module up_down_pwm_tb;
                 `REQUIRE(guard < 64);
             end
             @(negedge clk);
+        end
+    endtask
+
+    task automatic load_wave;
+        input [W-1:0] top_value;
+        input [W-1:0] compare_value;
+        integer guard;
+        begin
+            top_wave     = top_value;
+            compare_wave = compare_value;
+
+            guard = 0;
+            while ((pwm_wave.top_r !== top_value) || (pwm_wave.compare_r !== compare_value)) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+        end
+    endtask
+
+    task automatic wait_wave_bot_edge;
+        integer guard;
+        begin
+            guard = 0;
+            while (at_bot_wave === 1'b1) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+
+            while (at_bot_wave !== 1'b1) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+        end
+    endtask
+
+    task automatic check_wave_period;
+        input [W-1:0] top_value;
+        input [W-1:0] compare_value;
+        input integer expected_high_count;
+        integer guard;
+        integer high_count;
+        integer period;
+        begin
+            load_wave(top_value, compare_value);
+            wait_wave_bot_edge();
+
+            period = 2 * top_value;
+            high_count = 0;
+            for (guard = 0; guard < period; guard = guard + 1) begin
+                if (out_wave === 1'b1) begin
+                    high_count = high_count + 1;
+                end
+                @(negedge clk);
+            end
+
+            `REQUIRE(at_bot_wave === 1'b1);
+            `REQUIRE(high_count == expected_high_count);
+        end
+    endtask
+
+    task automatic check_wave_hold;
+        input [W-1:0] top_value;
+        input [W-1:0] compare_value;
+        input expected_out;
+        input integer cycles;
+        integer idx;
+        begin
+            load_wave(top_value, compare_value);
+            for (idx = 0; idx < cycles; idx = idx + 1) begin
+                @(negedge clk);
+                `REQUIRE(out_wave === expected_out);
+            end
         end
     endtask
 
@@ -153,6 +243,17 @@ module up_down_pwm_tb;
 
         wait_bot_latched_bot();
         `REQUIRE(pwm_bot.top_r === 5);
+
+        check_wave_period(4, 0, 0);
+        check_wave_period(4, 1, 2);
+        check_wave_period(4, 3, 6);
+        check_wave_period(4, 4, 8);
+
+        check_wave_period(4, 0, 0);
+        check_wave_hold(4, 6, 1'b0, 16);
+        check_wave_period(4, 4, 8);
+        check_wave_hold(4, 6, 1'b1, 16);
+        check_wave_hold(0, 3, 1'b1, 8);
 
         $finish;
     end
