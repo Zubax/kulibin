@@ -42,8 +42,8 @@ module counter_tb;
         begin
             #1;
             `REQUIRE(count === expected_count);
-            `REQUIRE(at_top === (expected_count == expected_top));
-            `REQUIRE(at_bot === (expected_count == 0));
+            `REQUIRE(at_top === ((expected_count == expected_top) && enable));
+            `REQUIRE(at_bot === ((expected_count == 0)            && enable));
             `REQUIRE(expected_count <= expected_top);
             seen[expected_top][expected_count] = 1'b1;
         end

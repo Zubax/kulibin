@@ -1,7 +1,8 @@
 /// Simple up-counter with a sampled top value.
 ///
-/// The top input is sampled on reset and whenever the counter is at zero. This allows updating the next period length
-/// without changing the current in-progress cycle.
+/// The top input is sampled on reset and on the cycle when the counter advances from zero, so a new top takes effect
+/// at the start of the next period without disturbing the in-progress cycle.
+/// Outputs at_top and at_bot are single-cycle pulses.
 
 module counter#(parameter W = 16)(
     input wire          clk,
@@ -15,9 +16,9 @@ module counter#(parameter W = 16)(
     output wire         at_bot
 );
     reg [W-1:0] top_r;
-    assign at_top = count == top_r;
-    assign at_bot = count == 0;
-    wire [W-1:0] active_top = at_bot ? top : top_r;
+    assign at_top = (count == top_r) && enable;
+    assign at_bot = (count == 0)     && enable;
+    wire [W-1:0] active_top = (count == 0) ? top : top_r;
 
     always @(posedge clk) begin
         if (rst) begin
