@@ -32,7 +32,7 @@ module counter#(parameter W = 16)(
                 if (count == active_top) begin
                     count <= 0;
                 end else begin
-                    count <= count + 1;
+                    count <= count + 1'b1;
                 end
             end
         end

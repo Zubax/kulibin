@@ -147,19 +147,19 @@ module fir#(
         end else begin
             if (in_valid && ~busy) begin  // only write RAM when not reading from it
                 busy <= 1'b1;
-                i <= (i == TOP) ? 0 : (i + 1);
+                i <= (i == TOP) ? 0 : (i + 1'b1);
                 j <= i;           // update the addresses for the synchronous memory read next cycle
                 k <= 0;
                 x[i] <= in_data;  // synchronous memory write without (!) concurrent read, single-port RAM suffices
             end
 
             if (busy) begin
-                j <= (j == 0) ? TOP : (j - 1);
+                j <= (j == 0) ? TOP : (j - 1'b1);
                 memr_valid <= 1'b1;  // memory read data will be available next cycle
                 x_read <= x[j];      // allow synchronous BRAM; works with async as well
                 h_read <= h[k];
                 if (k == TOP) busy <= 1'b0;  // ready to accept next input
-                else          k <= k + 1;
+                else          k <= k + 1'b1;
             end else begin
                 memr_valid <= 1'b0;
             end

@@ -34,7 +34,7 @@ module saturate_signed#(
             // DANGER: do not replace the wires with localparams, as that causes incorrect synthesis!
             // See https://stackoverflow.com/q/79769496/1007777
             wire signed [WIN-1:0] LIM_POS =  { {(WIN-(WOUT-1)){1'b0}}, {(WOUT-1){1'b1}} };
-            wire signed [WIN-1:0] LIM_NEG = -$signed(LIM_POS) - 1;
+            wire signed [WIN-1:0] LIM_NEG = -$signed(LIM_POS) - $signed({{(WIN-1){1'b0}}, 1'b1});
 
             always @(*) begin
                 case ({din > LIM_POS, din < LIM_NEG})

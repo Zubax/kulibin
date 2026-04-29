@@ -144,7 +144,7 @@ module cic_decimator_fir#(
             cic_decimate <= 1'b0;
         end else begin
             if (in_valid) begin
-                dec_cnt <= dec_cnt_top ? 0 : (dec_cnt + 1);
+                dec_cnt <= dec_cnt_top ? 0 : (dec_cnt + 1'b1);
             end
             if (in_valid && dec_cnt_top) cic_decimate <= 1'b1;
             else if (cic_decimate) cic_decimate <= 1'b0;
