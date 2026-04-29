@@ -48,6 +48,9 @@ def design_cic_compensation_fir(
     print("FIR kernel before quantization:", *(f"{x:+.3e}" for x in kernel))
     # Export the designed kernel for later use in Verilog.
     stem = fir_kernel_to_verilog_fixpoint(Q_kernel, kernel)
+    # Compute the group delay.
+    tau_cic, tau_fir = cic_fir_group_delay(f_s_cic=f_s_cic, R_cic=R_cic, N_cic=N_cic, M_cic=M_cic, N_fir=N_fir)
+    tau_title = f"τ_cic={tau_cic*1e6:.1f}μs τ_fir={tau_fir*1e6:.1f}μs τ_total={(tau_cic + tau_fir)*1e6:.1f}μs"
     # Construct visualizations.
     plot_cic_fir(
         f_s_cic=f_s_cic,
@@ -56,7 +59,7 @@ def design_cic_compensation_fir(
         N_cic=N_cic,
         fir_kernel_real=kernel,
         fir_kernel_quantized=np.array([from_fixpoint(Q_kernel, to_fixpoint_bin(Q_kernel, x)) for x in kernel]),
-        title=f"{f_pass_max=:e} {N_fir=} q{Q_kernel[0]}.{Q_kernel[1]}",
+        title=f"{f_pass_max=:e} {N_fir=} {tau_title} q{Q_kernel[0]}.{Q_kernel[1]}",
         out=f"{stem}.response.png",
     )
     return stem
@@ -138,6 +141,23 @@ def design_dc_removal_fir(
     return stem
 
 
+def cic_fir_group_delay(f_s_cic: float, R_cic: int, N_cic: int, M_cic: int, N_fir: int):
+    """
+    Compute the group delay of a CIC decimator followed by a linear-phase FIR compensator of order N_fir (N_fir+1 taps).
+    Returns a tuple of: (CIC group delay, FIR group delay) in seconds; sum to get the total.
+    N_fir can be zero if not relevant.
+    """
+    f_s_out = f_s_cic / R_cic
+
+    tau_cic_input_samples = N_cic * (R_cic * M_cic - 1) / 2
+    tau_cic = tau_cic_input_samples / f_s_cic
+
+    tau_fir_output_samples = N_fir / 2
+    tau_fir = tau_fir_output_samples / f_s_out
+
+    return tau_cic, tau_fir
+
+
 def cic_gain(*, R, M, N, f, f_s_in = 1) -> float:
     """
     The gain of a CIC decimator filter at a given frequency f with the input sampling rate f_s_in.
@@ -193,7 +213,8 @@ def plot_cic_fir(
 
     # Zoomed passband
     passband_zoom_y = 1.5e-3
-    ax2.plot(w_fir_q, np.abs(h_tot_q), label="total quantized")
+    ax2.plot(w_fir_q, np.abs(h_tot_q), color='k', label="total quantized")
+    ax2.plot(w_cic, np.abs(h_cic), color='b', label="CIC")
     ax2.axhline(1.0, linewidth=1, linestyle="--")
     ax2.set_ylim(1-passband_zoom_y, 1+passband_zoom_y)
     ax2.set_xlabel("Frequency [Hz]")
@@ -211,26 +232,32 @@ def plot_cic_fir(
 
 
 def main() -> None:
-    f_s_sdadc = 20e6
-    R_cic_sdadc = 64
-    stem = design_cic_compensation_fir(
-        f_s_cic=f_s_sdadc,
-        R_cic=R_cic_sdadc,
-        M_cic=1,
-        N_cic=3,
-        N_fir=12,
-        f_pass_max=60e3,
-        Q_kernel=(1, 16),
-    )
-    print(stem)
-    stem = design_dc_removal_fir(
-        f_s_cic=f_s_sdadc,
-        R_cic=R_cic_sdadc,
-        M_cic=1,
-        N_cic=3,
-        N_fir=30,
-    )
-    print(stem)
+    def cicfir(N_fir: int, f_pass_max: float) -> str:
+        try:
+            return design_cic_compensation_fir(
+                f_s_cic=20e6,
+                R_cic=64,
+                M_cic=1,
+                N_cic=3,
+                N_fir=N_fir,
+                f_pass_max=f_pass_max,
+                Q_kernel=(1, 15),
+            )
+        except Exception as ex:
+            print("Error:", ex)
+            return None
+    print(cicfir(5, 150e3))
+    print(cicfir(12, 60e3))
+
+    if False:
+        stem = design_dc_removal_fir(
+            f_s_cic=20e6,
+            R_cic=64,
+            M_cic=1,
+            N_cic=3,
+            N_fir=30,
+        )
+        print(stem)
 
 
 if __name__ == "__main__":

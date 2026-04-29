@@ -11,11 +11,14 @@
 /// bits can be used, depending on the DC gain, which is ultimately controlled at runtime via R (port `decimate`).
 /// Single-bit inputs should be signed, which requires 2 bits (+1=0b01, -1=0b11).
 ///
+/// The group delay is: N (R M - 1) / (2 f_s_in).
+///
 /// https://www.beis.de/Elektronik/DeltaSigma/SigmaDelta.html
 /// https://tomverbeure.github.io/2020/09/30/Moving-Average-and-CIC-Filters.html
 /// https://www.analog.com/media/en/training-seminars/tutorials/MT-022.pdf?doc=AN-1521.pdf
 /// https://www.eecis.udel.edu/~vsaxena/courses/ece697A/s10/Lecture%20Notes/Lecture%2018%20Notes.pdf
 /// https://forum.zubax.com/t/greenjets-ares-hs-125-drive-controller/2502/17?u=pavel-kirienko
+/// https://www.analog.com/en/resources/technical-articles/sigma-delta-conversion-used-for-motor-control.html
 ///
 /// There is also an interesting alternative construction based on a long delay line:
 /// https://github.com/Cognoscan/VerilogCogs/blob/master/sinc3Filter.v

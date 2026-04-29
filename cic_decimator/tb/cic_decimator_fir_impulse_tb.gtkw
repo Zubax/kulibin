@@ -1,0 +1,57 @@
+[*]
+[*] GTKWave Analyzer v3.3.126 (w)1999-2026 BSI
+[*] Mon Apr 27 12:40:00 2026
+[*]
+[dumpfile] "/mnt/storage/zubax/kulibin/build/zubax_kulibin_cic_decimator_0/sim_cic_decimator_fir_impulse-icarus/cic_decimator_fir_impulse_tb.vcd"
+[dumpfile_mtime] "Mon Apr 27 12:39:19 2026"
+[dumpfile_size] 7935
+[savefile] "/mnt/storage/zubax/kulibin/cic_decimator/tb/cic_decimator_fir_impulse_tb.gtkw"
+[timestart] 0
+[size] 2893 1676
+[pos] -1 -1
+*-9.600000 845 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] cic_decimator_fir_impulse_tb.
+[sst_width] 341
+[signals_width] 241
+[sst_expanded] 1
+[sst_vpaned_height] 527
+@28
+cic_decimator_fir_impulse_tb.clk
+cic_decimator_fir_impulse_tb.rst
+@200
+-
+@28
+[color] 1
+cic_decimator_fir_impulse_tb.in_valid
+@420
+cic_decimator_fir_impulse_tb.in_data[1:0]
+@200
+-
+@28
+[color] 1
+cic_decimator_fir_impulse_tb.dut.cic_out_valid
+@18421
+cic_decimator_fir_impulse_tb.dut.cic_out[19:0]
+@20000
+-
+-
+@200
+-
+@28
+[color] 1
+cic_decimator_fir_impulse_tb.out_valid
+@18420
+cic_decimator_fir_impulse_tb.out_data[15:0]
+@20000
+-
+-
+-
+@420
+[color] 6
+cic_decimator_fir_impulse_tb.dut.RCIC
+[color] 6
+cic_decimator_fir_impulse_tb.dut.NCIC
+[color] 6
+cic_decimator_fir_impulse_tb.dut.NFIR
+[pattern_trace] 1
+[pattern_trace] 0

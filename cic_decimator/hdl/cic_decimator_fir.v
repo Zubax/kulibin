@@ -7,6 +7,17 @@
 /// The FIR kernel coefficients are provided in a Verilog binary file (memb) as described below.
 /// Use the enclosed Python script to design the FIR kernel for arbitrary desired response.
 ///
+/// The FIR stage can also be utilized to provide better switching noise attenuation by placing zeros at appropriate
+/// harmonics; e.g., an odd-order linear-phase FIR will have zero gain at f_s_fir/2; if switching is synchronized with
+/// f_s_cic/R_cic, that will be half of the switching frequency; CIC itself will have a zero at f_s_cic/R_cic;
+/// the pattern is periodic at higher frequencies.
+///
+/// The group delay is, per stage:
+///     tau_cic = N_cic (R_cic M_cic - 1) / (2 f_s_cic)
+///     tau_fir = N_fir / (2 f_s_out)
+/// where:
+///     f_s_out = f_s_cic / R
+///
 /// The processed samples undergo several width transformations (as this is a multi-rate filter):
 ///
 /// 1. Input WIN bits wide, signed.

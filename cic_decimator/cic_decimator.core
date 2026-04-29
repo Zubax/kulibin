@@ -27,6 +27,14 @@ filesets:
           file_type: user
           copyto: 62eab2361fc4dbf9.fir.memb
 
+  tb_cic_decimator_fir_impulse:
+    files:
+      - tb/cic_decimator_fir_impulse_tb.v:
+          file_type: verilogSource
+      - tb/147d03e66aec665a.fir.memb:
+          file_type: user
+          copyto: 147d03e66aec665a.fir.memb
+
 targets:
   default:
     filesets: [rtl]
@@ -50,6 +58,14 @@ targets:
   sim_cic_decimator_fir:
     filesets: [rtl, tb_cic_decimator_fir]
     toplevel: cic_decimator_fir_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_fir_impulse:
+    filesets: [rtl, tb_cic_decimator_fir_impulse]
+    toplevel: cic_decimator_fir_impulse_tb
     default_tool: icarus
     tools:
       icarus:

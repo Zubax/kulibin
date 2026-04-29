@@ -1,0 +1,26 @@
+CAPI=2:
+name: zubax:kulibin:cdc_sync:0
+description: Anti-metastability synchronizer / input delay line
+
+filesets:
+  rtl:
+    files:
+      - hdl/cdc_sync.v
+    file_type: verilogSource
+
+  tb:
+    files:
+      - tb/cdc_sync_tb.v
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: cdc_sync_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
