@@ -10,8 +10,19 @@ filesets:
       - hdl/iir1_hpf.v
     file_type: verilogSource
 
+  tb_lpf:
+    files: [tb/iir1_lpf_tb.v]
+    file_type: verilogSource
+
+  tb_hpf:
+    files: [tb/iir1_hpf_tb.v]
+    file_type: verilogSource
+
   tb:
-    files: [tb/iir1_tb.v]
+    files:
+      - tb/iir1_lpf_tb.v
+      - tb/iir1_hpf_tb.v
+      - tb/iir1_tb.v
     file_type: verilogSource
 
 targets:
@@ -21,5 +32,17 @@ targets:
   sim:
     filesets: [rtl, tb]
     toplevel: iir1_tb
+    default_tool: icarus
+    tools: {icarus: {iverilog_options: [-Wall, -Wno-timescale]}}
+
+  sim_lpf:
+    filesets: [rtl, tb_lpf]
+    toplevel: iir1_lpf_tb
+    default_tool: icarus
+    tools: {icarus: {iverilog_options: [-Wall, -Wno-timescale]}}
+
+  sim_hpf:
+    filesets: [rtl, tb_hpf]
+    toplevel: iir1_hpf_tb
     default_tool: icarus
     tools: {icarus: {iverilog_options: [-Wall, -Wno-timescale]}}

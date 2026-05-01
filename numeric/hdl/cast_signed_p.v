@@ -22,10 +22,7 @@ module cast_signed_p#(
     parameter WIN = 16,
     parameter signed MSB = 0,
     parameter signed LSB = 0,
-
-    // This can be useful if the client needs more retiming freedom.
-    // No effect if the parameters already require 2 stages.
-    parameter FORCE_2_STAGE = 0
+    parameter TWO_STAGE = (MSB > 0) && (LSB > 0)  // Force to 1 if more retiming freedom is needed with MSB=LSB=0.
 )(
     input wire clk,
     input wire rst,
@@ -38,7 +35,6 @@ module cast_signed_p#(
 );
     localparam WSAT = WIN - MSB;
     localparam WOUT = WIN - MSB - LSB;
-    localparam TWO_STAGE = ((MSB > 0) && (LSB > 0)) || FORCE_2_STAGE;
     generate
         if (TWO_STAGE) begin : g_both
             reg s1_valid;

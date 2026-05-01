@@ -92,7 +92,7 @@ module online_integrator#(
     wire signed [WX-1:0] leaked_next = integrator - $signed({{LEAK{leak_d[WL-1]}}, leak_d});
 
     // Rounded integrator output in the correct width.
-    cast_signed_p#(.WIN(WX), .MSB(0), .LSB(LEAK)) round_out (
+    cast_signed_p#(.WIN(WX), .MSB(0), .LSB(LEAK), .TWO_STAGE(1)) round_out (
         .clk(clk),
         .rst(rst),
         .in_valid(integrator_valid),
@@ -170,16 +170,14 @@ module online_integrator#(
         //
         // Note that this is an approximation that does not consider discretization effects.
         else if (METHOD == 7000) begin : g_trapezoidal
-            reg [1:0] state;
+            reg [2:0] state;
             reg  signed [WIN-1:0] x[0:1];
-            wire signed [WIN-1:0] addend_next;  // (x[n]+x[n-1])/2 with rounding-to-nearest, ties-to-even
-            round_signed#(.WIN(WIN+1), .WOUT(WIN)) avg (
-                .din($signed({x[0][WIN-1], x[0]}) + $signed({x[1][WIN-1], x[1]})),
-                .dout(addend_next)
-            );
-            reg  signed [WXIN-1:0] addend;
-            wire signed [WX-1:0] next = integrator + $signed({{(WX-WXIN){addend[WXIN-1]}}, addend});
-            assign integrator_valid = (state == 3);
+            reg  signed [WIN:0] avg_in;
+            wire signed [WIN-1:0] avg_out;  // (x[n]+x[n-1])/2 with rounding-to-nearest, ties-to-even
+            round_signed#(.WIN(WIN+1), .WOUT(WIN)) avg (.din(avg_in), .dout(avg_out));
+            reg signed [WXIN-1:0] addend;
+            reg signed [WXIN-1:0] addend_d;
+            assign integrator_valid = (state == 5);
             assign in_ready         = (state == 0);
             always @ (posedge clk) begin
                 if (rst) begin
@@ -188,7 +186,9 @@ module online_integrator#(
                     state      <= 0;
                     x[0]       <= 0;
                     x[1]       <= 0;
+                    avg_in     <= 0;
                     addend     <= 0;
+                    addend_d   <= 0;
                 end else begin
                     case (state)
                         0: if (in_valid) begin
@@ -198,18 +198,25 @@ module online_integrator#(
                             state <= 1;
                         end
                         1: begin
-                            addend <= $signed({addend_next, {LEAK{1'b0}}}); // right-zero-pad the addend
+                            avg_in <= $signed({x[0][WIN-1], x[0]}) + $signed({x[1][WIN-1], x[1]});
                             state <= 2;
                         end
                         2: begin
-                            integrator <= next;
+                            addend <= $signed({avg_out, {LEAK{1'b0}}}); // right-zero-pad the addend
                             state <= 3;
                         end
-                        3: begin
+                        3: begin  // Dummy stage for retiming, needed with wide integrator outputs.
+                            addend_d <= addend;
+                            state <= 4;
+                        end
+                        4: begin
+                            integrator <= integrator + $signed({{(WX-WXIN){addend_d[WXIN-1]}}, addend_d});
+                            state <= 5;
+                        end
+                        default: begin
                             leak_d <= leak_;
                             state <= 0;
                         end
-                        default: state <= 0;
                     endcase
                 end
             end

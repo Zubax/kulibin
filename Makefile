@@ -17,7 +17,8 @@ TARGETS = \
 	zubax:kulibin:async_parallel_bus_slave::sim_unit \
 	zubax:kulibin:async_parallel_bus_slave::sim_integration \
 	zubax:kulibin:cdc_sync::sim \
-	zubax:kulibin:iir::sim \
+	zubax:kulibin:iir::sim_lpf \
+	zubax:kulibin:iir::sim_hpf \
 	zubax:kulibin:fir::sim \
 	zubax:kulibin:cic_decimator::sim_comb_m1 \
 	zubax:kulibin:cic_decimator::sim_cic_decimator \

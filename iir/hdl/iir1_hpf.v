@@ -20,65 +20,69 @@
 `default_nettype none
 
 module iir1_hpf#(
-    /// Input and output sample width, signed.
-    parameter W = 16,
+    /// Input sample width, sign bit included.
+    parameter WIN = 16,
 
     /// The filter constant k defined as alpha = 2^-k. See the response model above.
-    /// This value may be arbitrarily large (may exceed W), because internally we use a wider representation.
-    parameter K = 16
+    /// This value may be arbitrarily large (may exceed WIN), because internally we use a wider representation.
+    parameter K = 16,
+
+    /// Output sample width, sign bit included. Set greater than WIN to expose fractional LSbs.
+    /// The numeric scale is the same as the input left-shifted by WOUT-WIN bits; using Q-format, the integer part
+    /// is the same as the input, and the fractional part is extended.
+    /// By default this preserves K fractional bits, matching the filter update quantum.
+    parameter WOUT = WIN + K
 )(
     input wire clk,
     input wire rst,
 
     // Input sample.
     // Input samples are ignored unless in_ready is high.
-    output wire                in_ready,
-    input  wire                in_valid,
-    input  wire signed [W-1:0] in,
+    output wire                  in_ready,
+    input  wire                  in_valid,
+    input  wire signed [WIN-1:0] in,
 
     // Output result.
     // The output remains unchanged between valid pulses.
-    output wire                out_valid,
-    output wire signed [W-1:0] out,
+    output wire                   out_valid,
+    output wire signed [WOUT-1:0] out,
 
-    // Optional diagnostic output: the current low-frequency (DC) bias estimate.
-    output wire signed [W-1:0] bias
+    // Optional diagnostic output: the current low-frequency (DC) bias estimate. Always full precision.
+    output wire signed [WIN+K-1:0] bias
 );
-    // Extract the low-frequency signal.
-    wire lpf_valid;
-    wire signed [W-1:0] lpf;
-    iir1_lpf#(.W(W), .K(K)) u_lpf (
+    // Extract the low-frequency component. Use full-precision representation to avoid added quantization noise.
+    wire bias_valid;
+    iir1_lpf#(.WIN(WIN), .K(K), .WOUT(WIN+K)) u_lpf (
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
         .in(in),
         .in_ready(in_ready),
-        .out_valid(lpf_valid),
-        .out(lpf)
+        .out_valid(bias_valid),
+        .out(bias)
     );
-    assign bias = lpf;
 
     // Delay the input to ensure the final subtraction is done against the matching input sample in case it is variable.
-    reg signed [W-1:0] in_lpf;
-    reg signed [W-1:0] in_lpf_d;
+    reg signed [WIN-1:0] in_z;
+    reg signed [WIN-1:0] in_z_d;
     always @(posedge clk) begin
         if (rst) begin
-            in_lpf   <= {W{1'b0}};
-            in_lpf_d <= {W{1'b0}};
+            in_z   <= {WIN{1'b0}};
+            in_z_d <= {WIN{1'b0}};
         end else begin
             if (in_valid && in_ready) begin
-                in_lpf <= in;
+                in_z <= in;
             end
-            in_lpf_d <= in_lpf;
+            in_z_d <= in_z;
         end
     end
 
-    // Subtract the low-frequency signal from the input to get the high-pass result.
-    cast_signed_p#(.WIN(W+1), .MSB(1), .LSB(0)) sub (
+    // Subtract the low-frequency component from the input to get the high-pass result.
+    cast_signed_p#(.WIN(WIN+K+1), .MSB(1), .LSB(WIN+K-WOUT)) sub (
         .clk(clk),
         .rst(rst),
-        .in_valid(lpf_valid),
-        .in_data($signed({in_lpf_d[W-1], in_lpf_d}) - $signed({lpf[W-1], lpf})),
+        .in_valid(bias_valid),
+        .in_data($signed({in_z_d[WIN-1], in_z_d, {K{1'b0}}}) - $signed({bias[WIN+K-1], bias})),
         .out_valid(out_valid),
         .out_data(out)
     );
