@@ -1,0 +1,7 @@
+// Manually constructed 3rd order FIR filter kernel. The q1.8 format is sufficient for the exact coeff representation.
+// Fixpoint conversion done with fixpoint.py.
+
+111011111  // -1.289062e-01 =  -33/256; exact
+010100001  // +6.289062e-01 = +161/256; exact
+010100001  // +6.289062e-01 = +161/256; exact
+111011111  // -1.289062e-01 =  -33/256; exact

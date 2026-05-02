@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Utilities for fixed point conversion.
 We could use qformatpy but I thought it's not worth an extra dependency.
@@ -80,3 +81,30 @@ def to_fixpoint_bin(q: tuple[int, int], x: float, /) -> str:
 
 assert to_fixpoint_bin((8, 8), -12.34) == '1111001110101001'
 assert to_fixpoint_bin((8, 8), +12.34) == '0000110001010111'
+
+
+def main():
+    import sys
+
+    if len(sys.argv) < 4:
+        print("Usage:", sys.argv[0], "q-intg", "q-frac", "expr...", file=sys.stderr)
+        exit()
+
+    _, Q_intg, Q_frac, *exprs = sys.argv
+    q = int(Q_intg), int(Q_frac)
+    print(f"// q{Q_intg}.{Q_frac}")
+    for expr in exprs:
+        # Convert the number to fixpoint Q-format.
+        number = float(eval(expr))
+        fixp = to_fixpoint_bin(q, number)
+
+        # Estimate the error.
+        e_abs = abs(number - from_fixpoint(q, fixp))
+        e_rel = e_abs / abs(number)
+        e_str = "exact" if e_abs < 1e-9 else f"{e_abs=:e} e_rel={100*e_rel:.3f}%"
+
+        print(f"{fixp}  // {number:+e} = {expr}; {e_str}")
+
+
+if __name__ == "__main__":
+    main()

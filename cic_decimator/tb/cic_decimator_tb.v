@@ -40,7 +40,7 @@ module cic_decimator_tb;
         sample_count = 0;
         while (sample_count < R * 5) begin
             in_data <= +1;
-            decimate <= ((sample_count + 1) % R == 0);  // expect output on next clk cycle
+            decimate <= ((sample_count + 1) % R == 0);  // output follows after the comb pipeline delay
             in_valid <= 1;
             @(negedge clk);
             decimate <= 0;

@@ -7,6 +7,8 @@
 /// The FIR kernel coefficients are provided in a Verilog binary file (memb) as described below.
 /// Use the enclosed Python script to design the FIR kernel for arbitrary desired response.
 ///
+/// If the CIC DC gain is not a power of 2, a FIR DC gain > 1 is needed to fully utilize the PCM word dynamic range.
+///
 /// The FIR stage can also be utilized to provide better switching noise attenuation by placing zeros at appropriate
 /// harmonics; e.g., an odd-order linear-phase FIR will have zero gain at f_s_fir/2; if switching is synchronized with
 /// f_s_cic/R_cic, that will be half of the switching frequency; CIC itself will have a zero at f_s_cic/R_cic;
@@ -134,20 +136,26 @@ module cic_decimator_fir#(
     output wire signed [WOUT-1:0] out_data
 );
     // Decimation counter that defines RCIC.
+    // The wrapper delay-matches the generated decimation pulse to the standalone CIC timing rule: the CIC decimate
+    // input is asserted NCIC clocks after the RCIC-th accepted input sample, so the final integrator has settled.
+    // This is not strictly required for correctness but it avoids small unnecessary delay of one in_valid period.
     localparam WCNT = `MAX($clog2(RCIC), 1);
     reg [WCNT-1:0] dec_cnt;
     wire dec_cnt_top = (dec_cnt == RCIC-1);
-    reg cic_decimate;
+    reg [NCIC-1:0] cic_decimate_pipe;
+    integer i_decimate_pipe;
     always @ (posedge clk) begin
         if (rst) begin
             dec_cnt <= 0;
-            cic_decimate <= 1'b0;
+            cic_decimate_pipe <= 0;
         end else begin
             if (in_valid) begin
                 dec_cnt <= dec_cnt_top ? 0 : (dec_cnt + 1'b1);
             end
-            if (in_valid && dec_cnt_top) cic_decimate <= 1'b1;
-            else if (cic_decimate) cic_decimate <= 1'b0;
+            cic_decimate_pipe[0] <= in_valid && dec_cnt_top;
+            for (i_decimate_pipe = 1; i_decimate_pipe < NCIC; i_decimate_pipe = i_decimate_pipe + 1) begin
+                cic_decimate_pipe[i_decimate_pipe] <= cic_decimate_pipe[i_decimate_pipe-1];
+            end
         end
     end
 
@@ -169,7 +177,7 @@ module cic_decimator_fir#(
         .rst(rst),
         .in_valid(in_valid),
         .in_data(cic_in),
-        .decimate(cic_decimate),
+        .decimate(cic_decimate_pipe[NCIC-1]),
         .out_valid(cic_out_valid),
         .out_data(cic_out)
     );
@@ -195,6 +203,9 @@ module cic_decimator_fir#(
 
     // FIR filter stage.
     // Our inputs are integers, but we treat them as fixed-point in the range [-1,+1).
+    // We assume that the period when u_fir.in_ready is low is shorter than the decimation rate; otherwise, the FIR
+    // will skip samples. This condition is trivial to ensure in all meaningful scenarios, no handling required:
+    // the FIR non-readiness spans only a few clk periods and the decimated signal rate is orders of magnitude slower.
     // verilator lint_off PINCONNECTEMPTY
     fir#(
         .ORDER(NFIR),

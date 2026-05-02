@@ -19,6 +19,26 @@ filesets:
     files: [tb/cic_decimator_tb.v]
     file_type: verilogSource
 
+  tb_cic_decimator_stagger:
+    files: [tb/cic_decimator_stagger_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_impulse:
+    files: [tb/cic_decimator_impulse_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_response:
+    files: [tb/cic_decimator_response_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_min_width:
+    files: [tb/cic_decimator_min_width_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_input_stagger:
+    files: [tb/cic_decimator_input_stagger_tb.v]
+    file_type: verilogSource
+
   tb_cic_decimator_fir:
     files:
       - tb/cic_decimator_fir_tb.v:
@@ -34,6 +54,22 @@ filesets:
       - tb/147d03e66aec665a.fir.memb:
           file_type: user
           copyto: 147d03e66aec665a.fir.memb
+
+  tb_cic_decimator_fir_phase:
+    files:
+      - tb/cic_decimator_fir_phase_tb.v:
+          file_type: verilogSource
+      - tb/147d03e66aec665a.fir.memb:
+          file_type: user
+          copyto: 147d03e66aec665a.fir.memb
+
+  tb_cic_decimator_fir_scale_delay:
+    files:
+      - tb/cic_decimator_fir_scale_delay_tb.v:
+          file_type: verilogSource
+      - tb/half2_q1_15.fir.memb:
+          file_type: user
+          copyto: half2_q1_15.fir.memb
 
 targets:
   default:
@@ -55,6 +91,46 @@ targets:
       icarus:
         iverilog_options: [-Wall, -Wno-timescale]
 
+  sim_cic_decimator_stagger:
+    filesets: [rtl, tb_cic_decimator_stagger]
+    toplevel: cic_decimator_stagger_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_impulse:
+    filesets: [rtl, tb_cic_decimator_impulse]
+    toplevel: cic_decimator_impulse_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_response:
+    filesets: [rtl, tb_cic_decimator_response]
+    toplevel: cic_decimator_response_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_min_width:
+    filesets: [rtl, tb_cic_decimator_min_width]
+    toplevel: cic_decimator_min_width_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_input_stagger:
+    filesets: [rtl, tb_cic_decimator_input_stagger]
+    toplevel: cic_decimator_input_stagger_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
   sim_cic_decimator_fir:
     filesets: [rtl, tb_cic_decimator_fir]
     toplevel: cic_decimator_fir_tb
@@ -66,6 +142,22 @@ targets:
   sim_cic_decimator_fir_impulse:
     filesets: [rtl, tb_cic_decimator_fir_impulse]
     toplevel: cic_decimator_fir_impulse_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_fir_phase:
+    filesets: [rtl, tb_cic_decimator_fir_phase]
+    toplevel: cic_decimator_fir_phase_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_fir_scale_delay:
+    filesets: [rtl, tb_cic_decimator_fir_scale_delay]
+    toplevel: cic_decimator_fir_scale_delay_tb
     default_tool: icarus
     tools:
       icarus:

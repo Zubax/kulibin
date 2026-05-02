@@ -2,7 +2,7 @@
 """
 Utilities for basic analysis of a CIC decimation filter.
 Single-bit inputs, which are common in sigma-delta ADCs, are represented as a 2-bit signed integer:
-zero maps to -1, one maps to +1 (values 0 and -2 are unused/inadmissible).
+zero maps to +1, one maps to -1 (values 0 and -2 are unused/inadmissible).
 """
 
 import math

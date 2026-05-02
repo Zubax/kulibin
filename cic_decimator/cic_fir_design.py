@@ -84,6 +84,7 @@ def cic_fir_kernel(
     G_cic = cic_gain(R=R_cic, M=M_cic, N=N_cic, f=0)  # CIC DC gain
     output_bits = 2 + math.ceil(math.log2(G_cic))  # Plus the sign bit
     print(f"CIC DC gain {G_cic} requires {output_bits}-bit output incl. sign bit")
+
     # Design the FIR kernel such that the total passband gain of the combined filter is flat one.
     # For that, sample the actual gain of the CIC in the passband, and use the reciprocal as the FIR gain.
     f_pass_samples = np.linspace(0, f_pass_max, 1000)
@@ -104,6 +105,8 @@ def cic_fir_kernel(
         nfreqs=4097,
         fs=f_s_fir,
     )
+    assert round(math.log2(G_cic), 6) == round(math.log2(G_cic)), \
+        "Non-pow2 CIC gain requires a non-unity FIR DC gain, which is not yet implemented"
     return kernel / sum(kernel)  # Ensure unity DC gain.
 
 

@@ -6,6 +6,7 @@ Fixpoint is specified in the Q-format, with the integer bits including the sign 
 """
 
 import sys
+import re
 from pathlib import Path
 from hashlib import sha256
 from typing import Literal
@@ -100,15 +101,72 @@ def fir_kernel_to_verilog_fixpoint(q: tuple[int, int], kernel: np.ndarray) -> st
     return stem
 
 
-def fir_plot(*, f_s: float, kernel_real: np.ndarray, kernel_quantized: np.ndarray, title: str, out: str) -> None:
-    w_r, h_r = freqz(kernel_real,      whole=True, fs=f_s)
-    w_q, h_q = freqz(kernel_quantized, whole=True, fs=f_s)
+def fir_kernel_from_verilog_fixpoint(kernel: str | Path) -> tuple[tuple[int, int], np.ndarray]:
+    """
+    Imports FIR coefficients from a Verilog memb file. The file is expected to state the q-format in the comments.
+    Returns the detected q-format and the parsed kernel coefficients.
+    """
+    if isinstance(kernel, Path):
+        text = kernel.read_text()
+        source = str(kernel)
+    else:
+        text = kernel
+        source = "<string>"
+        if "\n" not in kernel and "\r" not in kernel:
+            path = Path(kernel)
+            try:
+                if path.exists():
+                    text = path.read_text()
+                    source = str(path)
+            except OSError:
+                pass
 
+    header_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            header_lines.append(line)
+        else:
+            break
+
+    q_match = re.search(r"\bq([1-9]\d*)\.(\d+)\b", "\n".join(header_lines))
+    if not q_match:
+        raise ValueError(f"{source}: missing q-format in header comment")
+    q = int(q_match.group(1)), int(q_match.group(2))
+    width = sum(q)
+
+    values: list[str] = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        value = line.split("//", 1)[0].strip().replace("_", "")
+        if not value:
+            continue
+        if not re.fullmatch(r"[01]+", value):
+            raise ValueError(f"{source}:{line_no}: expected a binary coefficient, got {value!r}")
+        if len(value) != width:
+            raise ValueError(f"{source}:{line_no}: q{q[0]}.{q[1]} requires {width} bits, got {len(value)}")
+        values.append(value)
+    if not values:
+        raise ValueError(f"{source}: no FIR coefficients found")
+    return q, np.array([from_fixpoint(q, value) for value in values], dtype=float)
+
+
+def fir_plot(
+    *,
+    f_s: float,
+    kernel_real: np.ndarray | None = None,
+    kernel_quantized: np.ndarray,
+    title: str,
+    out: str,
+) -> None:
     fig, ax1 = plt.subplots(figsize=(12, 9))
 
-    # Full response
-    ax1.plot(w_q,  np.abs(h_q), color='k', linestyle='-', linewidth=1.0, label="quantized")
-    ax1.plot(w_r,  np.abs(h_r), color='r', linestyle=':', linewidth=1.0, label="real")
+    w_q, h_q = freqz(kernel_quantized, whole=True, fs=f_s)
+    ax1.plot(w_q, np.abs(h_q), color='k', linestyle='-', linewidth=1.0, label="quantized")
+
+    if kernel_real is not None:
+        w_r, h_r = freqz(kernel_real, whole=True, fs=f_s)
+        ax1.plot(w_r, np.abs(h_r), color='r', linestyle=':', linewidth=1.0, label="real")
+
     ax1.set_ylabel("Magnitude [1]")
     ax1.grid(True, which='both')
     ax1.legend(loc="best")
