@@ -24,6 +24,9 @@ TARGETS = \
 	zubax:kulibin:float::sim_pack_min \
 	zubax:kulibin:float::sim_pack_manual \
 	zubax:kulibin:float::sim_pack_random \
+	zubax:kulibin:float::sim_mul_min \
+	zubax:kulibin:float::sim_mul_manual \
+	zubax:kulibin:float::sim_mul_random \
 	zubax:kulibin:cic_decimator::sim_comb_m1 \
 	zubax:kulibin:cic_decimator::sim_cic_decimator \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_stagger \

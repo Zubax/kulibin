@@ -465,4 +465,12 @@ The verification suite must run against Icarus Verilog and Verilator. Full state
 
 Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like target, speed grade 6. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least the maximum clock frequency, worst slack paths, and LUT usage for each module using exp=7 bits, significand=17 bits (for a total of 24 bits) for reference. There must be a separate synthesizer run / synthesis target per module such that we could evaluate each one independently, including the internal helper modules (the ones named with the underscore), except for the purely combinational ones.
 
-The reason we default to WEXP=7 WMAN=17 is that it results in a sufficient precision and range suitable for most of our use cases while separating the exponent and the fraction bits neatly at a byte boundary: 8 bits for the sign and the exponent plus 16 fraction bits for a total of exactly 3 bytes. Other formats of interest to verify are the IEEE754-like arrangements of (WEXP=8 WMAN=24) and (WEXP=11 WMAN=53).
+The most interesting sizes are:
+
+- WEXP=7 WMAN=17: An MCU-friendly format with clean byte alignment: 8 bits for the sign and the exponent, 16 bits for the fractional bits.
+
+- WEXP=? WMAN=18: An FPGA-friendly format because modern DSP-enabled FPGAs usually implement 18x18 bit multipliers, which means that a narrower mantissa is unlikely to save much resources or nontrivially improve timings as long as hardware multipliers are used. If a maximum value of 8589901824 ≈ 8.59e+09 is sufficient, one can still stay within 24 bits total by choosing WEXP=6.
+
+- WEXP=5  WMAN=11: IEEE 754 binary16-like
+- WEXP=8  WMAN=24: IEEE 754 binary32-like
+- WEXP=11 WMAN=53: IEEE 754 binary64-like

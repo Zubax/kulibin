@@ -7,6 +7,7 @@ filesets:
     files:
       - hdl/_zkf_ilog2_floor.v
       - hdl/_zkf_pack.v
+      - hdl/zkf_mul.v
     file_type: verilogSource
 
   tb_pack_min:
@@ -26,6 +27,24 @@ filesets:
       - tb/pack_random_vectors.memh:
           file_type: user
           copyto: pack_random_vectors.memh
+
+  tb_mul_min:
+    files:
+      - tb/zkf_mul_min_tb.v
+    file_type: verilogSource
+
+  tb_mul_manual:
+    files:
+      - tb/zkf_mul_manual_tb.v
+    file_type: verilogSource
+
+  tb_mul_random:
+    files:
+      - tb/zkf_mul_random_tb.v:
+          file_type: verilogSource
+      - tb/mul_random_vectors.memh:
+          file_type: user
+          copyto: mul_random_vectors.memh
 
 targets:
   default:
@@ -50,6 +69,30 @@ targets:
   sim_pack_random:
     filesets: [rtl, tb_pack_random]
     toplevel: _zkf_pack_random_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_mul_min:
+    filesets: [rtl, tb_mul_min]
+    toplevel: zkf_mul_min_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_mul_manual:
+    filesets: [rtl, tb_mul_manual]
+    toplevel: zkf_mul_manual_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_mul_random:
+    filesets: [rtl, tb_mul_random]
+    toplevel: zkf_mul_random_tb
     default_tool: icarus
     tools:
       icarus:

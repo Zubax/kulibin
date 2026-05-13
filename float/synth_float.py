@@ -22,6 +22,7 @@ TARGET_FREQ_MHZ = 100
 class ModuleSpec:
     name: str
     top: str
+    kind: str
     wexp: int
     wman: int
     wmag: int
@@ -32,10 +33,20 @@ MODULES = [
     ModuleSpec(
         name="_zkf_pack",
         top="_zkf_pack_synth_top",
+        kind="pack",
         wexp=7,
         wman=17,
         wmag=34,
         wscale=8,
+    ),
+    ModuleSpec(
+        name="zkf_mul",
+        top="zkf_mul_synth_top",
+        kind="mul",
+        wexp=7,
+        wman=17,
+        wmag=0,
+        wscale=0,
     ),
 ]
 
@@ -86,10 +97,50 @@ endmodule
     )
 
 
+def write_mul_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    zkf_mul dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(in_valid),
+        .a(a),
+        .b(b),
+        .out_valid(out_valid),
+        .y(y)
+    );
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_wrapper(spec: ModuleSpec, path: Path) -> None:
+    if spec.kind == "pack":
+        write_pack_wrapper(spec, path)
+    elif spec.kind == "mul":
+        write_mul_wrapper(spec, path)
+    else:
+        raise ValueError(f"unsupported module kind: {spec.kind}")
+
+
 def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: Path) -> None:
     rtl = [
         REPO / "float" / "hdl" / "_zkf_ilog2_floor.v",
         REPO / "float" / "hdl" / "_zkf_pack.v",
+        REPO / "float" / "hdl" / "zkf_mul.v",
         wrapper,
     ]
     script.write_text(
@@ -390,7 +441,7 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
     yosys_log = module_dir / "yosys.log"
     nextpnr_log = module_dir / "nextpnr.log"
 
-    write_pack_wrapper(spec, wrapper)
+    write_wrapper(spec, wrapper)
     write_yosys_script(spec, wrapper, netlist, yosys_script)
 
     yosys = os.environ.get("YOSYS", "yosys")
@@ -429,9 +480,14 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
         ff_util = utilization.get("TRELLIS_FF")
         if isinstance(ff_util, dict) and isinstance(ff_util.get("used"), int):
             nextpnr_ff = ff_util["used"]
+    if spec.kind == "pack":
+        params = f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, WSCALE={spec.wscale}"
+    else:
+        params = f"WEXP={spec.wexp}, WMAN={spec.wman}"
+
     return {
         "name": spec.name,
-        "params": f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, WSCALE={spec.wscale}",
+        "params": params,
         "fmax": parse_fmax(nextpnr_text, report_data),
         "target": f"{TARGET_FREQ_MHZ} MHz",
         "status": "PASS" if timing_met(report_data) else "FAIL",
