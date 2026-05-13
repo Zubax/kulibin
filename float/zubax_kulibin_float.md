@@ -188,7 +188,7 @@ Internal helper modules are underscore-prefixed like `_zkf_`.
 ## 5. Add/Subtract
 
 ```verilog
-zkf_addsub #(parameter int WEXP = 8, parameter int WMAN = 16)(
+zkf_addsub #(parameter int WEXP = 7, parameter int WMAN = 17)(
     input  wire clk,
     input  wire rst,
 
@@ -223,7 +223,7 @@ A 3–6 stage pipeline is acceptable.
 Streaming, no stalling.
 
 ```verilog
-zkf_mul #(parameter int WEXP = 8, parameter int WMAN = 16) (
+zkf_mul #(parameter int WEXP = 7, parameter int WMAN = 17) (
     input  wire clk,
     input  wire rst,
 
@@ -258,7 +258,7 @@ A 4-7 stage pipeline is acceptable.
 Combined quotient/residual module, streamed, zero-bubble:
 
 ```verilog
-zkf_divrem #(parameter int WEXP = 8, parameter int WMAN = 16)(
+zkf_divrem #(parameter int WEXP = 7, parameter int WMAN = 17)(
     input  wire clk,
     input  wire rst,
 
@@ -326,8 +326,8 @@ latency about ceil((WMAN + extra_round_bits) / 2) + small constant
 
 ```verilog
 zkf_from_sint #(
-    parameter int WEXP = 8,
-    parameter int WMAN = 16,
+    parameter int WEXP = 7,
+    parameter int WMAN = 17,
     parameter int WINT = 32
 ) (
     input  wire clk,
@@ -364,8 +364,8 @@ zero input maps to canonical +0
 
 ```verilog
 zkf_to_sint #(
-    parameter int WEXP = 8,
-    parameter int WMAN = 16,
+    parameter int WEXP = 7,
+    parameter int WMAN = 17,
     parameter int WINT = 32
 ) (
     input  wire clk,
@@ -400,8 +400,8 @@ Zero maps to integer zero.
 
 ```verilog
 zkf_resize #(
-    parameter int WEXP_IN  = 8,
-    parameter int WMAN_IN  = 16,
+    parameter int WEXP_IN  = 7,
+    parameter int WMAN_IN  = 17,
     parameter int WEXP_OUT = 5,
     parameter int WMAN_OUT = 11
 ) (
@@ -464,3 +464,5 @@ This format deliberately avoids IEEE-754 corner cases. The only special value is
 The verification suite must run against Icarus Verilog and Verilator. Full state space exploration with verification is required for small exponent/mantissa configurations; target approx. WEXP=3 and WMAN=4. Larger sizes to be tested with random test vectors. Explicit manual tests covering all edge cases and representative normal behaviors are required.
 
 Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like target, speed grade 6. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least the maximum clock frequency, worst slack paths, and LUT usage for each module using exp=7 bits, significand=17 bits (for a total of 24 bits) for reference. There must be a separate synthesizer run / synthesis target per module such that we could evaluate each one independently, including the internal helper modules (the ones named with the underscore), except for the purely combinational ones.
+
+The reason we default to WEXP=7 WMAN=17 is that it results in a sufficient precision and range suitable for most of our use cases while separating the exponent and the fraction bits neatly at a byte boundary: 8 bits for the sign and the exponent plus 16 fraction bits for a total of exactly 3 bytes. Other formats of interest to verify are the IEEE754-like arrangements of (WEXP=8 WMAN=24) and (WEXP=11 WMAN=53).
