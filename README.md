@@ -31,6 +31,12 @@ To simulate one specific target instead of the full library, run e.g.
 
 See CI files in `.github/`.
 
+### Synthesis evaluation
+
+    make synth-float
+
+This runs Yosys/nextpnr writes `build/*/index.html` with timing and utilization summaries.
+
 <!-- hierarchy-start -->
 ## Module dependency graph
 
@@ -43,6 +49,7 @@ graph TD
     cic_decimator --> numeric
     counter
     fir --> numeric
+    float
     freqdiv
     iir --> numeric
     nco
