@@ -152,6 +152,27 @@ output wire out_valid;
 
 All outputs must be canonical. Any input with `exponent == 0` must be treated as zero.
 
+## 4.1. Reset Strategy
+
+Use synchronous active-high reset for stream control only: validity flags, state-machine state, and other control
+registers that define whether an output transaction is meaningful. Avoid resetting pure datapath registers whose
+contents are ignored while their associated valid flag is deasserted. This keeps high-fanout reset nets out of wide
+payload cones, reduces control-set pressure, and gives synthesis/place-and-route more freedom to retime and optimize
+pipeline registers.
+
+One subtle point: do not write the datapath assignment only in the reset-else branch, as it still makes data depend on
+rst because the register is held during reset. A better strategy is to make datapath manipulation reset-unconditional
+and only keep the control signals under rst/else.
+
+References:
+
+- AMD UG949, "When and Where to Use a Reset":
+  <https://docs.amd.com/r/en-US/ug949-vivado-design-methodology/When-and-Where-to-Use-a-Reset>
+- Intel Hyperflex Architecture High-Performance Design Handbook, "Synchronous Resets Summary":
+  <https://docs.altera.com/r/docs/683353/25.1.1/hyperflex-architecture-high-performance-design-handbook/synchronous-resets-summary?contentId=vgtR8yUs_Z5DH0ApHJFiTQ>
+- Intel Hyperflex Architecture High-Performance Design Handbook, "Reset Strategies":
+  <https://docs.altera.com/r/docs/683353/25.1.1/hyperflex-architecture-high-performance-design-handbook/reset-strategies?contentId=gzd92HdsL40qZGHurB0ezg>
+
 ---
 
 # Required Modules

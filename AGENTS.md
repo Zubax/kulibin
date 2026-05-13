@@ -17,6 +17,29 @@ Python helper scripts commonly require NumPy, SciPy, SymPy, and matplotlib.
 
 ## Conventions
 
+### Reset strategy
+
+Use synchronous active-high reset for stream control only: validity flags, state-machine state, and other control
+registers that define whether an output transaction is meaningful. Avoid resetting pure datapath registers whose
+contents are ignored while their associated valid flag is deasserted. This keeps high-fanout reset nets out of wide
+payload cones, reduces control-set pressure, and gives synthesis/place-and-route more freedom to retime and optimize
+pipeline registers.
+
+One subtle point: do not write the datapath assignment only in the reset-else branch, as it still makes data depend on
+rst because the register is held during reset. A better strategy is to make datapath manipulation reset-unconditional
+and only keep the control signals under rst/else.
+
+References:
+
+- AMD UG949, "When and Where to Use a Reset":
+  <https://docs.amd.com/r/en-US/ug949-vivado-design-methodology/When-and-Where-to-Use-a-Reset>
+- Intel Hyperflex Architecture High-Performance Design Handbook, "Synchronous Resets Summary":
+  <https://docs.altera.com/r/docs/683353/25.1.1/hyperflex-architecture-high-performance-design-handbook/synchronous-resets-summary?contentId=vgtR8yUs_Z5DH0ApHJFiTQ>
+- Intel Hyperflex Architecture High-Performance Design Handbook, "Reset Strategies":
+  <https://docs.altera.com/r/docs/683353/25.1.1/hyperflex-architecture-high-performance-design-handbook/reset-strategies?contentId=gzd92HdsL40qZGHurB0ezg>
+
+### Language
+
 Use Verilog consistent with the existing RTL: 4-space indentation, concise module names, snake_case files and directories, and uppercase parameter/localparam names where practical. Keep line length at or below 120 columns, matching `.rules.verible_lint`. Testbenches should be named `<module>_tb.v`, include explicit assertions using `$fatal` or the local `` `REQUIRE `` macro pattern, and declare `` `timescale `` plus `` `default_nettype none `` when adding new benches. FuseSoC core names follow `zubax:kulibin:<module>:0`; target names use `sim` or `sim_<case>`.
 
 The following constructs are banned in synthesizable Verilog (fine in testbenches):
@@ -24,6 +47,7 @@ The following constructs are banned in synthesizable Verilog (fine in testbenche
 - Any form of `always` except for `always @(posedge clk)`.
 - Blocking register assignment.
 - Functions.
+
 
 ## Verification
 

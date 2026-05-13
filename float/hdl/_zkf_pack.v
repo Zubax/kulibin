@@ -103,64 +103,43 @@ module _zkf_pack #(
     wire [WFULL-1:0] s3_normal_y = {s3_sign, s3_exp_biased[WEXP-1:0], s3_significand[WFRAC-1:0]};
     wire [WFULL-1:0] s3_y = s3_result_zero ? s3_zero_y : (s3_result_saturated ? s3_saturated_y : s3_normal_y);
 
+    // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
         if (rst) begin
             s1_valid <= 1'b0;
-            s1_sign <= 1'b0;
-            s1_zero <= 1'b1;
-            s1_mag <= 0;
-            s1_scale <= 0;
-            s1_log2 <= 0;
-
             s2_valid <= 1'b0;
-            s2_sign <= 1'b0;
-            s2_zero <= 1'b1;
-            s2_underflow <= 1'b1;
-            s2_exp_biased <= 0;
-            s2_significand <= 0;
-            s2_guard <= 1'b0;
-            s2_round <= 1'b0;
-            s2_sticky <= 1'b0;
-
             s3_valid <= 1'b0;
-            s3_sign <= 1'b0;
-            s3_zero <= 1'b1;
-            s3_underflow <= 1'b1;
-            s3_exp_biased <= 0;
-            s3_significand <= 0;
-
             out_valid <= 1'b0;
-            y <= 0;
-            saturated <= 1'b0;
         end else begin
             s1_valid <= in_valid;
-            s1_sign <= sign;
-            s1_zero <= mag_zero;
-            s1_mag <= mag;
-            s1_scale <= scale;
-            s1_log2 <= mag_log2;
-
             s2_valid <= s1_valid;
-            s2_sign <= s1_sign;
-            s2_zero <= s1_zero;
-            s2_underflow <= (s1_exp_biased <= 0);
-            s2_exp_biased <= s1_exp_biased;
-            s2_significand <= s1_significand;
-            s2_guard <= s1_guard;
-            s2_round <= s1_round;
-            s2_sticky <= s1_sticky;
-
             s3_valid <= s2_valid;
-            s3_sign <= s2_sign;
-            s3_zero <= s2_zero;
-            s3_underflow <= s2_underflow;
-            s3_exp_biased <= s2_exp_rounded;
-            s3_significand <= s2_rounded_significand;
-
             out_valid <= s3_valid;
-            y <= s3_y;
-            saturated <= s3_result_saturated;
         end
+
+        s1_sign <= sign;
+        s1_zero <= mag_zero;
+        s1_mag <= mag;
+        s1_scale <= scale;
+        s1_log2 <= mag_log2;
+
+        s2_sign <= s1_sign;
+        s2_zero <= s1_zero;
+        s2_underflow <= (s1_exp_biased <= 0);
+        s2_exp_biased <= s1_exp_biased;
+        s2_significand <= s1_significand;
+        s2_guard <= s1_guard;
+        s2_round <= s1_round;
+        s2_sticky <= s1_sticky;
+
+        s3_sign <= s2_sign;
+        s3_zero <= s2_zero;
+        s3_underflow <= s2_underflow;
+        s3_exp_biased <= s2_exp_rounded;
+        s3_significand <= s2_rounded_significand;
+
+        y <= s3_y;
+        saturated <= s3_result_saturated;
     end
 endmodule
 

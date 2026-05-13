@@ -126,8 +126,6 @@ module _zkf_pack_manual_tb;
             @(posedge clk);
             #1;
             `REQUIRE(out_valid === 1'b0);
-            `REQUIRE(y === 0);
-            `REQUIRE(saturated === 1'b0);
         end
 
         rst = 1'b0;
