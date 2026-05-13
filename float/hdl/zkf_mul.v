@@ -57,21 +57,15 @@ module zkf_mul #(
     reg [WMAG-1:0] s2_mag;
     reg signed [WSCALE-1:0] s2_scale;
 
-    // Stage 3: retiming register before the packer.
-    reg s3_valid;
-    reg s3_sign;
-    reg [WMAG-1:0] s3_mag;
-    reg signed [WSCALE-1:0] s3_scale;
-
     wire pack_saturated;
 
     _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WSCALE(WSCALE)) u_pack (
         .clk(clk),
         .rst(rst),
-        .in_valid(s3_valid),
-        .sign(s3_sign),
-        .mag(s3_mag),
-        .scale(s3_scale),
+        .in_valid(s2_valid),
+        .sign(s2_sign),
+        .mag(s2_mag),
+        .scale(s2_scale),
         .out_valid(out_valid),
         .y(y),
         .saturated(pack_saturated)
@@ -82,11 +76,9 @@ module zkf_mul #(
         if (rst) begin
             s1_valid <= 1'b0;
             s2_valid <= 1'b0;
-            s3_valid <= 1'b0;
         end else begin
             s1_valid <= in_valid;
             s2_valid <= s1_valid;
-            s3_valid <= s2_valid;
         end
 
         s1_a <= a;
@@ -95,10 +87,6 @@ module zkf_mul #(
         s2_sign <= s1_a_sign ^ s1_b_sign;
         s2_mag <= s1_a_significand * s1_b_significand;
         s2_scale <= s1_decoded_scale;
-
-        s3_sign <= s2_sign;
-        s3_mag <= s2_mag;
-        s3_scale <= s2_scale;
     end
 endmodule
 

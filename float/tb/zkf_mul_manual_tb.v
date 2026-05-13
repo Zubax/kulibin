@@ -9,7 +9,7 @@ module zkf_mul_manual_tb;
     localparam WEXP = 8;
     localparam WMAN = 24;
     localparam WFULL = WEXP + WMAN;
-    localparam LATENCY = 5;
+    localparam LATENCY = 4;
 
     localparam DEFAULT_WEXP = 6;
     localparam DEFAULT_WMAN = 18;
