@@ -19,6 +19,11 @@ Python helper scripts commonly require NumPy, SciPy, SymPy, and matplotlib.
 
 Use Verilog consistent with the existing RTL: 4-space indentation, concise module names, snake_case files and directories, and uppercase parameter/localparam names where practical. Keep line length at or below 120 columns, matching `.rules.verible_lint`. Testbenches should be named `<module>_tb.v`, include explicit assertions using `$fatal` or the local `` `REQUIRE `` macro pattern, and declare `` `timescale `` plus `` `default_nettype none `` when adding new benches. FuseSoC core names follow `zubax:kulibin:<module>:0`; target names use `sim` or `sim_<case>`.
 
+The following constructs are banned in synthesizable Verilog (fine in testbenches):
+
+- Any form of `always` except for `always @(posedge clk)`.
+- Functions.
+
 ## Verification
 
 Add or update a testbench for behavioral changes to RTL. Keep focused unit benches near the module under `tb/`, and register new filesets/targets in the module `.core` file. Before submitting changes, run `make lint` and `make verify`; for narrow edits, also run the affected `fusesoc run --target=...` command directly during development.
