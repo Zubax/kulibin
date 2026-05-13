@@ -26,8 +26,8 @@ The design goal is **simplicity, verifiability, and predictable FPGA cost**, not
 Use two main parameters:
 
 ```verilog
-WEXP >= 3          // exponent field width
-WMAN >= 4          // total significand precision, including hidden leading 1
+WEXP >= 2          // exponent field width
+WMAN >= 3          // total significand precision, including hidden leading 1
 ```
 
 Stored fraction width:
@@ -159,7 +159,7 @@ All outputs must be canonical. Any input with `exponent == 0` must be treated as
 Arguments and results of all public (end-user) modules must be registered because the results may be fed by long
 combinational circuits or be assigned from memory. This requirement does not apply to internal helper modules.
 
-Arbitrary hardcoded widths are not allowed; all width parameters must be ultimately derived from WEXP/WMAN.
+Arbitrary hardcoded widths are not allowed; all width parameters must be ultimately derived from WEXP and WMAN.
 
 Modules are prefixed with `zkf_` meaning "Zubax Kulibin float".
 Internal helper modules are underscore-prefixed like `_zkf_`.
@@ -442,4 +442,4 @@ This format deliberately avoids IEEE-754 corner cases. The only special value is
 
 The verification suite must run against Icarus Verilog and Verilator. Full state space exploration with verification is required for small exponent/mantissa configurations; target approx. WEXP=3 and WMAN=4. Larger sizes to be tested with random test vectors. Explicit manual tests covering all edge cases and representative normal behaviors are required.
 
-Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like target, speed grade 8. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least the maximum clock frequency, worst slack paths, and LUT usage for each component using exp=7 bits, significand=17 bits (for a total of 24 bits) for reference.
+Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like target, speed grade 8. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least the maximum clock frequency, worst slack paths, and LUT usage for each module using exp=7 bits, significand=17 bits (for a total of 24 bits) for reference. There must be a separate synthesizer run / synthesis target per module such that we could evaluate each one independently, including the internal helper modules (the ones named with the underscore), except for the purely combinational ones.
