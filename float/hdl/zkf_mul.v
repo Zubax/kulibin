@@ -6,8 +6,8 @@
 `default_nettype none
 
 module zkf_mul #(
-    parameter WEXP = 7,      // exponent field width
-    parameter WMAN = 17      // significand precision including the hidden bit
+    parameter WEXP = 6,      // exponent field width
+    parameter WMAN = 18      // significand precision including the hidden bit
 ) (
     input  wire                 clk,
     input  wire                 rst,

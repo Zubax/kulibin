@@ -11,8 +11,8 @@ module zkf_mul_manual_tb;
     localparam WFULL = WEXP + WMAN;
     localparam LATENCY = 5;
 
-    localparam DEFAULT_WEXP = 7;
-    localparam DEFAULT_WMAN = 17;
+    localparam DEFAULT_WEXP = 6;
+    localparam DEFAULT_WMAN = 18;
     localparam DEFAULT_WFULL = DEFAULT_WEXP + DEFAULT_WMAN;
 
     reg clk = 1'b0;
@@ -166,8 +166,8 @@ module zkf_mul_manual_tb;
             a = 32'h3f800000;
             b = 32'h7fffffff;
             default_in_valid = 1'b1;
-            default_a = 24'h3f0000;
-            default_b = 24'h3f0000;
+            default_a = 24'h3e0000;
+            default_b = 24'h3e0000;
             @(posedge clk);
             #1;
             `REQUIRE(out_valid === 1'b0);
@@ -232,7 +232,7 @@ module zkf_mul_manual_tb;
         drive_case(17, 32'h3f800001, 32'h3fa00000, 32'h3fa00001);  // round down
         drive_case(18, 32'h3f800001, 32'h3fe00000, 32'h3fe00002);  // round up
 
-        drive_default_case(24'h3f0000, 24'h3f0000, 24'h3f0000);    // default WEXP=7, WMAN=17
+        drive_default_case(24'h3e0000, 24'h3e0000, 24'h3e0000);    // default WEXP=6, WMAN=18
 
         for (flush_i = 0; flush_i < LATENCY + 2; flush_i = flush_i + 1) begin
             drive_invalid();
