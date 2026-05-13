@@ -22,6 +22,7 @@ Use Verilog consistent with the existing RTL: 4-space indentation, concise modul
 The following constructs are banned in synthesizable Verilog (fine in testbenches):
 
 - Any form of `always` except for `always @(posedge clk)`.
+- Blocking register assignment.
 - Functions.
 
 ## Verification

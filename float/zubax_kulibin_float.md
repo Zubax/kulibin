@@ -156,7 +156,13 @@ All outputs must be canonical. Any input with `exponent == 0` must be treated as
 
 # Required Modules
 
+Arguments and results of all public (end-user) modules must be registered because the results may be fed by long
+combinational circuits or be assigned from memory. This requirement does not apply to internal helper modules.
+
+Arbitrary hardcoded widths are not allowed; all width parameters must be ultimately derived from WEXP/WMAN.
+
 Modules are prefixed with `zkf_` meaning "Zubax Kulibin float".
+Internal helper modules are underscore-prefixed like `_zkf_`.
 
 ## 5. Add/Subtract
 
@@ -404,36 +410,6 @@ narrowing rounds to nearest ties-to-even
 widening is exact unless exponent range changes
 target underflow flushes to zero
 target overflow saturates
-```
-
----
-
-## 11. Optional auxiliary modules
-
-It is likely that the following auxiliary helper modules may be needed:
-
-```verilog
-// Combinational leading 1 detector.
-module zkf_leading_1_detector #(parameter W = 64, parameter WINDEX = $clog2(W))(
-    input  wire [W-1:0]      x,
-    output wire              zero,
-    output wire [WINDEX-1:0] index
-);
-
-// This is only a sketch, adjust as needed.
-module zkf_pack #(parameter WEXP = 8, parameter WMAN = 16, parameter WMAG = 32, parameter WSCALE = WEXP + 2) (
-    input  wire clk,
-    input  wire rst,
-
-    input  wire                     in_valid,
-    input  wire                     sign,
-    input  wire [WMAG-1:0]          mag,
-    input  wire signed [WSCALE-1:0] scale,
-
-    output wire                  out_valid,
-    output wire [WEXP+WMAN-1:0]  y,
-    output wire                  saturated
-);
 ```
 
 ---
