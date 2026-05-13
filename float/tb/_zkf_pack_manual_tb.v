@@ -11,7 +11,7 @@ module _zkf_pack_manual_tb;
     localparam WMAG = 16;
     localparam WSCALE = 6;
     localparam WFULL = WEXP + WMAN;
-    localparam LATENCY = 3;
+    localparam LATENCY = 2;
 
     reg clk = 1'b0;
     always #5 clk = !clk;

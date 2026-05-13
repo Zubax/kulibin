@@ -115,35 +115,24 @@ module _zkf_pack #(
         s2_round_carry ? s2_rounded_ext[WMAN:1] : s2_rounded_ext[WMAN-1:0];
     wire [WEXP-1:0] s2_exp_rounded = s2_exp_biased + {{(WEXP-1){1'b0}}, s2_round_carry};
 
-    // Stage 3: rounded value with saturation/underflow decisions.
-    reg s3_valid;
-    reg s3_sign;
-    reg s3_zero;
-    reg s3_underflow;
-    reg s3_saturated;
-    reg [WEXP-1:0] s3_exp_biased;
-    reg [WMAN-1:0] s3_significand;
-
     // Final packing is deliberately outside the reset branch; only validity is reset.
-    wire s3_result_zero = s3_zero || s3_underflow;
-    wire s3_result_saturated = !s3_result_zero && s3_saturated;
-    wire [WFULL-1:0] s3_zero_y = {WFULL{1'b0}};
-    wire [WFULL-1:0] s3_saturated_y = {s3_sign, EXP_MAX, {WFRAC{1'b1}}};
-    wire [WFULL-1:0] s3_normal_y = {s3_sign, s3_exp_biased, s3_significand[WFRAC-1:0]};
-    wire [WFULL-1:0] s3_y = s3_result_zero ? s3_zero_y : (s3_result_saturated ? s3_saturated_y : s3_normal_y);
+    wire s2_result_zero = s2_zero || s2_underflow;
+    wire s2_result_saturated = !s2_result_zero && s2_saturated;
+    wire [WFULL-1:0] s2_zero_y = {WFULL{1'b0}};
+    wire [WFULL-1:0] s2_saturated_y = {s2_sign, EXP_MAX, {WFRAC{1'b1}}};
+    wire [WFULL-1:0] s2_normal_y = {s2_sign, s2_exp_rounded, s2_rounded_significand[WFRAC-1:0]};
+    wire [WFULL-1:0] s2_y = s2_result_zero ? s2_zero_y : (s2_result_saturated ? s2_saturated_y : s2_normal_y);
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
         if (rst) begin
             s1_valid <= 1'b0;
             s2_valid <= 1'b0;
-            s3_valid <= 1'b0;
             out_valid <= 1'b0;
         end else begin
             s1_valid <= in_valid;
             s2_valid <= s1_valid;
-            s3_valid <= s2_valid;
-            out_valid <= s3_valid;
+            out_valid <= s2_valid;
         end
 
         // Stage 1 capture.
@@ -164,17 +153,9 @@ module _zkf_pack #(
         s2_round <= s1_round;
         s2_sticky <= s1_sticky;
 
-        // Stage 3 capture: rounded value and final status.
-        s3_sign <= s2_sign;
-        s3_zero <= s2_zero;
-        s3_underflow <= s2_underflow;
-        s3_saturated <= s2_saturated;
-        s3_exp_biased <= s2_exp_rounded;
-        s3_significand <= s2_rounded_significand;
-
         // Output capture.
-        y <= s3_y;
-        saturated <= s3_result_saturated;
+        y <= s2_y;
+        saturated <= s2_result_saturated;
     end
 endmodule
 
