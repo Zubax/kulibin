@@ -103,10 +103,6 @@ module _zkf_pack #(
     wire [WFULL-1:0] s3_normal_y = {s3_sign, s3_exp_biased[WEXP-1:0], s3_significand[WFRAC-1:0]};
     wire [WFULL-1:0] s3_y = s3_result_zero ? s3_zero_y : (s3_result_saturated ? s3_saturated_y : s3_normal_y);
 
-    reg s4_valid;
-    reg [WFULL-1:0] s4_y;
-    reg s4_saturated;
-
     always @(posedge clk) begin
         if (rst) begin
             s1_valid <= 1'b0;
@@ -132,10 +128,6 @@ module _zkf_pack #(
             s3_underflow <= 1'b1;
             s3_exp_biased <= 0;
             s3_significand <= 0;
-
-            s4_valid <= 1'b0;
-            s4_y <= 0;
-            s4_saturated <= 1'b0;
 
             out_valid <= 1'b0;
             y <= 0;
@@ -165,13 +157,9 @@ module _zkf_pack #(
             s3_exp_biased <= s2_exp_rounded;
             s3_significand <= s2_rounded_significand;
 
-            s4_valid <= s3_valid;
-            s4_y <= s3_y;
-            s4_saturated <= s3_result_saturated;
-
-            out_valid <= s4_valid;
-            y <= s4_y;
-            saturated <= s4_saturated;
+            out_valid <= s3_valid;
+            y <= s3_y;
+            saturated <= s3_result_saturated;
         end
     end
 endmodule
