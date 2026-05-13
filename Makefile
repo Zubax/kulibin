@@ -3,6 +3,7 @@
 
 FUSESOC ?= fusesoc
 VERIBLE_VERILOG_LINT ?= verible-verilog-lint
+PYTHON ?= python3
 
 TARGETS = \
 	zubax:kulibin:nco::sim \
@@ -20,6 +21,9 @@ TARGETS = \
 	zubax:kulibin:iir::sim_lpf \
 	zubax:kulibin:iir::sim_hpf \
 	zubax:kulibin:fir::sim \
+	zubax:kulibin:float::sim_pack_min \
+	zubax:kulibin:float::sim_pack_manual \
+	zubax:kulibin:float::sim_pack_random \
 	zubax:kulibin:cic_decimator::sim_comb_m1 \
 	zubax:kulibin:cic_decimator::sim_cic_decimator \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_stagger \
@@ -35,7 +39,7 @@ TARGETS = \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim
 
-.PHONY: verify lint library clean
+.PHONY: verify lint library synth-float clean
 
 verify: library
 	@set -e; \
@@ -52,6 +56,9 @@ lint:
 
 library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true
+
+synth-float:
+	$(PYTHON) float/synth_float.py
 
 clean:
 	rm -rf build

@@ -1,0 +1,56 @@
+CAPI=2:
+name: zubax:kulibin:float:0
+description: Simple deterministic floating-point helpers
+
+filesets:
+  rtl:
+    files:
+      - hdl/_zkf_ilog2_floor.v
+      - hdl/_zkf_pack.v
+    file_type: verilogSource
+
+  tb_pack_min:
+    files:
+      - tb/_zkf_pack_min_tb.v
+    file_type: verilogSource
+
+  tb_pack_manual:
+    files:
+      - tb/_zkf_pack_manual_tb.v
+    file_type: verilogSource
+
+  tb_pack_random:
+    files:
+      - tb/_zkf_pack_random_tb.v:
+          file_type: verilogSource
+      - tb/pack_random_vectors.memh:
+          file_type: user
+          copyto: pack_random_vectors.memh
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim_pack_min:
+    filesets: [rtl, tb_pack_min]
+    toplevel: _zkf_pack_min_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_pack_manual:
+    filesets: [rtl, tb_pack_manual]
+    toplevel: _zkf_pack_manual_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_pack_random:
+    filesets: [rtl, tb_pack_random]
+    toplevel: _zkf_pack_random_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
