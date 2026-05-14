@@ -1,6 +1,6 @@
 # Zubax Kuibin floating point
 
-A small and FPGA-friendly floating point format that is similar to IEEE 754 but intentionally omits support for NaN, subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even. Numbers underflow to zero instead of subnormals. Only one canonical positive zero representation exists.
+A small and FPGA-friendly floating point format that is similar to IEEE 754 but intentionally omits support for NaN, subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even. Only one canonical positive zero representation exists.
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted. See `zkf.py` for the encoding rules.
 
@@ -12,7 +12,7 @@ The bit layout is identical to IEEE 754: sign, exponent, and the significand wit
 
 ## Semantics
 
-Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, underflow flushes to +0), no −0, no exceptions, overflow produces signed ±∞.
+Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, post-round underflow flushes to +0), no −0, no exceptions, overflow produces signed ±∞.
 
 Infinity cases that would be NaN in IEEE 754:
 

@@ -11,7 +11,7 @@ no NaN
 no subnormals
 no exception flags
 one rounding mode only: round-to-nearest, ties-to-even
-underflow-to-zero
+post-round underflow-to-zero
 overflow-to-signed-infinity
 canonical positive zero
 canonical signed infinities
@@ -110,9 +110,6 @@ if exact result is +infinity or -infinity:
 if exact finite result is zero:
     return canonical +0
 
-if exact finite abs(result) < MIN_NORMAL:
-    return canonical +0       // flush-to-zero, no subnormal rounding
-
 normalize:
     abs(result) = m * 2^e, where 1 <= m < 2
 
@@ -122,12 +119,18 @@ if rounding overflows significand:
     shift right by 1
     increment exponent
 
+if rounded exponent is below the minimum normal exponent:
+    return canonical +0       // post-round flush-to-zero; subnormals are not encoded
+
 if exponent overflows into the all-ones exponent code:
     return canonical signed infinity
 
 otherwise:
     return packed normal number
 ```
+
+Underflow is determined after rounding. Therefore, a finite exact result with magnitude below `MIN_NORMAL` may still
+produce `MIN_NORMAL` if round-to-nearest ties-to-even promotes it into the normal range.
 
 Rounding uses normal guard/round/sticky logic:
 
@@ -284,7 +287,7 @@ significands are unsigned WMAN-bit values with hidden leading 1
 multiply significands using FPGA DSP blocks, provide 2 dummy retiming stages after multiplication
 normalize product
 round-to-nearest ties-to-even
-flush underflow to zero
+flush underflow to zero after rounding
 map overflow to signed infinity
 ```
 
@@ -528,7 +531,7 @@ output zero must be canonical
 output infinity must be canonical
 narrowing rounds to nearest ties-to-even
 widening is exact unless exponent range changes
-target underflow flushes to zero
+target underflow flushes to zero after rounding
 target overflow maps to signed infinity
 ```
 
@@ -566,7 +569,7 @@ exponent==0 always decodes as zero
 exponent==all_ones always decodes as signed infinity
 zero output is always {0,0,0}
 floating-point overflow always produces signed infinity
-underflow always produces +0
+rounded underflow always produces +0
 rounding is ties-to-even
 undefined infinity cases produce +0
 division by zero asserts div0
