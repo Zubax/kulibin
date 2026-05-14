@@ -8,8 +8,8 @@
 /// Public modules should take that into account if connecting their inputs directly to the inputs of this module.
 /// The outputs are not registered either -- combinational paths exposed.
 ///
-/// Pipeline depth: WMAN+4+((WMAN+4)%2) stages from in_valid to out_valid:
-/// two stages per radix-4 quotient digit. Throughput is one sample per cycle.
+/// Pipeline depth: 1+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid:
+/// one preparation stage plus one stage per radix-4 quotient digit. Throughput is one sample per cycle.
 
 `default_nettype none
 
@@ -44,6 +44,8 @@ module _zkf_div_core #(
     localparam WFULL   = WEXP + WMAN;
     localparam QSTAGES = QFRAC / 2;
     localparam QRAW    = QFRAC + 1;
+    localparam WREM4   = WMAN + 2;
+    localparam QTRI    = (QSTAGES + 1) * (QSTAGES + 1);
 
     // QRAW contains one integer quotient bit followed by QFRAC fractional bits.
     // QWMAG adds one sticky bit below the packer's round bit.
@@ -74,8 +76,9 @@ module _zkf_div_core #(
 
     // Emit the integer quotient bit before the radix-4 stages. Since both significands are in [1, 2),
     // this bit is the only possible integer part, and the initial remainder is strictly below the denominator.
-    wire            initial_bit   = a_significand >= b_significand;
-    wire [WMAN-1:0] initial_rem   = initial_bit ? (a_significand - b_significand) : a_significand;
+    wire             initial_bit  = a_significand >= b_significand;
+    wire  [WMAN-1:0] initial_rem  = initial_bit ? (a_significand - b_significand) : a_significand;
+    wire [WREM4-1:0] initial_den3 = {1'b0, b_significand, 1'b0} + {2'b00, b_significand};  // x3
 
     // The raw quotient magnitude is scaled as floor((sig_a / sig_b) * 2^QFRAC), plus sticky.
     // _zkf_pack later adds floor(log2(mag)), so the base scale subtracts QFRAC+1.
@@ -83,176 +86,140 @@ module _zkf_div_core #(
     wire signed [WSCALE-1:0] b_exp_ext     = {{(WSCALE-WEXP){1'b0}}, b_exp};
     wire signed [WSCALE-1:0] decoded_scale = a_exp_ext - b_exp_ext - QFRAC_PLUS_ONE;
 
-    // Each radix-4 quotient digit uses two pipeline registers:
-    // p_* captures the digit selection and chosen subtrahend, r_* commits the subtract and appends the digit.
-    reg                     r_valid      [1:QSTAGES];
-    reg                     r_sign       [1:QSTAGES];
-    reg signed [WSCALE-1:0] r_scale      [1:QSTAGES];
-    reg                     r_force_zero [1:QSTAGES];
-    reg                     r_force_inf  [1:QSTAGES];
-    reg                     r_div0       [1:QSTAGES];
-    reg          [WMAN-1:0] r_den        [1:QSTAGES];
-    reg          [WMAN-1:0] r_rem        [1:QSTAGES];
-    reg          [QRAW-1:0] r_raw        [1:QSTAGES];
+    // Stage zero keeps input decode/classification and the first radix-4 digit off the same path. It also
+    // precomputes 3*den once; later stages only form cheap 1*den and 2*den wires locally.
+    // Each later pipeline stage resolves one radix-4 quotient digit. The quotient prefix is stored in a
+    // triangular chain: stage i holds only the 1+2*i bits known by that point, not a full QRAW-wide word.
+    reg                     r_valid      [0:QSTAGES];
+    reg                     r_sign       [0:QSTAGES];
+    reg signed [WSCALE-1:0] r_scale      [0:QSTAGES];
+    reg                     r_force_zero [0:QSTAGES];
+    reg                     r_force_inf  [0:QSTAGES];
+    reg                     r_div0       [0:QSTAGES];
+    reg          [WMAN-1:0] r_den        [0:QSTAGES];
+    reg         [WREM4-1:0] r_den3       [0:QSTAGES];
+    reg          [WMAN-1:0] r_rem        [0:QSTAGES];
+    reg                     r_raw0;
 
-    reg                     p_valid      [1:QSTAGES];
-    reg                     p_sign       [1:QSTAGES];
-    reg signed [WSCALE-1:0] p_scale      [1:QSTAGES];
-    reg                     p_force_zero [1:QSTAGES];
-    reg                     p_force_inf  [1:QSTAGES];
-    reg                     p_div0       [1:QSTAGES];
-    reg          [WMAN-1:0] p_den        [1:QSTAGES];
-    reg        [WMAN+1:0]   p_rem4       [1:QSTAGES];
-    reg          [QRAW-1:0] p_raw        [1:QSTAGES];
-    reg               [1:0] p_digit      [1:QSTAGES];
-    reg        [WMAN+1:0]   p_sub        [1:QSTAGES];
+    wire [QTRI-1:0] raw_tri;
+    wire [QRAW-1:0] final_raw = raw_tri[(QSTAGES * QSTAGES) +: QRAW];
+
+    assign raw_tri[0] = r_raw0;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_valid[0] <= 1'b0;
+        end else begin
+            r_valid[0] <= in_valid;
+        end
+        r_sign[0]       <= result_sign;
+        r_scale[0]      <= decoded_scale;
+        r_force_zero[0] <= result_zero;
+        r_force_inf[0]  <= result_inf;
+        r_div0[0]       <= b_zero;
+        r_den[0]        <= b_significand;
+        r_den3[0]       <= initial_den3;
+        r_rem[0]        <= initial_rem;
+        r_raw0          <= initial_bit;
+    end
 
     genvar i_stage;
     generate
         for (i_stage = 1; i_stage <= QSTAGES; i_stage = i_stage + 1) begin : g_stage
-            // Stage 1 folds the former preparation register into the first radix-4 select stage.
-            // Later stages source their state from the previous committed r_* stage.
-            wire                     source_valid;
-            wire                     source_sign;
-            wire signed [WSCALE-1:0] source_scale;
-            wire                     source_force_zero;
-            wire                     source_force_inf;
-            wire                     source_div0;
-            wire          [WMAN-1:0] source_den;
-            wire          [WMAN-1:0] source_rem;
-            wire          [QRAW-1:0] source_raw;
+            localparam WIN     = (2 * i_stage) - 1;
+            localparam WOUT    = WIN + 2;
+            localparam IN_OFF  = (i_stage - 1) * (i_stage - 1);
+            localparam OUT_OFF = i_stage * i_stage;
 
-            if (i_stage == 1) begin : g_input_source
-                assign source_valid      = in_valid;
-                assign source_sign       = result_sign;
-                assign source_scale      = decoded_scale;
-                assign source_force_zero = result_zero;
-                assign source_force_inf  = result_inf;
-                assign source_div0       = b_zero;
-                assign source_den        = b_significand;
-                assign source_rem        = initial_rem;
-                assign source_raw        = {{QFRAC{1'b0}}, initial_bit};
-            end else begin : g_pipeline_source
-                assign source_valid      = r_valid[i_stage-1];
-                assign source_sign       = r_sign[i_stage-1];
-                assign source_scale      = r_scale[i_stage-1];
-                assign source_force_zero = r_force_zero[i_stage-1];
-                assign source_force_inf  = r_force_inf[i_stage-1];
-                assign source_div0       = r_div0[i_stage-1];
-                assign source_den        = r_den[i_stage-1];
-                assign source_rem        = r_rem[i_stage-1];
-                assign source_raw        = r_raw[i_stage-1];
-            end
-
-            wire [WMAN+1:0] selected_rem4;
-            wire      [1:0] selected_digit;
-            wire [WMAN+1:0] selected_sub;
             wire [WMAN-1:0] rem_next;
-            wire [QRAW-1:0] raw_next;
+            wire      [1:0] digit;
 
-            _zkf_div_radix4_select #(.WMAN(WMAN)) u_select (
-                .den(source_den),
-                .rem(source_rem),
-                .rem4(selected_rem4),
-                .digit(selected_digit),
-                .sub(selected_sub)
-            );
-
-            _zkf_div_radix4_commit #(.WMAN(WMAN), .QRAW(QRAW)) u_commit (
-                .rem4(p_rem4[i_stage]),
-                .sub(p_sub[i_stage]),
-                .raw(p_raw[i_stage]),
-                .digit(p_digit[i_stage]),
+            _zkf_div_radix4_step #(.WMAN(WMAN)) u_step (
+                .den(r_den[i_stage-1]),
+                .den3(r_den3[i_stage-1]),
+                .rem(r_rem[i_stage-1]),
                 .rem_next(rem_next),
-                .raw_next(raw_next)
+                .digit(digit)
+            );
+            _zkf_div_raw_stage #(.WIN(WIN)) u_raw (
+                .clk(clk),
+                .raw_prefix(raw_tri[IN_OFF +: WIN]),
+                .digit(digit),
+                .raw_next(raw_tri[OUT_OFF +: WOUT])
             );
 
-            always @(posedge clk) begin
-                if (rst) begin
-                    p_valid[i_stage] <= 1'b0;
-                end else begin
-                    p_valid[i_stage] <= source_valid;
-                end
-                p_sign[i_stage]       <= source_sign;
-                p_scale[i_stage]      <= source_scale;
-                p_force_zero[i_stage] <= source_force_zero;
-                p_force_inf[i_stage]  <= source_force_inf;
-                p_div0[i_stage]       <= source_div0;
-                p_den[i_stage]        <= source_den;
-                p_rem4[i_stage]       <= selected_rem4;
-                p_raw[i_stage]        <= source_raw;
-                p_digit[i_stage]      <= selected_digit;
-                p_sub[i_stage]        <= selected_sub;
-            end
-
-            // Commit the selected radix-4 digit. Reset only validity; payload registers intentionally free-run.
+            // Reset only validity; payload registers intentionally free-run.
             always @(posedge clk) begin
                 if (rst) begin
                     r_valid[i_stage] <= 1'b0;
                 end else begin
-                    r_valid[i_stage] <= p_valid[i_stage];
+                    r_valid[i_stage] <= r_valid[i_stage-1];
                 end
-                r_sign[i_stage]       <= p_sign[i_stage];
-                r_scale[i_stage]      <= p_scale[i_stage];
-                r_force_zero[i_stage] <= p_force_zero[i_stage];
-                r_force_inf[i_stage]  <= p_force_inf[i_stage];
-                r_div0[i_stage]       <= p_div0[i_stage];
-                r_den[i_stage]        <= p_den[i_stage];
+                r_sign[i_stage]       <= r_sign[i_stage-1];
+                r_scale[i_stage]      <= r_scale[i_stage-1];
+                r_force_zero[i_stage] <= r_force_zero[i_stage-1];
+                r_force_inf[i_stage]  <= r_force_inf[i_stage-1];
+                r_div0[i_stage]       <= r_div0[i_stage-1];
+                r_den[i_stage]        <= r_den[i_stage-1];
+                r_den3[i_stage]       <= r_den3[i_stage-1];
                 r_rem[i_stage]        <= rem_next;
-                r_raw[i_stage]        <= raw_next;
             end
         end
     endgenerate
 
     assign out_valid   = r_valid[QSTAGES];
     assign sign        = r_sign[QSTAGES];
-    assign mag         = {r_raw[QSTAGES], |r_rem[QSTAGES]};
+    assign mag         = {final_raw, |r_rem[QSTAGES]};
     assign mag_zero    = r_force_zero[QSTAGES];
-    assign mag_flog2   = r_raw[QSTAGES][QFRAC] ? MAG_LOG2_HI : MAG_LOG2_LO;
+    assign mag_flog2   = final_raw[QFRAC] ? MAG_LOG2_HI : MAG_LOG2_LO;
     assign scale       = r_force_inf[QSTAGES] ? FORCE_INF_SCALE : r_scale[QSTAGES];
     assign div0        = r_div0[QSTAGES];
     assign partial_rem = r_rem[QSTAGES];
 endmodule
 
 
-// Select one radix-4 quotient digit by comparing 4*remainder against 1x, 2x, and 3x the denominator.
-// The selected subtrahend is registered by the caller before the subtract is committed.
-module _zkf_div_radix4_select#(parameter WMAN = 18) (
-    input wire [WMAN-1:0] den,
-    input wire [WMAN-1:0] rem,
-
-    output wire [WMAN+1:0] rem4,
-    output wire      [1:0] digit,
-    output wire [WMAN+1:0] sub
+// Register one more radix-4 quotient digit into the narrow prefix known at this stage.
+module _zkf_div_raw_stage#(parameter WIN = 1) (
+    input wire           clk,
+    input wire [WIN-1:0] raw_prefix,
+    input wire     [1:0] digit,
+    output reg [WIN+1:0] raw_next
 );
-    localparam WREM4 = WMAN + 2;
-
-    wire [WREM4-1:0] den1 = {{2{1'b0}}, den};
-    wire [WREM4-1:0] den2 = {{1{1'b0}}, den, 1'b0};
-    wire [WREM4-1:0] den3 = den2 + den1;
-
-    assign rem4  = {rem, 2'b00};
-    assign digit = (rem4 >= den3) ? 2'd3 : ((rem4 >= den2) ? 2'd2 : ((rem4 >= den1) ? 2'd1 : 2'd0));
-    assign sub   = digit[1] ? (digit[0] ? den3 : den2) : (digit[0] ? den1 : {WREM4{1'b0}});
+    always @(posedge clk) begin
+        raw_next <= {raw_prefix, digit};
+    end
 endmodule
 
 
-// Commit a previously selected radix-4 digit: subtract the selected multiple and append the two quotient bits.
-module _zkf_div_radix4_commit#(parameter WMAN = 18, parameter QRAW = WMAN + 5) (
-    input wire [WMAN+1:0] rem4,
-    input wire [WMAN+1:0] sub,
-    input wire [QRAW-1:0] raw,
-    input wire      [1:0] digit,
+// Resolve one radix-4 quotient digit using parallel candidate subtracts.
+module _zkf_div_radix4_step#(parameter WMAN = 18) (
+    input wire [WMAN-1:0] den,
+    input wire [WMAN+1:0] den3,
+    input wire [WMAN-1:0] rem,
 
     output wire [WMAN-1:0] rem_next,
-    output wire [QRAW-1:0] raw_next
+    output wire      [1:0] digit
 );
     localparam WREM4 = WMAN + 2;
+    localparam WDIFF = WREM4 + 1;
 
-    wire [WREM4-1:0] rem_full = rem4 - sub;
+    wire [WREM4-1:0] den1 = {2'b00, den};
+    wire [WREM4-1:0] den2 = {1'b0, den, 1'b0};
+    wire [WREM4-1:0] rem4 = {rem, 2'b00};
 
-    assign rem_next = rem_full[WMAN-1:0];
-    assign raw_next = {raw[QRAW-3:0], digit};
+    wire [WDIFF-1:0] diff1 = {1'b0, rem4} - {1'b0, den1};
+    wire [WDIFF-1:0] diff2 = {1'b0, rem4} - {1'b0, den2};
+    wire [WDIFF-1:0] diff3 = {1'b0, rem4} - {1'b0, den3};
+    wire             ge1   = !diff1[WREM4];
+    wire             ge2   = !diff2[WREM4];
+    wire             ge3   = !diff3[WREM4];
+
+    assign digit[1] = ge2;
+    assign digit[0] = ge3 || (ge1 && !ge2);
+    assign rem_next = ge3 ? diff3[WMAN-1:0] :
+                      ge2 ? diff2[WMAN-1:0] :
+                      ge1 ? diff1[WMAN-1:0] :
+                            rem4[WMAN-1:0];
 endmodule
 
 `default_nettype wire

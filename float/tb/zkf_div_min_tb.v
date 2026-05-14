@@ -12,7 +12,7 @@ module zkf_div_min_tb;
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 4;
     localparam QFRAC = QFRAC_BASE + (QFRAC_BASE % 2);
-    localparam LATENCY = QFRAC + 3;
+    localparam LATENCY = (QFRAC / 2) + 4;
     localparam Q = 8;
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;

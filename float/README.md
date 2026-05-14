@@ -4,6 +4,14 @@ A small and FPGA-friendly floating point format that is similar to IEEE 754 but 
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted. See `zkf.py` for the encoding rules.
 
+# TODO
+
+- mul and div modules feed a two-position normalization choice into the packer. zkf_mul reduces mag_flog2 to top-bit vs next-top-bit, and divider does the same. The packer still builds a wide variable shifter plus a generated sticky network. For the actual mul/div datapaths this is likely the biggest avoidable LUT/timing cost. Passing pre-extracted significand/GRS into a smaller round/encode stage would be materially cheaper. Other solutions are possible but they should not undermine generality of the packer.
+
+- Parameter legality is implicit. The RTL assumes at least WEXP >= 2 and WMAN >= 2. Invalid parameters will fail cryptically or elaborate oddly. Solution: add generate-if that attempts to instantiate a nonexistent module when invalid parameters are given.
+
+- _zkf_pack flushes underflow before rounding.
+
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, underflow flushes to +0), no −0, no exceptions, overflow produces signed ±∞.

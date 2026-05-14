@@ -45,7 +45,7 @@ TARGETS = \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim
 
-.PHONY: verify lint library coverage-float synth-float clean
+.PHONY: verify lint library coverage-float synth-float synth-float-yosys synth-float-diamond clean
 
 verify: library
 	@set -e; \
@@ -68,6 +68,12 @@ coverage-float:
 
 synth-float:
 	$(PYTHON) float/synth_float.py
+
+synth-float-yosys:
+	$(PYTHON) float/synth_float.py --flow yosys
+
+synth-float-diamond:
+	$(PYTHON) float/synth_float.py --flow diamond
 
 clean:
 	rm -rf build
