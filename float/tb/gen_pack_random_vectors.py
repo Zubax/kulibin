@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from fractions import Fraction
 from pathlib import Path
 import random
 import sys
@@ -23,20 +22,12 @@ EXP_MAX_FINITE = EXP_INF - 1
 VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL
 
 
-def pow2(k: int) -> Fraction:
-    return Fraction(1 << k, 1) if k >= 0 else Fraction(1, 1 << -k)
-
-
 def pack_reference(sign: int, mag: int, scale: int) -> int:
-    exact = Fraction(mag, 1) * pow2(scale)
-    if mag == 0 or exact < pow2(1 - BIAS):
+    if mag == 0:
         return 0
 
     log2_mag = mag.bit_length() - 1
     exp_biased = scale + log2_mag + BIAS
-
-    if exp_biased > EXP_MAX_FINITE:
-        return (sign << (WEXP + WFRAC)) | (EXP_INF << WFRAC)
 
     if log2_mag >= WMAN:
         shift = log2_mag - WMAN + 1
@@ -51,6 +42,9 @@ def pack_reference(sign: int, mag: int, scale: int) -> int:
     if significand >= (1 << WMAN):
         significand >>= 1
         exp_biased += 1
+
+    if exp_biased < 1:
+        return 0
 
     if exp_biased > EXP_MAX_FINITE:
         return (sign << (WEXP + WFRAC)) | (EXP_INF << WFRAC)
@@ -79,6 +73,8 @@ def directed_cases() -> list[tuple[int, int, int]]:
         (1, 0, 511),
         (0, 1, -127),
         (1, 1 << 9, -136),
+        (0, (1 << 25) - 1, -151),
+        (1, (1 << 25) - 1, -151),
         (0, 1, -126),
         (1, 1, -126),
         (0, (1 << 24) + 1, -24),

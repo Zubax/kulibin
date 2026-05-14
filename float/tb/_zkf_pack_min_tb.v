@@ -13,7 +13,6 @@ module _zkf_pack_min_tb;
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
     localparam LATENCY = 1;
-    localparam Q = 8;
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;
     localparam integer EXP_INF_INT = (1 << WEXP) - 1;
@@ -76,63 +75,66 @@ module _zkf_pack_min_tb;
         input signed [WSCALE-1:0] in_scale;
         output reg [WFULL-1:0] expected_y;
 
-        integer input_q;
-        integer candidate_q;
-        integer candidate_sig;
-        integer distance;
-        integer best_distance;
-        integer best_sig_lsb;
+        integer scan_i;
+        integer log2_mag;
+        integer exp_unbiased_i;
         integer exp_field;
         integer frac_field;
-        integer candidate_shift;
-        reg [WEXP-1:0] candidate_exp_bits;
-        reg [WFRAC-1:0] candidate_frac_bits;
-        reg [WFULL-1:0] candidate_y;
+        integer shift;
+        integer significand_i;
+        integer guard_i;
+        integer round_i;
+        integer sticky_i;
+        integer tail_mask;
+        reg [WEXP-1:0] exp_bits;
+        reg [WFRAC-1:0] frac_bits;
         begin
             expected_y = 0;
-            input_q = in_mag;
-            input_q = input_q << (in_scale + Q);
 
-            if ((in_mag != 0) && (input_q >= (1 << Q))) begin
-                best_distance = 32'h7fffffff;
-                best_sig_lsb = 1;
-                for (exp_field = 1; exp_field <= EXP_MAX_FINITE_INT; exp_field = exp_field + 1) begin
-                    for (frac_field = 0; frac_field <= FRAC_MAX_INT; frac_field = frac_field + 1) begin
-                        candidate_sig = (1 << WFRAC) + frac_field;
-                        candidate_shift = Q + exp_field - BIAS - WFRAC;
-                        candidate_q = candidate_sig << candidate_shift;
-                        distance = input_q - candidate_q;
-                        if (distance < 0) begin
-                            distance = -distance;
-                        end
-                        candidate_exp_bits = exp_field;
-                        candidate_frac_bits = frac_field;
-                        candidate_y = {in_sign, candidate_exp_bits, candidate_frac_bits};
-
-                        if (
-                            (distance < best_distance) ||
-                            ((distance == best_distance) && ((candidate_sig & 1) == 0) && best_sig_lsb)
-                        ) begin
-                            best_distance = distance;
-                            best_sig_lsb = candidate_sig & 1;
-                            expected_y = candidate_y;
-                        end
+            if (in_mag != 0) begin
+                log2_mag = 0;
+                for (scan_i = 0; scan_i < WMAG; scan_i = scan_i + 1) begin
+                    if (in_mag[scan_i]) begin
+                        log2_mag = scan_i;
                     end
                 end
 
-                candidate_sig = 1 << WFRAC;
-                candidate_shift = Q + (EXP_MAX_FINITE_INT + 1) - BIAS - WFRAC;
-                candidate_q = candidate_sig << candidate_shift;
-                distance = input_q - candidate_q;
-                if (distance < 0) begin
-                    distance = -distance;
+                exp_unbiased_i = in_scale + log2_mag;
+                if (log2_mag >= WFRAC) begin
+                    shift = log2_mag - WFRAC;
+                    significand_i = in_mag >> shift;
+                    guard_i = (shift >= 1) ? ((in_mag >> (shift - 1)) & 1) : 0;
+                    round_i = (shift >= 2) ? ((in_mag >> (shift - 2)) & 1) : 0;
+                    if (shift >= 3) begin
+                        tail_mask = (1 << (shift - 2)) - 1;
+                        sticky_i = ((in_mag & tail_mask) != 0);
+                    end else begin
+                        sticky_i = 0;
+                    end
+                end else begin
+                    shift = WFRAC - log2_mag;
+                    significand_i = in_mag << shift;
+                    guard_i = 0;
+                    round_i = 0;
+                    sticky_i = 0;
                 end
-                candidate_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b0}}};
-                if (
-                    (distance < best_distance) ||
-                    ((distance == best_distance) && ((candidate_sig & 1) == 0) && best_sig_lsb)
-                ) begin
-                    expected_y = candidate_y;
+
+                if (guard_i && (round_i || sticky_i || (significand_i & 1))) begin
+                    significand_i = significand_i + 1;
+                end
+                if (significand_i >= (1 << WMAN)) begin
+                    significand_i = significand_i >> 1;
+                    exp_unbiased_i = exp_unbiased_i + 1;
+                end
+
+                if (exp_unbiased_i > (EXP_MAX_FINITE_INT - BIAS)) begin
+                    expected_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b0}}};
+                end else if (exp_unbiased_i >= (1 - BIAS)) begin
+                    exp_field = exp_unbiased_i + BIAS;
+                    frac_field = significand_i & FRAC_MAX_INT;
+                    exp_bits = exp_field[WEXP-1:0];
+                    frac_bits = frac_field[WFRAC-1:0];
+                    expected_y = {in_sign, exp_bits, frac_bits};
                 end
             end
         end

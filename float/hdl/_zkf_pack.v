@@ -4,8 +4,8 @@
 /// The significand input includes the hidden bit. The guard/round/sticky inputs carry the discarded tail bits.
 /// force_zero and force_inf override the finite value; force_zero wins if both are asserted.
 ///
-/// The output is canonical zero for zero/underflow, round-to-nearest ties-to-even for normal values,
-/// and canonical signed infinity for exponent overflow.
+/// The output is canonical zero for zero or post-round underflow, round-to-nearest ties-to-even for normal values,
+/// and canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
 /// Inputs are not latched, but the outputs are. Pipeline depth: one stage from in_valid to out_valid.
 
@@ -45,7 +45,8 @@ module _zkf_pack #(
     localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
     localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
-    // Input combinational exponent classification. Underflow is decided before rounding per the format spec.
+    // Input combinational exponent classification. Underflow is finalized after rounding so a carry from
+    // exactly one exponent below the normal range can produce the minimum normal value.
     wire signed [WEXP_UNBIASED-1:0] bias_ext           = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
     wire signed [WEXP_UNBIASED-1:0] exp_max_finite_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_MAX_FINITE};
     wire signed [WEXP_UNBIASED-1:0] one_ext            = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
@@ -54,6 +55,7 @@ module _zkf_pack #(
     wire signed [WEXP_UNBIASED-1:0] exp_biased_ext     = exp_unbiased + bias_ext;
     wire                 [WEXP-1:0] exp_biased         = exp_biased_ext[WEXP-1:0];
     wire                            exp_underflow      = exp_unbiased < min_exp_unbiased;
+    wire                            exp_one_below_min  = exp_unbiased == (min_exp_unbiased - one_ext);
     wire                            exp_overflow       = exp_unbiased > max_exp_unbiased;
 
     // Stage 1: pre-round normalized value.
@@ -62,6 +64,7 @@ module _zkf_pack #(
     reg            s1_force_zero;
     reg            s1_force_inf;
     reg            s1_underflow;
+    reg            s1_one_below_min;
     reg            s1_overflow;
     reg [WEXP-1:0] s1_exp_biased;
     reg [WMAN-1:0] s1_significand;
@@ -79,11 +82,12 @@ module _zkf_pack #(
     wire [WEXP-1:0] s1_exp_rounded         = s1_exp_biased + {{(WEXP-1){1'b0}}, s1_round_carry};
 
     // Final packing is deliberately outside the reset branch; only validity is reset.
-    wire             s1_result_zero     = s1_force_zero || (!s1_force_inf && s1_underflow);
-    wire             s1_result_infinity = !s1_result_zero && s1_infinity;
-    wire [WFULL-1:0] s1_zero_y          = {WFULL{1'b0}};
-    wire [WFULL-1:0] s1_infinity_y      = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
-    wire [WFULL-1:0] s1_normal_y        = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
+    wire             s1_underflow_after_round = s1_underflow && !(s1_one_below_min && s1_round_carry);
+    wire             s1_result_zero           = s1_force_zero || (!s1_force_inf && s1_underflow_after_round);
+    wire             s1_result_infinity       = !s1_result_zero && s1_infinity;
+    wire [WFULL-1:0] s1_zero_y                = {WFULL{1'b0}};
+    wire [WFULL-1:0] s1_infinity_y            = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] s1_normal_y              = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
@@ -96,16 +100,17 @@ module _zkf_pack #(
         end
 
         // Stage 1 capture: pre-round normalized value.
-        s1_sign         <= sign;
-        s1_force_zero   <= force_zero;
-        s1_force_inf    <= force_inf;
-        s1_underflow    <= exp_underflow;
-        s1_overflow     <= exp_overflow;
-        s1_exp_biased   <= exp_biased;
-        s1_significand  <= significand;
-        s1_guard        <= guard;
-        s1_round        <= round;
-        s1_sticky       <= sticky;
+        s1_sign          <= sign;
+        s1_force_zero    <= force_zero;
+        s1_force_inf     <= force_inf;
+        s1_underflow     <= exp_underflow;
+        s1_one_below_min <= exp_one_below_min;
+        s1_overflow      <= exp_overflow;
+        s1_exp_biased    <= exp_biased;
+        s1_significand   <= significand;
+        s1_guard         <= guard;
+        s1_round         <= round;
+        s1_sticky        <= sticky;
 
         // Output capture.
         y <= s1_result_zero ? s1_zero_y : (s1_result_infinity ? s1_infinity_y : s1_normal_y);

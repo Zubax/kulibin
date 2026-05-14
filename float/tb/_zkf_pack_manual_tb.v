@@ -124,43 +124,45 @@ module _zkf_pack_manual_tb;
 
         drive_case(0,  1'b1, 16'd0,      6'sd31,  13'h0000);  // zero is canonical positive
         drive_case(1,  1'b0, 16'd1,      -15,     13'h0000);  // below min normal flushes
-        drive_case(2,  1'b0, 16'd255,    -22,     13'h0000);  // pre-round underflow
-        drive_case(3,  1'b0, 16'd1,      -14,     13'h0080);  // minimum normal
-        drive_case(4,  1'b1, 16'd1,      -14,     13'h1080);  // negative minimum normal
+        drive_case(2,  1'b0, 16'd255,    -22,     13'h0000);  // one below min, no round carry
+        drive_case(3,  1'b0, 16'd511,    -23,     13'h0080);  // one below min, round-carry to min normal
+        drive_case(4,  1'b1, 16'd511,    -23,     13'h1080);  // negative round-carry to min normal
+        drive_case(5,  1'b0, 16'd1,      -14,     13'h0080);  // minimum normal
+        drive_case(6,  1'b1, 16'd1,      -14,     13'h1080);  // negative minimum normal
 
         drive_invalid();
 
-        drive_case(5,  1'b0, 16'd1,      6'sd0,   13'h0780);  // +1.0
-        drive_case(6,  1'b1, 16'd1,      6'sd0,   13'h1780);  // -1.0
-        drive_case(7,  1'b0, 16'd3,      -1,      13'h07c0);  // +1.5
-        drive_case(8,  1'b0, 16'd1,      6'sd1,   13'h0800);  // +2.0
-        drive_case(9,  1'b1, 16'd1,      6'sd1,   13'h1800);  // -2.0
-        drive_case(10, 1'b0, 16'd255,    -7,      13'h07ff);  // max significand at exponent 0
+        drive_case(7,  1'b0, 16'd1,      6'sd0,   13'h0780);  // +1.0
+        drive_case(8,  1'b1, 16'd1,      6'sd0,   13'h1780);  // -1.0
+        drive_case(9,  1'b0, 16'd3,      -1,      13'h07c0);  // +1.5
+        drive_case(10, 1'b0, 16'd1,      6'sd1,   13'h0800);  // +2.0
+        drive_case(11, 1'b1, 16'd1,      6'sd1,   13'h1800);  // -2.0
+        drive_case(12, 1'b0, 16'd255,    -7,      13'h07ff);  // max significand at exponent 0
 
         drive_invalid();
         drive_invalid();
 
-        drive_case(11, 1'b0, 16'd513,    -9,      13'h0780);  // round down
-        drive_case(12, 1'b0, 16'd514,    -9,      13'h0780);  // tie to even, lower even
-        drive_case(13, 1'b0, 16'd515,    -9,      13'h0781);  // round up
-        drive_case(14, 1'b0, 16'd518,    -9,      13'h0782);  // tie to even, upper even
-        drive_case(15, 1'b0, 16'd1021,   -9,      13'h07ff);  // just below carry threshold
-        drive_case(16, 1'b0, 16'd511,    -8,      13'h0800);  // tie carry to +2.0
-        drive_case(17, 1'b1, 16'd511,    -8,      13'h1800);  // negative tie carry to -2.0
+        drive_case(13, 1'b0, 16'd513,    -9,      13'h0780);  // round down
+        drive_case(14, 1'b0, 16'd514,    -9,      13'h0780);  // tie to even, lower even
+        drive_case(15, 1'b0, 16'd515,    -9,      13'h0781);  // round up
+        drive_case(16, 1'b0, 16'd518,    -9,      13'h0782);  // tie to even, upper even
+        drive_case(17, 1'b0, 16'd1021,   -9,      13'h07ff);  // just below carry threshold
+        drive_case(18, 1'b0, 16'd511,    -8,      13'h0800);  // tie carry to +2.0
+        drive_case(19, 1'b1, 16'd511,    -8,      13'h1800);  // negative tie carry to -2.0
 
-        drive_case(18, 1'b0, 16'h8000,   6'sd0,   13'h0f00);  // high input bit exact
-        drive_case(19, 1'b0, 16'hffff,   6'sd0,   13'h0f80);  // round-carry to +infinity
-        drive_case(20, 1'b0, 16'd255,    6'sd8,   13'h0f7f);  // maximum finite
-        drive_case(21, 1'b0, 16'd1021,   6'sd6,   13'h0f7f);  // above max, rounds to max
-        drive_case(22, 1'b0, 16'd511,    6'sd7,   13'h0f80);  // round-to-infinity tie
-        drive_case(23, 1'b1, 16'd511,    6'sd7,   13'h1f80);  // negative round-to-infinity tie
-        drive_case(24, 1'b0, 16'd1,      6'sd16,  13'h0f80);  // exponent overflow
+        drive_case(20, 1'b0, 16'h8000,   6'sd0,   13'h0f00);  // high input bit exact
+        drive_case(21, 1'b0, 16'hffff,   6'sd0,   13'h0f80);  // round-carry to +infinity
+        drive_case(22, 1'b0, 16'd255,    6'sd8,   13'h0f7f);  // maximum finite
+        drive_case(23, 1'b0, 16'd1021,   6'sd6,   13'h0f7f);  // above max, rounds to max
+        drive_case(24, 1'b0, 16'd511,    6'sd7,   13'h0f80);  // round-to-infinity tie
+        drive_case(25, 1'b1, 16'd511,    6'sd7,   13'h1f80);  // negative round-to-infinity tie
+        drive_case(26, 1'b0, 16'd1,      6'sd16,  13'h0f80);  // exponent overflow
 
         for (flush_i = 0; flush_i < LATENCY + 2; flush_i = flush_i + 1) begin
             drive_invalid();
         end
 
-        `REQUIRE(cases_checked == 25);
+        `REQUIRE(cases_checked == 27);
         `REQUIRE(outputs_checked == cases_checked);
         $display("checked %0d manual golden pack cases", cases_checked);
         $finish;
