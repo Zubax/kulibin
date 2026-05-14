@@ -11,7 +11,7 @@ module _zkf_pack_random_tb;
     localparam WMAG = 48;
     localparam WSCALE = 10;
     localparam WFULL = WEXP + WMAN;
-    localparam LATENCY = 2;
+    localparam LATENCY = 1;
     localparam VECTOR_COUNT = 20000;
     localparam VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL;
 

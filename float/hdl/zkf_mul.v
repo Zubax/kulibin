@@ -1,7 +1,7 @@
 /// Streamed Zubax Kulibin float multiplier.
 ///
-/// Pipeline depth: four stages from in_valid to out_valid:
-/// one public input latch, one product stage, and _zkf_pack with two stages.
+/// Pipeline depth: three stages from in_valid to out_valid:
+/// one public input latch, one product stage, and _zkf_pack with one stage.
 
 `default_nettype none
 

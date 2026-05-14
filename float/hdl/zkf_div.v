@@ -1,7 +1,7 @@
 /// Streamed Zubax Kulibin float divider.
 /// The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
 ///
-/// Pipeline depth: 5+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid.
+/// Pipeline depth: 4+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid.
 
 `default_nettype none
 
