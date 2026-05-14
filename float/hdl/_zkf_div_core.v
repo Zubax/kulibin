@@ -7,6 +7,9 @@
 /// This module does not have an input latch, since it is internal -- inputs feed combinational circuit directly.
 /// Public modules should take that into account if connecting their inputs directly to the inputs of this module.
 /// The outputs are not registered either -- combinational paths exposed.
+///
+/// Pipeline depth: WMAN+5+((WMAN+4)%2) stages from in_valid to out_valid:
+/// one preparation stage plus two stages per radix-4 quotient digit. Throughput is one sample per cycle.
 
 `default_nettype none
 

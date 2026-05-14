@@ -178,6 +178,23 @@ def div_params(spec: ModuleSpec) -> tuple[int, int, int]:
     return qmag, wscale, (qmag - 1).bit_length()
 
 
+def latency_cycles(spec: ModuleSpec) -> int:
+    if spec.kind == "pack":
+        return 2
+    if spec.kind == "mul":
+        return 4
+    if spec.kind == "div_core":
+        return spec.wman + 5 + ((spec.wman + 4) % 2)
+    if spec.kind == "div":
+        return spec.wman + 8 + ((spec.wman + 4) % 2)
+    raise ValueError(f"unsupported module kind: {spec.kind}")
+
+
+def format_latency(cycles: int) -> str:
+    suffix = "cycle" if cycles == 1 else "cycles"
+    return f"{cycles} {suffix}"
+
+
 def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     qmag, wscale, qlog = div_params(spec)
@@ -758,6 +775,7 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
         "name": spec.name,
         "label": spec.label,
         "params": params,
+        "latency": format_latency(latency_cycles(spec)),
         "fmax": parse_fmax(nextpnr_text, report_data),
         "target": f"{TARGET_FREQ_MHZ} MHz",
         "status": "PASS" if timing_met(report_data) else "FAIL",
@@ -794,6 +812,7 @@ def write_html(results: list[dict[str, str]]) -> None:
             "<tr>"
             f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
+            f"<td>{escape(result['latency'])}</td>"
             f"<td>{escape(result['target'])}</td>"
             f"<td>{escape(result['fmax'])}</td>"
             f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
@@ -869,7 +888,7 @@ _zkf_ilog2_floor. A row that instantiates _zkf_ilog2_floor must be named as such
 from nextpnr.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Target</th><th>Fmax</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>Latency</th><th>Target</th><th>Fmax</th><th>Status</th>
 <th>Yosys LUT4</th><th>Placed LUT4</th><th>FF</th><th>TRELLIS_COMB</th>
 <th>CCU2C</th><th>PFUMX</th><th>L6MUX21</th><th>DSP MULT18X18D</th>
 <th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Logs</th>

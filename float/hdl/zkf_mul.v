@@ -1,5 +1,8 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The exact product is represented as: (-1)^sign * mag * 2^scale
+///
+/// Pipeline depth: four stages from in_valid to out_valid:
+/// one public input latch, one product stage, and _zkf_pack with two stages.
 
 `default_nettype none
 

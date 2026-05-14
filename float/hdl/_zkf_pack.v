@@ -10,6 +10,7 @@
 /// and canonical signed infinity for exponent overflow.
 ///
 /// All inputs and outputs are latched -- no combinational logic on external interfaces.
+/// Pipeline depth: two stages from in_valid to out_valid.
 
 `default_nettype none
 
@@ -157,6 +158,7 @@ endmodule
 
 /// Delay a sideband payload by the same number of cycles as _zkf_pack.
 /// When changing the packer pipeline, update this one as well.
+/// Pipeline depth: two stages, matching _zkf_pack.
 /// The reset can be tied off to zero if the delay is not used for carrying control signals.
 module _zkf_pack_delay#(parameter W = 1)(input wire clk, input wire rst, input wire [W-1:0] x, output reg [W-1:0] y);
     reg [W-1:0] s1;
