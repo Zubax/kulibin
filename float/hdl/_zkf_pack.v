@@ -1,4 +1,4 @@
-/// Pack an exact scaled unsigned integer magnitude into Zubax Kulibin float with saturation and rounding to nearest.
+/// Pack an exact scaled unsigned integer magnitude into Zubax Kulibin float with infinity and rounding to nearest.
 /// The exact input value is:
 ///
 ///     (-1)^sign * mag * 2^scale
@@ -7,7 +7,7 @@
 /// mag_zero is set.
 ///
 /// The output is canonical zero for zero/underflow, round-to-nearest ties-to-even for normal values,
-/// and signed saturation for exponent overflow.
+/// and canonical signed infinity for exponent overflow.
 
 `default_nettype none
 
@@ -29,8 +29,7 @@ module _zkf_pack #(
     input  wire signed [WSCALE-1:0] scale,
 
     output reg                   out_valid,
-    output reg  [WEXP+WMAN-1:0]  y,
-    output reg                   saturated
+    output reg  [WEXP+WMAN-1:0]  y
 );
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -46,7 +45,8 @@ module _zkf_pack #(
     localparam WEXP_WORK = WEXP_WORK_B + 2;
 
     localparam [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
-    localparam [WEXP-1:0] EXP_MAX = {WEXP{1'b1}};
+    localparam [WEXP-1:0] EXP_INF = {WEXP{1'b1}};
+    localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
     // Stage 1: input sample plus leading-one index.
     reg s1_valid;
@@ -58,10 +58,10 @@ module _zkf_pack #(
 
     // Stage 1 combinational exponent classification. Underflow is decided before rounding per the format spec.
     wire signed [WEXP_WORK-1:0] bias_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WEXP_WORK-1:0] exp_max_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX};
+    wire signed [WEXP_WORK-1:0] exp_max_finite_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX_FINITE};
     wire signed [WEXP_WORK-1:0] one_ext = {{(WEXP_WORK-1){1'b0}}, 1'b1};
     wire signed [WEXP_WORK-1:0] min_exp_unbiased = one_ext - bias_ext;
-    wire signed [WEXP_WORK-1:0] max_exp_unbiased = exp_max_ext - bias_ext;
+    wire signed [WEXP_WORK-1:0] max_exp_unbiased = exp_max_finite_ext - bias_ext;
     wire signed [WEXP_WORK-1:0] s1_scale_ext = {{(WEXP_WORK-WSCALE){s1_scale[WSCALE-1]}}, s1_scale};
     wire signed [WEXP_WORK-1:0] s1_log2_ext = {{(WEXP_WORK-WLOG){1'b0}}, s1_log2};
     wire signed [WEXP_WORK-1:0] s1_exp_unbiased = s1_scale_ext + s1_log2_ext;
@@ -108,19 +108,19 @@ module _zkf_pack #(
     wire s2_round_increment = s2_guard && (s2_round || s2_sticky || s2_significand[0]);
     wire [WMAN:0] s2_rounded_ext = {1'b0, s2_significand} + {{WMAN{1'b0}}, s2_round_increment};
     wire s2_round_carry = s2_rounded_ext[WMAN];
-    wire s2_exp_round_overflow = (s2_exp_biased == EXP_MAX) && s2_round_carry;
-    wire s2_saturated = s2_overflow || s2_exp_round_overflow;
+    wire s2_exp_round_overflow = (s2_exp_biased == EXP_MAX_FINITE) && s2_round_carry;
+    wire s2_infinity = s2_overflow || s2_exp_round_overflow;
     wire [WMAN-1:0] s2_rounded_significand =
         s2_round_carry ? s2_rounded_ext[WMAN:1] : s2_rounded_ext[WMAN-1:0];
     wire [WEXP-1:0] s2_exp_rounded = s2_exp_biased + {{(WEXP-1){1'b0}}, s2_round_carry};
 
     // Final packing is deliberately outside the reset branch; only validity is reset.
     wire s2_result_zero = s2_zero || s2_underflow;
-    wire s2_result_saturated = !s2_result_zero && s2_saturated;
+    wire s2_result_infinity = !s2_result_zero && s2_infinity;
     wire [WFULL-1:0] s2_zero_y = {WFULL{1'b0}};
-    wire [WFULL-1:0] s2_saturated_y = {s2_sign, EXP_MAX, {WFRAC{1'b1}}};
+    wire [WFULL-1:0] s2_infinity_y = {s2_sign, EXP_INF, {WFRAC{1'b0}}};
     wire [WFULL-1:0] s2_normal_y = {s2_sign, s2_exp_rounded, s2_rounded_significand[WFRAC-1:0]};
-    wire [WFULL-1:0] s2_y = s2_result_zero ? s2_zero_y : (s2_result_saturated ? s2_saturated_y : s2_normal_y);
+    wire [WFULL-1:0] s2_y = s2_result_zero ? s2_zero_y : (s2_result_infinity ? s2_infinity_y : s2_normal_y);
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
@@ -154,7 +154,6 @@ module _zkf_pack #(
 
         // Output capture.
         y <= s2_y;
-        saturated <= s2_result_saturated;
     end
 endmodule
 

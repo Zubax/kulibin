@@ -42,7 +42,7 @@ TARGETS = \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim
 
-.PHONY: verify lint library synth-float clean
+.PHONY: verify lint library coverage-float synth-float clean
 
 verify: library
 	@set -e; \
@@ -59,6 +59,9 @@ lint:
 
 library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true
+
+coverage-float:
+	$(PYTHON) float/coverage_float.py
 
 synth-float:
 	$(PYTHON) float/synth_float.py

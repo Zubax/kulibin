@@ -14,9 +14,13 @@ module zkf_mul_min_tb;
     localparam Q = 8;
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;
-    localparam integer EXP_MAX_INT = (1 << WEXP) - 1;
+    localparam integer EXP_INF_INT = (1 << WEXP) - 1;
+    localparam integer EXP_MAX_FINITE_INT = EXP_INF_INT - 1;
     localparam integer FRAC_MAX_INT = (1 << WFRAC) - 1;
     localparam integer CASE_COUNT = (1 << WFULL) * (1 << WFULL);
+    localparam integer CLASS_ZERO = 0;
+    localparam integer CLASS_FINITE = 1;
+    localparam integer CLASS_INF = 2;
 
     reg clk = 1'b0;
     always #5 clk = !clk;
@@ -28,7 +32,6 @@ module zkf_mul_min_tb;
 
     wire out_valid;
     wire [WFULL-1:0] y;
-    wire saturated;
 
     reg expected_valid_pipe [0:LATENCY-1];
     reg [WFULL-1:0] expected_y_pipe [0:LATENCY-1];
@@ -51,8 +54,7 @@ module zkf_mul_min_tb;
         .a(a),
         .b(b),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 
     task automatic clear_model;
@@ -67,6 +69,7 @@ module zkf_mul_min_tb;
     task automatic decode_abs_q;
         input [WFULL-1:0] x;
         output reg x_sign;
+        output integer x_class;
         output integer x_abs_q;
 
         integer x_exp;
@@ -78,8 +81,13 @@ module zkf_mul_min_tb;
             x_exp = x[WFRAC+:WEXP];
             x_frac = x[WFRAC-1:0];
             if (x_exp == 0) begin
+                x_class = CLASS_ZERO;
+                x_abs_q = 0;
+            end else if (x_exp == EXP_INF_INT) begin
+                x_class = CLASS_INF;
                 x_abs_q = 0;
             end else begin
+                x_class = CLASS_FINITE;
                 x_sig = (1 << WFRAC) + x_frac;
                 x_shift = Q + x_exp - BIAS - WFRAC;
                 x_abs_q = x_sig << x_shift;
@@ -109,7 +117,7 @@ module zkf_mul_min_tb;
             if (input_q >= (1 << Q)) begin
                 best_distance = 32'h7fffffff;
                 best_sig_lsb = 1;
-                for (exp_field = 1; exp_field <= EXP_MAX_INT; exp_field = exp_field + 1) begin
+                for (exp_field = 1; exp_field <= EXP_MAX_FINITE_INT; exp_field = exp_field + 1) begin
                     for (frac_field = 0; frac_field <= FRAC_MAX_INT; frac_field = frac_field + 1) begin
                         candidate_sig = (1 << WFRAC) + frac_field;
                         candidate_shift = Q + exp_field - BIAS - WFRAC;
@@ -134,13 +142,13 @@ module zkf_mul_min_tb;
                 end
 
                 candidate_sig = 1 << WFRAC;
-                candidate_shift = Q + (EXP_MAX_INT + 1) - BIAS - WFRAC;
+                candidate_shift = Q + (EXP_MAX_FINITE_INT + 1) - BIAS - WFRAC;
                 candidate_q = candidate_sig << candidate_shift;
                 distance = input_q - candidate_q;
                 if (distance < 0) begin
                     distance = -distance;
                 end
-                candidate_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b1}}};
+                candidate_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b0}}};
                 if (
                     (distance < best_distance) ||
                     ((distance == best_distance) && ((candidate_sig & 1) == 0) && best_sig_lsb)
@@ -158,14 +166,22 @@ module zkf_mul_min_tb;
 
         reg a_sign;
         reg b_sign;
+        integer a_class;
+        integer b_class;
         integer a_abs_q;
         integer b_abs_q;
         integer product_q;
         begin
-            decode_abs_q(in_a, a_sign, a_abs_q);
-            decode_abs_q(in_b, b_sign, b_abs_q);
-            product_q = (a_abs_q * b_abs_q) >> Q;
-            pack_abs_q(a_sign ^ b_sign, product_q, expected_y);
+            decode_abs_q(in_a, a_sign, a_class, a_abs_q);
+            decode_abs_q(in_b, b_sign, b_class, b_abs_q);
+            if ((a_class == CLASS_ZERO) || (b_class == CLASS_ZERO)) begin
+                expected_y = {WFULL{1'b0}};
+            end else if ((a_class == CLASS_INF) || (b_class == CLASS_INF)) begin
+                expected_y = {a_sign ^ b_sign, {WEXP{1'b1}}, {WFRAC{1'b0}}};
+            end else begin
+                product_q = (a_abs_q * b_abs_q) >> Q;
+                pack_abs_q(a_sign ^ b_sign, product_q, expected_y);
+            end
         end
     endtask
 

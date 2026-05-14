@@ -13,10 +13,9 @@ module _zkf_pack_random_tb;
     localparam WFULL = WEXP + WMAN;
     localparam LATENCY = 2;
     localparam VECTOR_COUNT = 20000;
-    localparam VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL + 1;
+    localparam VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL;
 
-    localparam SAT_LSB = 0;
-    localparam Y_LSB = SAT_LSB + 1;
+    localparam Y_LSB = 0;
     localparam SCALE_LSB = Y_LSB + WFULL;
     localparam MAG_LSB = SCALE_LSB + WSCALE;
     localparam SIGN_LSB = MAG_LSB + WMAG;
@@ -32,12 +31,10 @@ module _zkf_pack_random_tb;
 
     wire out_valid;
     wire [WFULL-1:0] y;
-    wire saturated;
 
     reg [VECTOR_WIDTH-1:0] vectors [0:VECTOR_COUNT-1];
     reg expected_valid_pipe [0:LATENCY-1];
     reg [WFULL-1:0] expected_y_pipe [0:LATENCY-1];
-    reg expected_saturated_pipe [0:LATENCY-1];
 
     integer vector_i;
     integer pipe_i;
@@ -58,8 +55,7 @@ module _zkf_pack_random_tb;
         .mag(mag),
         .scale(scale),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 
     task automatic clear_model;
@@ -67,7 +63,6 @@ module _zkf_pack_random_tb;
             for (pipe_i = 0; pipe_i < LATENCY; pipe_i = pipe_i + 1) begin
                 expected_valid_pipe[pipe_i] = 1'b0;
                 expected_y_pipe[pipe_i] = 0;
-                expected_saturated_pipe[pipe_i] = 1'b0;
             end
         end
     endtask
@@ -75,24 +70,20 @@ module _zkf_pack_random_tb;
     task automatic tick;
         input expected_valid_in;
         input [WFULL-1:0] expected_y_in;
-        input expected_saturated_in;
         begin
             @(posedge clk);
             #1;
             `REQUIRE(out_valid === expected_valid_pipe[LATENCY-1]);
             if (expected_valid_pipe[LATENCY-1]) begin
                 `REQUIRE(y === expected_y_pipe[LATENCY-1]);
-                `REQUIRE(saturated === expected_saturated_pipe[LATENCY-1]);
                 outputs_checked = outputs_checked + 1;
             end
             for (pipe_i = LATENCY - 1; pipe_i > 0; pipe_i = pipe_i - 1) begin
                 expected_valid_pipe[pipe_i] = expected_valid_pipe[pipe_i-1];
                 expected_y_pipe[pipe_i] = expected_y_pipe[pipe_i-1];
-                expected_saturated_pipe[pipe_i] = expected_saturated_pipe[pipe_i-1];
             end
             expected_valid_pipe[0] = expected_valid_in;
             expected_y_pipe[0] = expected_y_in;
-            expected_saturated_pipe[0] = expected_saturated_in;
         end
     endtask
 
@@ -104,7 +95,7 @@ module _zkf_pack_random_tb;
             sign = v[SIGN_LSB];
             mag = v[MAG_LSB+WMAG-1:MAG_LSB];
             scale = v[SCALE_LSB+WSCALE-1:SCALE_LSB];
-            tick(1'b1, v[Y_LSB+WFULL-1:Y_LSB], v[SAT_LSB]);
+            tick(1'b1, v[Y_LSB+WFULL-1:Y_LSB]);
         end
     endtask
 
@@ -131,7 +122,7 @@ module _zkf_pack_random_tb;
             sign = 1'b0;
             mag = 0;
             scale = 0;
-            tick(1'b0, 0, 1'b0);
+            tick(1'b0, 0);
         end
 
         `REQUIRE(outputs_checked == VECTOR_COUNT);

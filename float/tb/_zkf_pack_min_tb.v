@@ -16,7 +16,8 @@ module _zkf_pack_min_tb;
     localparam Q = 8;
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;
-    localparam integer EXP_MAX_INT = (1 << WEXP) - 1;
+    localparam integer EXP_INF_INT = (1 << WEXP) - 1;
+    localparam integer EXP_MAX_FINITE_INT = EXP_INF_INT - 1;
     localparam integer FRAC_MAX_INT = (1 << WFRAC) - 1;
     localparam integer CASE_COUNT = 2 * (1 << WMAG) * (1 << WSCALE);
 
@@ -31,11 +32,9 @@ module _zkf_pack_min_tb;
 
     wire out_valid;
     wire [WFULL-1:0] y;
-    wire saturated;
 
     reg expected_valid_pipe [0:LATENCY-1];
     reg [WFULL-1:0] expected_y_pipe [0:LATENCY-1];
-    reg expected_saturated_pipe [0:LATENCY-1];
 
     integer cases_checked = 0;
     integer outputs_checked = 0;
@@ -45,7 +44,6 @@ module _zkf_pack_min_tb;
     integer scale_i;
     integer flush_i;
     reg [WFULL-1:0] directed_y;
-    reg directed_saturated;
 
     _zkf_pack_tb_wrapper #(
         .WEXP(WEXP),
@@ -60,8 +58,7 @@ module _zkf_pack_min_tb;
         .mag(mag),
         .scale(scale),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 
     task automatic clear_model;
@@ -69,7 +66,6 @@ module _zkf_pack_min_tb;
             for (pipe_i = 0; pipe_i < LATENCY; pipe_i = pipe_i + 1) begin
                 expected_valid_pipe[pipe_i] = 1'b0;
                 expected_y_pipe[pipe_i] = 0;
-                expected_saturated_pipe[pipe_i] = 1'b0;
             end
         end
     endtask
@@ -79,7 +75,6 @@ module _zkf_pack_min_tb;
         input [WMAG-1:0] in_mag;
         input signed [WSCALE-1:0] in_scale;
         output reg [WFULL-1:0] expected_y;
-        output reg expected_saturated;
 
         integer input_q;
         integer candidate_q;
@@ -93,17 +88,15 @@ module _zkf_pack_min_tb;
         reg [WEXP-1:0] candidate_exp_bits;
         reg [WFRAC-1:0] candidate_frac_bits;
         reg [WFULL-1:0] candidate_y;
-        reg candidate_saturated;
         begin
             expected_y = 0;
-            expected_saturated = 1'b0;
             input_q = in_mag;
             input_q = input_q << (in_scale + Q);
 
             if ((in_mag != 0) && (input_q >= (1 << Q))) begin
                 best_distance = 32'h7fffffff;
                 best_sig_lsb = 1;
-                for (exp_field = 1; exp_field <= EXP_MAX_INT; exp_field = exp_field + 1) begin
+                for (exp_field = 1; exp_field <= EXP_MAX_FINITE_INT; exp_field = exp_field + 1) begin
                     for (frac_field = 0; frac_field <= FRAC_MAX_INT; frac_field = frac_field + 1) begin
                         candidate_sig = (1 << WFRAC) + frac_field;
                         candidate_shift = Q + exp_field - BIAS - WFRAC;
@@ -115,7 +108,6 @@ module _zkf_pack_min_tb;
                         candidate_exp_bits = exp_field;
                         candidate_frac_bits = frac_field;
                         candidate_y = {in_sign, candidate_exp_bits, candidate_frac_bits};
-                        candidate_saturated = 1'b0;
 
                         if (
                             (distance < best_distance) ||
@@ -124,26 +116,23 @@ module _zkf_pack_min_tb;
                             best_distance = distance;
                             best_sig_lsb = candidate_sig & 1;
                             expected_y = candidate_y;
-                            expected_saturated = candidate_saturated;
                         end
                     end
                 end
 
                 candidate_sig = 1 << WFRAC;
-                candidate_shift = Q + (EXP_MAX_INT + 1) - BIAS - WFRAC;
+                candidate_shift = Q + (EXP_MAX_FINITE_INT + 1) - BIAS - WFRAC;
                 candidate_q = candidate_sig << candidate_shift;
                 distance = input_q - candidate_q;
                 if (distance < 0) begin
                     distance = -distance;
                 end
-                candidate_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b1}}};
-                candidate_saturated = 1'b1;
+                candidate_y = {in_sign, {WEXP{1'b1}}, {WFRAC{1'b0}}};
                 if (
                     (distance < best_distance) ||
                     ((distance == best_distance) && ((candidate_sig & 1) == 0) && best_sig_lsb)
                 ) begin
                     expected_y = candidate_y;
-                    expected_saturated = candidate_saturated;
                 end
             end
         end
@@ -152,24 +141,20 @@ module _zkf_pack_min_tb;
     task automatic tick;
         input expected_valid_in;
         input [WFULL-1:0] expected_y_in;
-        input expected_saturated_in;
         begin
             @(posedge clk);
             #1;
             `REQUIRE(out_valid === expected_valid_pipe[LATENCY-1]);
             if (expected_valid_pipe[LATENCY-1]) begin
                 `REQUIRE(y === expected_y_pipe[LATENCY-1]);
-                `REQUIRE(saturated === expected_saturated_pipe[LATENCY-1]);
                 outputs_checked = outputs_checked + 1;
             end
             for (pipe_i = LATENCY - 1; pipe_i > 0; pipe_i = pipe_i - 1) begin
                 expected_valid_pipe[pipe_i] = expected_valid_pipe[pipe_i-1];
                 expected_y_pipe[pipe_i] = expected_y_pipe[pipe_i-1];
-                expected_saturated_pipe[pipe_i] = expected_saturated_pipe[pipe_i-1];
             end
             expected_valid_pipe[0] = expected_valid_in;
             expected_y_pipe[0] = expected_y_in;
-            expected_saturated_pipe[0] = expected_saturated_in;
         end
     endtask
 
@@ -179,14 +164,13 @@ module _zkf_pack_min_tb;
         input [WMAG-1:0] mag_value;
         input signed [WSCALE-1:0] scale_value;
         reg [WFULL-1:0] expected_y;
-        reg expected_saturated;
         begin
             in_valid = valid_value;
             sign = sign_value;
             mag = mag_value;
             scale = scale_value;
-            pack_oracle(sign_value, mag_value, scale_value, expected_y, expected_saturated);
-            tick(valid_value, expected_y, expected_saturated);
+            pack_oracle(sign_value, mag_value, scale_value, expected_y);
+            tick(valid_value, expected_y);
             if (valid_value) begin
                 cases_checked = cases_checked + 1;
             end
@@ -209,27 +193,20 @@ module _zkf_pack_min_tb;
         rst = 1'b0;
         clear_model();
 
-        pack_oracle(1'b1, 6'd0, 3'sd3, directed_y, directed_saturated);
+        pack_oracle(1'b1, 6'd0, 3'sd3, directed_y);
         `REQUIRE(directed_y === 5'b0_00_00);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b0, 6'd1, -1, directed_y, directed_saturated);
+        pack_oracle(1'b0, 6'd1, -1, directed_y);
         `REQUIRE(directed_y === 5'b0_00_00);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b0, 6'd1, 3'sd0, directed_y, directed_saturated);
+        pack_oracle(1'b0, 6'd1, 3'sd0, directed_y);
         `REQUIRE(directed_y === 5'b0_01_00);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b0, 6'd9, -3, directed_y, directed_saturated);
+        pack_oracle(1'b0, 6'd9, -3, directed_y);
         `REQUIRE(directed_y === 5'b0_01_00);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b0, 6'd11, -3, directed_y, directed_saturated);
+        pack_oracle(1'b0, 6'd11, -3, directed_y);
         `REQUIRE(directed_y === 5'b0_01_10);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b0, 6'd15, -3, directed_y, directed_saturated);
+        pack_oracle(1'b0, 6'd15, -3, directed_y);
         `REQUIRE(directed_y === 5'b0_10_00);
-        `REQUIRE(directed_saturated === 1'b0);
-        pack_oracle(1'b1, 6'd15, -1, directed_y, directed_saturated);
-        `REQUIRE(directed_y === 5'b1_11_11);
-        `REQUIRE(directed_saturated === 1'b1);
+        pack_oracle(1'b1, 6'd15, -1, directed_y);
+        `REQUIRE(directed_y === 5'b1_11_00);
 
         drive_and_check(1'b0, 1'b1, 6'd63, 3'sd3);
         drive_and_check(1'b1, 1'b1, 6'd0, 3'sd3);

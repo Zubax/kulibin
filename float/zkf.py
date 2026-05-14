@@ -16,7 +16,7 @@ class ZkfParams:
     """Significand bit width; represented with one fewer bit."""
 
     def __post_init__(self) -> None:
-        if self.wexp < 1 or self.wman < 2:
+        if self.wexp < 2 or self.wman < 2:
             raise ValueError
 
     @property
@@ -34,14 +34,33 @@ class ZkfParams:
         return (1 << (self.wexp - 1)) - 1
 
     @property
-    def min(self) -> Fraction:
+    def exp_infinity(self) -> int:
+        """Exponent field value for infinity."""
+        return (1 << self.wexp) - 1
+
+    @property
+    def exp_max_finite(self) -> int:
+        """Largest finite exponent field value."""
+        return self.exp_infinity - 1
+
+    @property
+    def frac_max(self) -> int:
+        return (1 << self.wfrac) - 1
+
+    @property
+    def lowest(self) -> Fraction:
         """Smallest representable positive magnitude (no subnormals)."""
         return self._pow2(1 - self.bias)
 
     @property
+    def lowest_normal(self) -> Fraction:
+        """Smallest representable positive magnitude (no subnormals)."""
+        return self.lowest
+
+    @property
     def max(self) -> Fraction:
         """Largest finite magnitude."""
-        max_exp = (1 << self.wexp) - 1 - self.bias
+        max_exp = self.exp_max_finite - self.bias
         return (Fraction(2) - self._pow2(-self.wfrac)) * self._pow2(max_exp)
 
     @property
@@ -59,9 +78,9 @@ if __name__ == "__main__":
     wexp, wman = map(int, (sys.argv[1], sys.argv[2]))
     p = ZkfParams(wexp, wman)
     print(f"WEXP={p.wexp} WMAN={p.wman} WFRAC={p.wfrac} WFULL={p.wfull} BIAS={p.bias}")
-    print(f"min_normal = {p.min} ≈ {float(p.min):.3e}")
-    print(f"max_value  = {p.max} ≈ {float(p.max):.3e}")
-    print(f"epsilon    = {p.epsilon} ≈ {float(p.epsilon):.3e}")
+    print(f"lowest     = {p.lowest} ≈ {float(p.lowest):.3e}")
+    print(f"max        = {p.max} ≈ {float(p.max):.3e}")
+    print(f"ε          = {p.epsilon} ≈ {float(p.epsilon):.3e}")
 
     print("s" + "e" * p.wexp + "f" * p.wfrac)
     print(("0123456789" * ((p.wfull + 10)//10))[:p.wfull][::-1])

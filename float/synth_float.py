@@ -89,8 +89,7 @@ module {spec.top} (
     input  wire [{wlog - 1}:0]      mag_flog2,
     input  wire signed [{spec.wscale - 1}:0] scale,
     output wire                     out_valid,
-    output wire [{wfull - 1}:0]     y,
-    output wire                     saturated
+    output wire [{wfull - 1}:0]     y
 );
     _zkf_pack #(
         .WEXP({spec.wexp}),
@@ -108,8 +107,7 @@ module {spec.top} (
         .mag_flog2(mag_flog2),
         .scale(scale),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 endmodule
 
@@ -130,18 +128,19 @@ module {spec.top} (
     input  wire [{wfull - 1}:0] a,
     input  wire [{wfull - 1}:0] b,
     output wire                 out_valid,
-    output wire [{wfull - 1}:0] y,
-    output wire                 saturated
+    output wire [{wfull - 1}:0] y
 );
-    zkf_mul dut (
+    zkf_mul #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
         .a(a),
         .b(b),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 endmodule
 

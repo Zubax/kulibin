@@ -28,9 +28,11 @@ filesets:
           file_type: verilogSource
       - tb/_zkf_pack_random_tb.v:
           file_type: verilogSource
-      - tb/pack_random_vectors.memh:
+
+  tb_pack_random_gen:
+    files:
+      - tb/gen_pack_random_vectors.py:
           file_type: user
-          copyto: pack_random_vectors.memh
 
   tb_mul_min:
     files:
@@ -44,11 +46,30 @@ filesets:
 
   tb_mul_random:
     files:
-      - tb/zkf_mul_random_tb.v:
-          file_type: verilogSource
-      - tb/mul_random_vectors.memh:
+      - tb/zkf_mul_random_tb.v
+    file_type: verilogSource
+
+  tb_mul_random_gen:
+    files:
+      - tb/gen_mul_random_vectors.py:
           file_type: user
-          copyto: mul_random_vectors.memh
+
+scripts:
+  gen_pack_random_vectors:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/gen_pack_random_vectors.py'
+    filesets:
+      - tb_pack_random_gen
+
+  gen_mul_random_vectors:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/gen_mul_random_vectors.py'
+    filesets:
+      - tb_mul_random_gen
 
 targets:
   default:
@@ -72,6 +93,9 @@ targets:
 
   sim_pack_random:
     filesets: [rtl, tb_pack_random]
+    hooks:
+      pre_build:
+        - gen_pack_random_vectors
     toplevel: _zkf_pack_random_tb
     default_tool: icarus
     tools:
@@ -96,6 +120,9 @@ targets:
 
   sim_mul_random:
     filesets: [rtl, tb_mul_random]
+    hooks:
+      pre_build:
+        - gen_mul_random_vectors
     toplevel: zkf_mul_random_tb
     default_tool: icarus
     tools:

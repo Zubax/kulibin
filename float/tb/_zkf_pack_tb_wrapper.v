@@ -16,8 +16,7 @@ module _zkf_pack_tb_wrapper #(
     input  wire signed [WSCALE-1:0] scale,
 
     output wire                  out_valid,
-    output wire [WEXP+WMAN-1:0]  y,
-    output wire                  saturated
+    output wire [WEXP+WMAN-1:0]  y
 );
     wire mag_zero;
     wire [WLOG-1:0] mag_flog2;
@@ -40,8 +39,7 @@ module _zkf_pack_tb_wrapper #(
         .mag_flog2(mag_flog2),
         .scale(scale),
         .out_valid(out_valid),
-        .y(y),
-        .saturated(saturated)
+        .y(y)
     );
 endmodule
 

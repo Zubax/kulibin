@@ -8,13 +8,13 @@ Implement a small, deterministic, FPGA-friendly floating-point format with:
 
 ```text
 no NaN
-no infinity
 no subnormals
 no exception flags
 one rounding mode only: round-to-nearest, ties-to-even
 underflow-to-zero
-overflow-to-signed-saturation
+overflow-to-signed-infinity
 canonical positive zero
+canonical signed infinities
 ```
 
 The design goal is **simplicity, verifiability, and predictable FPGA cost**, not IEEE-754 compatibility.
@@ -57,7 +57,7 @@ Bias:
 BIAS = 2^(WEXP - 1) - 1
 ```
 
-Encoding rule:
+Encoding rule follows IEEE 754 where it makes sense:
 
 ```text
 exponent == 0:
@@ -65,29 +65,28 @@ exponent == 0:
     sign and fraction are ignored on input
     output must always be canonical {sign=0, exponent=0, fraction=0}
 
-exponent != 0:
+exponent all ones:
+    value = (-1)^sign * infinity
+    fraction is ignored on input
+    output must always be canonical {sign, exponent=all_ones, fraction=0}
+
+otherwise:
     value = (-1)^sign * (1.fraction) * 2^(exponent - BIAS)
 ```
 
-The all-ones exponent is **not special**. It is the largest finite exponent.
+Canonical infinity and zero have zero fraction bits. Only canonical representations can be produced.
+Normal finite numbers use biased exponent values from 1 to `2^WEXP - 2`, inclusive.
 
 Maximum finite value:
 
 ```text
-MAX = (2 - 2^(-WFRAC)) * 2^((2^WEXP - 1) - BIAS)
+MAX = (2 - 2^(-WFRAC)) * 2^((2^WEXP - 2) - BIAS)
 ```
 
 Minimum normal value:
 
 ```text
 MIN_NORMAL = 2^(1 - BIAS)
-```
-
-Signed saturation values:
-
-```text
-+SAT = {0, all_ones_exp, all_ones_frac}
--SAT = {1, all_ones_exp, all_ones_frac}
 ```
 
 ---
@@ -97,18 +96,21 @@ Signed saturation values:
 Every operation is defined as:
 
 ```text
-1. Decode inputs to exact mathematical real values.
-2. Compute the exact real result.
+1. Decode inputs to exact mathematical values, including ±infinity.
+2. Compute the exact result using the operation-specific rules below.
 3. Pack the result using the rules below.
 ```
 
 Packing rule:
 
 ```text
-if exact result is zero:
+if exact result is +infinity or -infinity:
+    return canonical signed infinity
+
+if exact finite result is zero:
     return canonical +0
 
-if abs(result) < MIN_NORMAL:
+if exact finite abs(result) < MIN_NORMAL:
     return canonical +0       // flush-to-zero, no subnormal rounding
 
 normalize:
@@ -120,8 +122,8 @@ if rounding overflows significand:
     shift right by 1
     increment exponent
 
-if exponent overflows:
-    return signed saturation
+if exponent overflows into the all-ones exponent code:
+    return canonical signed infinity
 
 otherwise:
     return packed normal number
@@ -135,6 +137,45 @@ increment retained significand iff:
 ```
 
 There are no rounding-mode inputs and no exception/status outputs.
+
+Infinity arithmetic is deterministic and deliberately does not produce NaN:
+
+```text
+finite + infinity, or infinity + finite:
+    return that infinity
+
+infinity + infinity with same sign:
+    return that infinity
+
+infinity + infinity with opposite signs:
+    return canonical +0
+
+finite nonzero * infinity, or infinity * finite nonzero:
+    return signed infinity with sign = sign(a) XOR sign(b)
+
+zero * infinity:
+    return canonical +0
+
+infinity * infinity:
+    return signed infinity with sign = sign(a) XOR sign(b)
+
+finite nonzero / zero, or infinity / zero:
+    return signed infinity with sign = sign(a)
+
+zero / zero:
+    return canonical +0
+
+finite / infinity:
+    return canonical +0
+
+infinity / finite nonzero:
+    return signed infinity with sign = sign(a) XOR sign(b)
+
+infinity / infinity:
+    return canonical +0
+```
+
+Subtraction is defined as addition with the sign of the second operand inverted.
 
 ---
 
@@ -150,7 +191,9 @@ input  wire in_valid;
 output wire out_valid;
 ```
 
-All outputs must be canonical. Any input with `exponent == 0` must be treated as zero.
+All outputs must be canonical. Any input with `exponent == 0` must be treated as zero, and any input with
+`exponent == all_ones` must be treated as signed infinity. The fraction field is ignored for both special input
+classes.
 
 ## 4.1. Reset Strategy
 
@@ -211,7 +254,7 @@ stage 1: unpack, zero detection, exponent compare
 stage 2: align smaller significand using sticky bit
 stage 3: signed add/subtract
 stage 4: normalize
-stage 5: round, saturate/flush, pack
+stage 5: round, infinity/flush, pack
 ```
 
 A 3–6 stage pipeline is acceptable.
@@ -232,8 +275,7 @@ zkf_mul #(parameter int WEXP = 6, parameter int WMAN = 18) (
     input  wire [WFULL-1:0] b,
 
     output wire             out_valid,
-    output wire [WFULL-1:0] y,
-    output wire             saturated
+    output wire [WFULL-1:0] y
 );
 ```
 
@@ -247,7 +289,7 @@ multiply significands using FPGA DSP blocks, provide 2 dummy retiming stages aft
 normalize product
 round-to-nearest ties-to-even
 flush underflow to zero
-saturate overflow
+map overflow to signed infinity
 ```
 
 A 4-7 stage pipeline is acceptable.
@@ -281,11 +323,13 @@ if a == 0:
     q = +0
 
 else if b == 0:
-    q = signed saturation with sign = sign(a)
+    q = signed infinity with sign = sign(a)
 
 else:
     q = pack(a / b)
 ```
+
+The `div0` output is asserted when `b` decodes as zero.
 
 Residual remainder semantics:
 
@@ -298,7 +342,7 @@ if a == 0:
 else if b == 0:
     r = +0
 
-else if q saturated:
+else if q is infinity:
     r = +0
 
 else:
@@ -355,7 +399,7 @@ handle INT_MIN correctly using unsigned magnitude
 find leading one
 derive exponent
 round discarded integer bits using ties-to-even
-saturate if exponent too large
+map exponent overflow to signed infinity
 zero input maps to canonical +0
 ```
 
@@ -383,7 +427,14 @@ zkf_to_sint #(
 Semantics:
 
 ```text
-y = signed integer round_nearest_ties_even(a)
+if a == +infinity:
+    y = 2^(WINT-1)-1
+
+else if a == -infinity:
+    y = -2^(WINT-1)
+
+else:
+    y = signed integer round_nearest_ties_even(a)
 ```
 
 Overflow saturates to the signed two’s-complement integer range:
@@ -401,8 +452,8 @@ Zero maps to integer zero.
 
 ```verilog
 zkf_resize #(
-    parameter int WEXP_IN  = 7,
-    parameter int WMAN_IN  = 17,
+    parameter int WEXP_IN  = 6,
+    parameter int WMAN_IN  = 18,
     parameter int WEXP_OUT = 5,
     parameter int WMAN_OUT = 11
 ) (
@@ -427,11 +478,27 @@ Rules:
 
 ```text
 input exponent == 0 is zero
+input exponent all ones is signed infinity
 output zero must be canonical
+output infinity must be canonical
 narrowing rounds to nearest ties-to-even
 widening is exact unless exponent range changes
 target underflow flushes to zero
-target overflow saturates
+target overflow maps to signed infinity
+```
+
+---
+
+## 11. Combinational helpers
+
+These circuits are very simple and as such usually do not warrant a separate pipeline stage.
+
+```verilog
+// True if the input is an infinity.
+zkf_isinf #(parameter int WEXP = 6, parameter int WMAN = 18) (input wire [WFULL-1:0] x, output wire isinf);
+
+// If the input is an infinity, convert it to the nearest representable finite value. Otherwise y=x.
+zkf_clamp #(parameter int WEXP = 6, parameter int WMAN = 18) (input wire [WFULL-1:0] x, output wire [WFULL-1:0] finite);
 ```
 
 ---
@@ -448,20 +515,35 @@ Required properties:
 
 ```text
 all outputs canonical
-no NaN/Inf encodings exist
+no NaN encodings exist
+infinity encodings exist and outputs are canonical
 exponent==0 always decodes as zero
+exponent==all_ones always decodes as signed infinity
 zero output is always {0,0,0}
-overflow always produces signed saturation
+floating-point overflow always produces signed infinity
 underflow always produces +0
 rounding is ties-to-even
+undefined infinity cases produce +0
+division by zero asserts div0
 add/sub module implements both operations exactly per spec
 mul uses the same pack semantics as add/sub
 div quotient matches exact a/b rounded per spec
 resize equals decode-then-pack into target format
 ```
 
-This format deliberately avoids IEEE-754 corner cases. The only special value is canonical zero.
+This format deliberately avoids most IEEE-754 corner cases. The only special values are canonical zero and canonical
+signed infinities.
 
-The verification suite must run against Icarus Verilog and Verilator. Full state space exploration with verification is required for small exponent/mantissa configurations; target approx. WEXP=3 and WMAN=4. Larger sizes to be tested with random test vectors. Explicit manual tests covering all edge cases and representative normal behaviors are required.
+The verification suite must run against Icarus Verilog and Verilator. Full state space exploration with verification is
+required for small exponent/mantissa configurations; target approx. WEXP=3 and WMAN=4. Larger sizes to be tested with
+random test vectors. Explicit manual tests covering all edge cases and representative normal behaviors are required,
+including special input canonicalization, infinity propagation, undefined infinity cases, overflow to infinity, resize
+with infinity, casts with infinity, and division by zero.
 
-Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like target, speed grade 6. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least the maximum clock frequency, worst slack paths, and LUT usage for each module using exp=6 bits, significand=18 bits (for a total of 24 bits) for reference. There must be a separate synthesizer run / synthesis target per module such that we could evaluate each one independently, including the internal helper modules (the ones named with the underscore), except for the purely combinational ones.
+Yosys/nextpnr-based synthesizability tests with full optimization and retiming enabled are required for an ECP5-like
+target, speed grade 6. FULL OPTIMIZATION AND RETIMING ARE MANDATORY, otherwise the results will not be meaningful. A
+pretty human-friendly colorful HTML report with tables must be composed by the synthesis test runner showing at least
+the maximum clock frequency, worst slack paths, and LUT usage for each module using exp=6 bits, significand=18 bits
+(for a total of 24 bits) for reference. There must be a separate synthesizer run / synthesis target per module such that
+we could evaluate each one independently, including the internal helper modules (the ones named with the underscore),
+except for the purely combinational ones.

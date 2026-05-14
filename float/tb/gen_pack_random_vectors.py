@@ -6,6 +6,7 @@ from __future__ import annotations
 from fractions import Fraction
 from pathlib import Path
 import random
+import sys
 
 
 WEXP = 8
@@ -17,21 +18,25 @@ VECTOR_COUNT = 20_000
 WFRAC = WMAN - 1
 WFULL = WEXP + WMAN
 BIAS = (1 << (WEXP - 1)) - 1
-EXP_MAX = (1 << WEXP) - 1
-VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL + 1
+EXP_INF = (1 << WEXP) - 1
+EXP_MAX_FINITE = EXP_INF - 1
+VECTOR_WIDTH = 1 + WMAG + WSCALE + WFULL
 
 
 def pow2(k: int) -> Fraction:
     return Fraction(1 << k, 1) if k >= 0 else Fraction(1, 1 << -k)
 
 
-def pack_reference(sign: int, mag: int, scale: int) -> tuple[int, int]:
+def pack_reference(sign: int, mag: int, scale: int) -> int:
     exact = Fraction(mag, 1) * pow2(scale)
     if mag == 0 or exact < pow2(1 - BIAS):
-        return 0, 0
+        return 0
 
     log2_mag = mag.bit_length() - 1
     exp_biased = scale + log2_mag + BIAS
+
+    if exp_biased > EXP_MAX_FINITE:
+        return (sign << (WEXP + WFRAC)) | (EXP_INF << WFRAC)
 
     if log2_mag >= WMAN:
         shift = log2_mag - WMAN + 1
@@ -47,14 +52,11 @@ def pack_reference(sign: int, mag: int, scale: int) -> tuple[int, int]:
         significand >>= 1
         exp_biased += 1
 
-    if exp_biased > EXP_MAX:
-        return (
-            (sign << (WEXP + WFRAC)) | (EXP_MAX << WFRAC) | ((1 << WFRAC) - 1),
-            1,
-        )
+    if exp_biased > EXP_MAX_FINITE:
+        return (sign << (WEXP + WFRAC)) | (EXP_INF << WFRAC)
 
     frac = significand & ((1 << WFRAC) - 1)
-    return (sign << (WEXP + WFRAC)) | (exp_biased << WFRAC) | frac, 0
+    return (sign << (WEXP + WFRAC)) | (exp_biased << WFRAC) | frac
 
 
 def twos_complement(value: int, width: int) -> int:
@@ -62,13 +64,12 @@ def twos_complement(value: int, width: int) -> int:
 
 
 def vector_word(sign: int, mag: int, scale: int) -> int:
-    y, saturated = pack_reference(sign, mag, scale)
+    y = pack_reference(sign, mag, scale)
     return (
-        (sign << (WMAG + WSCALE + WFULL + 1))
-        | (mag << (WSCALE + WFULL + 1))
-        | (twos_complement(scale, WSCALE) << (WFULL + 1))
-        | (y << 1)
-        | saturated
+        (sign << (WMAG + WSCALE + WFULL))
+        | (mag << (WSCALE + WFULL))
+        | (twos_complement(scale, WSCALE) << WFULL)
+        | y
     )
 
 
@@ -85,12 +86,14 @@ def directed_cases() -> list[tuple[int, int, int]]:
         (1, (1 << 24) + 1, -24),
         (0, (1 << 25) - 1, -24),
         (1, (1 << 25) - 1, -24),
-        (0, (1 << 24) - 1, 105),
-        (1, (1 << 24) - 1, 105),
-        (0, (1 << 25) - 2, 104),
-        (1, (1 << 25) - 2, 104),
-        (0, (1 << 25) - 1, 104),
-        (1, (1 << 25) - 1, 104),
+        (0, (1 << 24) - 1, 104),
+        (1, (1 << 24) - 1, 104),
+        (0, (1 << 26) - 3, 102),
+        (1, (1 << 26) - 3, 102),
+        (0, (1 << 25) - 1, 103),
+        (1, (1 << 25) - 1, 103),
+        (0, 1, 128),
+        (1, 1, 128),
         (0, (1 << 47) - 1, 511),
         (1, (1 << 47) - 1, 511),
     ]
@@ -115,9 +118,9 @@ def random_case(rng: random.Random) -> tuple[int, int, int]:
     if mode in (1, 4):
         scale = rng.randrange(-512, -120)
     elif mode in (2, 5):
-        scale = rng.randrange(96, 130)
+        scale = rng.randrange(96, 129)
     elif mode == 3:
-        scale = rng.choice([-126, -125, -24, -1, 0, 1, 104, 105])
+        scale = rng.choice([-126, -125, -24, -1, 0, 1, 102, 103, 104, 127, 128])
     else:
         scale = rng.randrange(-512, 512)
 
@@ -125,7 +128,7 @@ def random_case(rng: random.Random) -> tuple[int, int, int]:
 
 
 def main() -> None:
-    out = Path(__file__).with_name("pack_random_vectors.memh")
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd() / "pack_random_vectors.memh"
     rng = random.Random(0x2C0FFEE)
     cases: list[tuple[int, int, int]] = []
     seen: set[tuple[int, int, int]] = set()

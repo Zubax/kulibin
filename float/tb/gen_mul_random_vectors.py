@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate deterministic exact-reference vectors for zkf_mul_random_tb.v."""
+"""Generate deterministic NumPy float32 reference vectors for zkf_mul_random_tb.v."""
 
 from __future__ import annotations
 
-from fractions import Fraction
 from pathlib import Path
-import random
+import sys
+
+import numpy as np
 
 
 WEXP = 8
@@ -14,71 +15,53 @@ VECTOR_COUNT = 20_000
 
 WFRAC = WMAN - 1
 WFULL = WEXP + WMAN
-BIAS = (1 << (WEXP - 1)) - 1
-EXP_MAX = (1 << WEXP) - 1
+EXP_INF = (1 << WEXP) - 1
+EXP_MAX_FINITE = EXP_INF - 1
+FRAC_MASK = (1 << WFRAC) - 1
+SIGN_SHIFT = WEXP + WFRAC
 VECTOR_WIDTH = 3 * WFULL
 
 
-def pow2(k: int) -> Fraction:
-    return Fraction(1 << k, 1) if k >= 0 else Fraction(1, 1 << -k)
-
-
 def pack_bits(sign: int, exp: int, frac: int) -> int:
-    return (sign << (WEXP + WFRAC)) | (exp << WFRAC) | frac
+    return (sign << SIGN_SHIFT) | (exp << WFRAC) | frac
 
 
-def decode(x: int) -> tuple[int, Fraction]:
-    sign = (x >> (WEXP + WFRAC)) & 1
-    exp = (x >> WFRAC) & ((1 << WEXP) - 1)
-    frac = x & ((1 << WFRAC) - 1)
-
-    if exp == 0:
-        return sign, Fraction(0, 1)
-
-    significand = (1 << WFRAC) | frac
-    return sign, Fraction(significand, 1) * pow2(exp - BIAS - WFRAC)
+def normal(sign: int, exp: int, frac: int) -> int:
+    assert 1 <= exp <= EXP_MAX_FINITE
+    return pack_bits(sign, exp, frac)
 
 
-def floor_log2(x: Fraction) -> int:
-    assert x > 0
-    exponent = x.numerator.bit_length() - x.denominator.bit_length()
-    while x < pow2(exponent):
-        exponent -= 1
-    while x >= pow2(exponent + 1):
-        exponent += 1
-    return exponent
+def canonical_inf(sign: int) -> int:
+    return pack_bits(sign, EXP_INF, 0)
 
 
-def pack_reference(sign: int, exact_abs: Fraction) -> int:
-    if exact_abs == 0 or exact_abs < pow2(1 - BIAS):
+def bits_to_float32(bits: int) -> np.float32:
+    return np.array([bits], dtype=np.uint32).view(np.float32)[0]
+
+
+def float32_to_bits(value: np.float32) -> int:
+    return int(np.array([value], dtype=np.float32).view(np.uint32)[0])
+
+
+def canonicalize_result(value: np.float32) -> int:
+    if np.isnan(value):
         return 0
 
-    exponent = floor_log2(exact_abs)
-    exp_biased = exponent + BIAS
-    scaled = exact_abs * pow2(WFRAC - exponent)
-    significand = scaled.numerator // scaled.denominator
-    remainder = scaled.numerator % scaled.denominator
-    twice_remainder = 2 * remainder
+    bits = float32_to_bits(value)
+    sign = (bits >> SIGN_SHIFT) & 1
+    exp = (bits >> WFRAC) & EXP_INF
 
-    if (twice_remainder > scaled.denominator) or (
-        (twice_remainder == scaled.denominator) and ((significand & 1) != 0)
-    ):
-        significand += 1
-
-    if significand >= (1 << WMAN):
-        significand >>= 1
-        exp_biased += 1
-
-    if exp_biased > EXP_MAX:
-        return pack_bits(sign, EXP_MAX, (1 << WFRAC) - 1)
-
-    return pack_bits(sign, exp_biased, significand & ((1 << WFRAC) - 1))
+    if exp == 0:
+        return 0
+    if exp == EXP_INF:
+        return canonical_inf(sign)
+    return bits
 
 
 def mul_reference(a: int, b: int) -> int:
-    sign_a, abs_a = decode(a)
-    sign_b, abs_b = decode(b)
-    return pack_reference(sign_a ^ sign_b, abs_a * abs_b)
+    with np.errstate(all="ignore"):
+        y = np.float32(bits_to_float32(a)) * np.float32(bits_to_float32(b))
+    return canonicalize_result(y)
 
 
 def vector_word(a: int, b: int) -> int:
@@ -86,94 +69,117 @@ def vector_word(a: int, b: int) -> int:
     return (a << (2 * WFULL)) | (b << WFULL) | y
 
 
-def normal(sign: int, exp: int, frac: int) -> int:
-    return pack_bits(sign, exp, frac)
-
-
 def directed_cases() -> list[tuple[int, int]]:
-    one = normal(0, BIAS, 0)
-    minus_one = normal(1, BIAS, 0)
-    half = normal(0, BIAS - 1, 0)
-    one_and_half = normal(0, BIAS, 1 << (WFRAC - 1))
-    one_and_quarter = normal(0, BIAS, 1 << (WFRAC - 2))
-    one_and_three_quarters = normal(0, BIAS, 3 << (WFRAC - 2))
-    two = normal(0, BIAS + 1, 0)
+    zero = 0
+    one = normal(0, 127, 0)
+    minus_one = normal(1, 127, 0)
+    half = normal(0, 126, 0)
+    one_and_half = normal(0, 127, 1 << (WFRAC - 1))
+    one_and_quarter = normal(0, 127, 1 << (WFRAC - 2))
+    one_and_three_quarters = normal(0, 127, 3 << (WFRAC - 2))
+    two = normal(0, 128, 0)
     min_normal = normal(0, 1, 0)
     neg_min_normal = normal(1, 1, 0)
-    max_finite = normal(0, EXP_MAX, (1 << WFRAC) - 1)
-    neg_max_finite = normal(1, EXP_MAX, (1 << WFRAC) - 1)
+    max_finite = normal(0, EXP_MAX_FINITE, FRAC_MASK)
+    neg_max_finite = normal(1, EXP_MAX_FINITE, FRAC_MASK)
+    pos_inf = canonical_inf(0)
+    neg_inf = canonical_inf(1)
 
     return [
-        (0, one),
-        (pack_bits(1, 0, 0x5a5a5a), max_finite),
-        (minus_one, pack_bits(0, 0, (1 << WFRAC) - 1)),
+        (zero, one),
+        (zero, pos_inf),
+        (one, zero),
+        (minus_one, zero),
         (one, one),
         (minus_one, one),
         (minus_one, minus_one),
         (one_and_half, two),
         (one_and_quarter, one_and_half),
         (one_and_half, one_and_half),
+        (one, pos_inf),
+        (minus_one, pos_inf),
+        (two, neg_inf),
+        (pos_inf, pos_inf),
+        (neg_inf, pos_inf),
+        (neg_inf, neg_inf),
         (min_normal, half),
         (min_normal, one),
         (neg_min_normal, one),
         (max_finite, one),
+        (neg_max_finite, one),
         (max_finite, two),
         (neg_max_finite, two),
-        (normal(0, BIAS, 2), one_and_quarter),
-        (normal(0, BIAS, 1), one_and_half),
-        (normal(0, BIAS, 1), one_and_quarter),
-        (normal(0, BIAS, 1), one_and_three_quarters),
+        (normal(0, 127, 2), one_and_quarter),
+        (normal(0, 127, 1), one_and_half),
+        (normal(0, 127, 1), one_and_quarter),
+        (normal(0, 127, 1), one_and_three_quarters),
     ]
 
 
-def random_zero(rng: random.Random) -> int:
-    return pack_bits(rng.randrange(2), 0, rng.randrange(1 << WFRAC))
+def random_zero() -> int:
+    return 0
 
 
-def random_normal_near(rng: random.Random, exponents: list[int], fractions: list[int]) -> int:
-    exp = max(1, min(EXP_MAX, rng.choice(exponents) + rng.randrange(-1, 2)))
-    frac_center = rng.choice(fractions)
-    frac = max(0, min((1 << WFRAC) - 1, frac_center + rng.randrange(-16, 17)))
-    return normal(rng.randrange(2), exp, frac)
+def random_inf(rng: np.random.Generator) -> int:
+    return canonical_inf(int(rng.integers(0, 2)))
 
 
-def random_operand(rng: random.Random) -> int:
-    mode = rng.randrange(10)
+def random_normal_near(rng: np.random.Generator, exponents: list[int], fractions: list[int]) -> int:
+    exp = int(np.clip(rng.choice(exponents) + rng.integers(-1, 2), 1, EXP_MAX_FINITE))
+    frac_center = int(rng.choice(fractions))
+    frac = int(np.clip(frac_center + rng.integers(-16, 17), 0, FRAC_MASK))
+    return normal(int(rng.integers(0, 2)), exp, frac)
+
+
+def random_normal(rng: np.random.Generator) -> int:
+    return normal(
+        int(rng.integers(0, 2)),
+        int(rng.integers(1, EXP_MAX_FINITE + 1)),
+        int(rng.integers(0, FRAC_MASK + 1)),
+    )
+
+
+def random_operand(rng: np.random.Generator) -> int:
+    mode = int(rng.integers(0, 12))
     if mode == 0:
-        return random_zero(rng)
+        return random_zero()
     if mode == 1:
-        return random_normal_near(rng, [1, 2, 3], [0, 1, (1 << WFRAC) - 1])
+        return random_inf(rng)
     if mode == 2:
-        return random_normal_near(rng, [BIAS - 1, BIAS, BIAS + 1], [0, 1, 2, 1 << (WFRAC - 1)])
+        return random_normal_near(rng, [1, 2, 3], [0, 1, FRAC_MASK])
     if mode == 3:
-        return random_normal_near(
-            rng,
-            [EXP_MAX - 2, EXP_MAX - 1, EXP_MAX],
-            [0, (1 << (WFRAC - 1)), (1 << WFRAC) - 1],
-        )
+        return random_normal_near(rng, [126, 127, 128], [0, 1, 2, 1 << (WFRAC - 1)])
     if mode == 4:
-        return normal(rng.randrange(2), rng.randrange(1, EXP_MAX + 1), rng.randrange(1 << WFRAC))
-    return rng.randrange(1 << WFULL)
+        return random_normal_near(rng, [252, 253, 254], [0, 1 << (WFRAC - 1), FRAC_MASK])
+    return random_normal(rng)
 
 
-def random_case(rng: random.Random) -> tuple[int, int]:
-    mode = rng.randrange(8)
+def random_case(rng: np.random.Generator) -> tuple[int, int]:
+    mode = int(rng.integers(0, 10))
     if mode == 0:
-        return random_zero(rng), random_operand(rng)
+        return random_zero(), random_operand(rng)
     if mode == 1:
-        return random_operand(rng), random_zero(rng)
+        return random_operand(rng), random_zero()
     if mode == 2:
-        return random_normal_near(rng, [1, 2], [0, 1]), random_normal_near(rng, [BIAS - 1, BIAS], [0])
+        return random_zero(), random_inf(rng)
     if mode == 3:
-        return random_normal_near(rng, [EXP_MAX], [(1 << WFRAC) - 1]), random_normal_near(
-            rng, [BIAS, BIAS + 1], [0, 1]
-        )
+        return random_inf(rng), random_zero()
+    if mode == 4:
+        return random_normal(rng), random_inf(rng)
+    if mode == 5:
+        return random_inf(rng), random_normal(rng)
+    if mode == 6:
+        return random_inf(rng), random_inf(rng)
+    if mode == 7:
+        return random_normal_near(rng, [1, 2], [0, 1]), random_normal_near(rng, [126, 127], [0])
+    if mode == 8:
+        return random_normal_near(rng, [254], [FRAC_MASK]), random_normal_near(rng, [127, 128], [0, 1])
     return random_operand(rng), random_operand(rng)
 
 
 def main() -> None:
-    out = Path(__file__).with_name("mul_random_vectors.memh")
-    rng = random.Random(0x4D554C)
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd() / "mul_random_vectors.memh"
+    rng = np.random.default_rng(0x4D554C)
     cases: list[tuple[int, int]] = []
     seen: set[tuple[int, int]] = set()
 
