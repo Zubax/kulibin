@@ -238,13 +238,11 @@ zkf_addsub #(parameter int WEXP = 6, parameter int WMAN = 18)(
     input  wire             in_valid,
     input  wire [WFULL-1:0] a,
     input  wire [WFULL-1:0] b,
+    input  wire             op_sub, // 0: y=a+b; 1: y=a-b
 
     output wire             out_valid,
-    output wire [WFULL-1:0] sum,    // a+b
-    output wire [WFULL-1:0] diff    // a-b
+    output wire [WFULL-1:0] y
 );
-
-zkf_sub // similar...
 ```
 
 Implementation guidance (rough):
