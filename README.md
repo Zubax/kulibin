@@ -35,7 +35,8 @@ See CI files in `.github/`.
 
     make synth-float
 
-This runs Yosys/nextpnr writes `build/*/index.html` with timing and utilization summaries.
+This runs the Yosys/nextpnr flow and optionally Diamond/LSE if available.
+The reports are written to `build/*synth*/index.html`.
 
 <!-- hierarchy-start -->
 ## Module dependency graph
