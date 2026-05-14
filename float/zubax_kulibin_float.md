@@ -352,18 +352,13 @@ else:
 Implementation guidance:
 
 ```text
-Use radix-4 SRT, radix-4 non-restoring, or equivalent.
+Use a high-radix SRT or equivalent.
 Generate at least WMAN + guard/round/sticky quotient precision.
 Use the final partial remainder to decide round-to-nearest ties-to-even.
 After quotient rounding, adjust the residual if the quotient was incremented.
 ```
 
-Performance target:
-
-```text
-roughly two quotient bits per cycle
-latency about ceil((WMAN + extra_round_bits) / 2) + small constant
-```
+Performance target: at least two quotient bits per cycle.
 
 ---
 
