@@ -63,12 +63,12 @@ module zkf_mul #(
     wire signed [WEXP_UNBIASED-1:0] s1_exp_unbiased = a_exp_ext + b_exp_ext - (bias_ext <<< 1);
 
     // Stage 2: registered product.
-    reg s2_valid;
-    reg s2_sign;
-    (* keep *) reg [WMAG-1:0] s2_mag;
+    reg                            s2_valid;
+    reg                            s2_sign;
+    reg                 [WMAG-1:0] s2_mag;
     reg signed [WEXP_UNBIASED-1:0] s2_exp_unbiased_base;
-    reg s2_force_zero;
-    reg s2_force_inf;
+    reg                            s2_force_zero;
+    reg                            s2_force_inf;
 
     // A nonzero hidden-bit product has its leading one in one of the two most-significant product bits.
     wire                            s2_product_high   = s2_mag[WMAG-1];
