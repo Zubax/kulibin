@@ -329,6 +329,9 @@ else:
     q = pack(a / b)
 ```
 
+This is equivalent to IEEE 754 division for finite operands and infinities except that NaN is not representable:
+undefined IEEE cases such as `0 / 0` and `infinity / infinity` return canonical `+0` instead.
+
 The `div0` output is asserted when `b` decodes as zero.
 
 Residual remainder semantics:
@@ -349,10 +352,26 @@ else:
     r = pack(a - b * q)
 ```
 
+The residual expression above is evaluated using the same deterministic no-NaN infinity arithmetic as the rest of this format:
+
+```text
+finite / infinity:
+    q = +0
+    r = canonicalized a
+
+infinity / infinity:
+    q = +0
+    r = signed infinity with sign = sign(a)
+
+infinity / finite nonzero:
+    q = signed infinity with sign = sign(a) XOR sign(b)
+    r = +0
+```
+
 Implementation guidance:
 
 ```text
-Use a high-radix SRT or equivalent.
+Use a radix-4 SRT or equivalent.
 Generate at least WMAN + guard/round/sticky quotient precision.
 Use the final partial remainder to decide round-to-nearest ties-to-even.
 After quotient rounding, adjust the residual if the quotient was incremented.
@@ -523,6 +542,7 @@ division by zero asserts div0
 add/sub module implements both operations exactly per spec
 mul uses the same pack semantics as add/sub
 div quotient matches exact a/b rounded per spec
+div residual matches the documented a - b*q rule rounded per spec
 resize equals decode-then-pack into target format
 ```
 
