@@ -30,8 +30,8 @@ module _zkf_pack #(
     input  wire                            round,
     input  wire                            sticky,
 
-    output reg                     out_valid,
-    output reg     [WEXP+WMAN-1:0] y
+    output reg                 out_valid,
+    output reg [WEXP+WMAN-1:0] y
 );
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
@@ -64,7 +64,7 @@ module _zkf_pack #(
     wire signed [WEXP_UNBIASED-1:0] min_exp_unbiased   = one_ext - bias_ext;
     wire signed [WEXP_UNBIASED-1:0] max_exp_unbiased   = exp_max_finite_ext - bias_ext;
     wire signed [WEXP_UNBIASED-1:0] s1_exp_biased_ext  = s1_exp_unbiased + bias_ext;
-    wire             [WEXP-1:0]     s1_exp_biased      = s1_exp_biased_ext[WEXP-1:0];
+    wire                 [WEXP-1:0] s1_exp_biased      = s1_exp_biased_ext[WEXP-1:0];
     wire                            s1_exp_underflow   = s1_exp_unbiased < min_exp_unbiased;
     wire                            s1_exp_overflow    = s1_exp_unbiased > max_exp_unbiased;
 
@@ -83,7 +83,7 @@ module _zkf_pack #(
 
     // Stage 2 combinational rounding, round-to-nearest ties-to-even.
     wire            s2_round_increment     = s2_guard && (s2_round || s2_sticky || s2_significand[0]);
-    wire [WMAN:0]   s2_rounded_ext         = {1'b0, s2_significand} + {{WMAN{1'b0}}, s2_round_increment};
+    wire   [WMAN:0] s2_rounded_ext         = {1'b0, s2_significand} + {{WMAN{1'b0}}, s2_round_increment};
     wire            s2_round_carry         = s2_rounded_ext[WMAN];
     wire            s2_exp_round_overflow  = (s2_exp_biased == EXP_MAX_FINITE) && s2_round_carry;
     wire            s2_infinity            = s2_force_inf || s2_overflow || s2_exp_round_overflow;

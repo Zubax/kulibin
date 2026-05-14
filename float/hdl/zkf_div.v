@@ -20,7 +20,7 @@ module zkf_div #(
     output wire [WEXP+WMAN-1:0] q,
     output wire                 div0
 );
-    localparam WFULL          = WEXP + WMAN;
+    localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
 
     // A single stage is needed to latch the inputs to shield the combinational paths in the div core.
