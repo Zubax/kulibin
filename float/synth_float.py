@@ -63,6 +63,26 @@ MODULES = [
         wmag=0,
         wscale=0,
     ),
+    ModuleSpec(
+        name="_zkf_div_core",
+        label="_zkf_div_core",
+        top="_zkf_div_core_synth_top",
+        kind="div_core",
+        wexp=6,
+        wman=18,
+        wmag=0,
+        wscale=0,
+    ),
+    ModuleSpec(
+        name="zkf_div",
+        label="zkf_div",
+        top="zkf_div_synth_top",
+        kind="div",
+        wexp=6,
+        wman=18,
+        wmag=0,
+        wscale=0,
+    ),
 ]
 
 
@@ -149,11 +169,120 @@ endmodule
     )
 
 
+def div_params(spec: ModuleSpec) -> tuple[int, int, int]:
+    qfrac_base = spec.wman + 4
+    qfrac = qfrac_base + (qfrac_base % 2)
+    qmag = qfrac + 2
+    wqfrac_bits = (qfrac + 1).bit_length()
+    wscale = max(spec.wexp, wqfrac_bits) + 2
+    return qmag, wscale, (qmag - 1).bit_length()
+
+
+def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    qmag, wscale, qlog = div_params(spec)
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                     clk,
+    input  wire                     rst,
+    input  wire                     in_valid,
+    input  wire [{wfull - 1}:0]     a,
+    input  wire [{wfull - 1}:0]     b,
+    output wire                     out_valid,
+    output wire                     sign,
+    output wire [{qmag - 1}:0]      mag,
+    output wire                     mag_zero,
+    output wire [{qlog - 1}:0]      mag_flog2,
+    output wire signed [{wscale - 1}:0] scale,
+    output wire                     div0,
+    output wire [{spec.wman - 1}:0] partial_rem
+);
+    reg                 s1_valid;
+    reg [{wfull - 1}:0] s1_a;
+    reg [{wfull - 1}:0] s1_b;
+
+    _zkf_div_core #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(s1_valid),
+        .a(s1_a),
+        .b(s1_b),
+        .out_valid(out_valid),
+        .sign(sign),
+        .mag(mag),
+        .mag_zero(mag_zero),
+        .mag_flog2(mag_flog2),
+        .scale(scale),
+        .div0(div0),
+        .partial_rem(partial_rem)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s1_valid <= 1'b0;
+        end else begin
+            s1_valid <= in_valid;
+        end
+
+        s1_a <= a;
+        s1_b <= b;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_div_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] q,
+    output wire                 div0
+);
+    zkf_div #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(in_valid),
+        .a(a),
+        .b(b),
+        .out_valid(out_valid),
+        .q(q),
+        .div0(div0)
+    );
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
     elif spec.kind == "mul":
         write_mul_wrapper(spec, path)
+    elif spec.kind == "div_core":
+        write_div_core_wrapper(spec, path)
+    elif spec.kind == "div":
+        write_div_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -168,6 +297,18 @@ def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: P
         rtl = [
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "zkf_mul.v",
+            wrapper,
+        ]
+    elif spec.kind == "div_core":
+        rtl = [
+            REPO / "float" / "hdl" / "_zkf_div_core.v",
+            wrapper,
+        ]
+    elif spec.kind == "div":
+        rtl = [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_div_core.v",
+            REPO / "float" / "hdl" / "zkf_div.v",
             wrapper,
         ]
     else:
@@ -607,6 +748,9 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
             nextpnr_ff = ff_util["used"]
     if spec.kind == "pack":
         params = f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, WSCALE={spec.wscale}, log2=external"
+    elif spec.kind in {"div_core", "div"}:
+        qmag, wscale, _qlog = div_params(spec)
+        params = f"WEXP={spec.wexp}, WMAN={spec.wman}, QWMAG={qmag}, WSCALE={wscale}"
     else:
         params = f"WEXP={spec.wexp}, WMAN={spec.wman}"
 

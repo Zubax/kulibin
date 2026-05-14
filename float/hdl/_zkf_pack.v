@@ -8,6 +8,8 @@
 ///
 /// The output is canonical zero for zero/underflow, round-to-nearest ties-to-even for normal values,
 /// and canonical signed infinity for exponent overflow.
+///
+/// All inputs and outputs are latched -- no combinational logic on external interfaces.
 
 `default_nettype none
 
@@ -55,18 +57,18 @@ module _zkf_pack #(
     reg          [WLOG-1:0] s1_log2;
 
     // Stage 1 combinational exponent classification. Underflow is decided before rounding per the format spec.
-    wire signed [WEXP_WORK-1:0] bias_ext            = {{(WEXP_WORK-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WEXP_WORK-1:0] exp_max_finite_ext  = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX_FINITE};
-    wire signed [WEXP_WORK-1:0] one_ext             = {{(WEXP_WORK-1){1'b0}}, 1'b1};
-    wire signed [WEXP_WORK-1:0] min_exp_unbiased    = one_ext - bias_ext;
-    wire signed [WEXP_WORK-1:0] max_exp_unbiased    = exp_max_finite_ext - bias_ext;
-    wire signed [WEXP_WORK-1:0] s1_scale_ext        = {{(WEXP_WORK-WSCALE){s1_scale[WSCALE-1]}}, s1_scale};
-    wire signed [WEXP_WORK-1:0] s1_log2_ext         = {{(WEXP_WORK-WLOG){1'b0}}, s1_log2};
-    wire signed [WEXP_WORK-1:0] s1_exp_unbiased     = s1_scale_ext + s1_log2_ext;
-    wire signed [WEXP_WORK-1:0] s1_exp_biased_ext   = s1_exp_unbiased + bias_ext;
-    wire             [WEXP-1:0] s1_exp_biased       = s1_exp_biased_ext[WEXP-1:0];
-    wire                        s1_exp_underflow    = s1_exp_unbiased < min_exp_unbiased;
-    wire                        s1_exp_overflow     = s1_exp_unbiased > max_exp_unbiased;
+    wire signed [WEXP_WORK-1:0] bias_ext           = {{(WEXP_WORK-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WEXP_WORK-1:0] exp_max_finite_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX_FINITE};
+    wire signed [WEXP_WORK-1:0] one_ext            = {{(WEXP_WORK-1){1'b0}}, 1'b1};
+    wire signed [WEXP_WORK-1:0] min_exp_unbiased   = one_ext - bias_ext;
+    wire signed [WEXP_WORK-1:0] max_exp_unbiased   = exp_max_finite_ext - bias_ext;
+    wire signed [WEXP_WORK-1:0] s1_scale_ext       = {{(WEXP_WORK-WSCALE){s1_scale[WSCALE-1]}}, s1_scale};
+    wire signed [WEXP_WORK-1:0] s1_log2_ext        = {{(WEXP_WORK-WLOG){1'b0}}, s1_log2};
+    wire signed [WEXP_WORK-1:0] s1_exp_unbiased    = s1_scale_ext + s1_log2_ext;
+    wire signed [WEXP_WORK-1:0] s1_exp_biased_ext  = s1_exp_unbiased + bias_ext;
+    wire             [WEXP-1:0] s1_exp_biased      = s1_exp_biased_ext[WEXP-1:0];
+    wire                        s1_exp_underflow   = s1_exp_unbiased < min_exp_unbiased;
+    wire                        s1_exp_overflow    = s1_exp_unbiased > max_exp_unbiased;
 
     // Stage 1 combinational normalization. The shifted window supplies the retained significand and G/R bits.
     localparam WALIGN = WMAG + WMAN + 1;

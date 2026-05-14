@@ -7,7 +7,9 @@ filesets:
     files:
       - hdl/_zkf_ilog2_floor.v
       - hdl/_zkf_pack.v
+      - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
+      - hdl/zkf_div.v
     file_type: verilogSource
 
   tb_pack_min:
@@ -54,6 +56,26 @@ filesets:
       - tb/gen_mul_random_vectors.py:
           file_type: user
 
+  tb_div_min:
+    files:
+      - tb/zkf_div_min_tb.v
+    file_type: verilogSource
+
+  tb_div_manual:
+    files:
+      - tb/zkf_div_manual_tb.v
+    file_type: verilogSource
+
+  tb_div_random:
+    files:
+      - tb/zkf_div_random_tb.v
+    file_type: verilogSource
+
+  tb_div_random_gen:
+    files:
+      - tb/gen_div_random_vectors.py:
+          file_type: user
+
 scripts:
   gen_pack_random_vectors:
     cmd:
@@ -70,6 +92,14 @@ scripts:
       - 'python3 "$FILES_ROOT"/tb/gen_mul_random_vectors.py'
     filesets:
       - tb_mul_random_gen
+
+  gen_div_random_vectors:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/gen_div_random_vectors.py'
+    filesets:
+      - tb_div_random_gen
 
 targets:
   default:
@@ -124,6 +154,33 @@ targets:
       pre_build:
         - gen_mul_random_vectors
     toplevel: zkf_mul_random_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_div_min:
+    filesets: [rtl, tb_div_min]
+    toplevel: zkf_div_min_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_div_manual:
+    filesets: [rtl, tb_div_manual]
+    toplevel: zkf_div_manual_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_div_random:
+    filesets: [rtl, tb_div_random]
+    hooks:
+      pre_build:
+        - gen_div_random_vectors
+    toplevel: zkf_div_random_tb
     default_tool: icarus
     tools:
       icarus:
