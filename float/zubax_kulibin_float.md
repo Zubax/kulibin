@@ -238,10 +238,10 @@ zkf_addsub #(parameter int WEXP = 6, parameter int WMAN = 18)(
     input  wire             in_valid,
     input  wire [WFULL-1:0] a,
     input  wire [WFULL-1:0] b,
-    input  wire             op_sub,     // 0: a+b, 1: a-b
 
     output wire             out_valid,
-    output wire [WFULL-1:0] y
+    output wire [WFULL-1:0] sum,    // a+b
+    output wire [WFULL-1:0] diff    // a-b
 );
 
 zkf_sub // similar...
@@ -250,14 +250,12 @@ zkf_sub // similar...
 Implementation guidance (rough):
 
 ```text
-stage 1: unpack, zero detection, exponent compare
+stage 1: unpack, zero/infinity detection, exponent compare
 stage 2: align smaller significand using sticky bit
 stage 3: signed add/subtract
 stage 4: normalize
 stage 5: round, infinity/flush, pack
 ```
-
-A 3–6 stage pipeline is acceptable.
 
 ---
 
