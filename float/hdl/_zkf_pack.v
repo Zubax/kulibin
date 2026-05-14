@@ -12,11 +12,11 @@
 `default_nettype none
 
 module _zkf_pack #(
-    parameter WEXP = 6,              // exponent field width
-    parameter WMAN = 18,             // significand precision including the hidden bit
-    parameter WMAG = 2 * WMAN,       // input magnitude width; usually set by the instantiator
-    parameter WSCALE = 1,            // signed binary scale width; always set by the instantiator depending on usage
-    parameter WLOG = $clog2(WMAG)
+    parameter WEXP   = 6,              // exponent field width
+    parameter WMAN   = 18,             // significand precision including the hidden bit
+    parameter WMAG   = 2 * WMAN,       // input magnitude width; usually set by the instantiator
+    parameter WSCALE = 1,              // signed binary scale width; always set by the instantiator depending on usage
+    parameter WLOG   = $clog2(WMAG)
 )(
     input  wire clk,
     input  wire rst,
@@ -28,54 +28,52 @@ module _zkf_pack #(
     input  wire          [WLOG-1:0] mag_flog2,  // floor(log2(mag)) unless mag_zero; usually from _zkf_ilog2_floor
     input  wire signed [WSCALE-1:0] scale,
 
-    output reg                   out_valid,
-    output reg  [WEXP+WMAN-1:0]  y
+    output reg                     out_valid,
+    output reg     [WEXP+WMAN-1:0] y
 );
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
 
     // Internal exponent arithmetic is performed on the unbiased exponent:
-    //
     //     exp_unbiased = scale + floor(log2(mag))
-    //
     // Keeping the exponent path only as wide as needed avoids carrying the full output exponent width through
     // underflow/overflow comparisons and the post-round increment logic.
     localparam WEXP_WORK_A = (WSCALE > WLOG) ? WSCALE : WLOG;
     localparam WEXP_WORK_B = (WEXP_WORK_A > WEXP) ? WEXP_WORK_A : WEXP;
-    localparam WEXP_WORK = WEXP_WORK_B + 2;
+    localparam WEXP_WORK   = WEXP_WORK_B + 2;
 
-    localparam [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
-    localparam [WEXP-1:0] EXP_INF = {WEXP{1'b1}};
+    localparam [WEXP-1:0] EXP_BIAS       = {1'b0, {WEXP-1{1'b1}}};
+    localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
     localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
     // Stage 1: input sample plus leading-one index.
-    reg s1_valid;
-    reg s1_sign;
-    reg s1_zero;
-    reg [WMAG-1:0] s1_mag;
+    reg                     s1_valid;
+    reg                     s1_sign;
+    reg                     s1_zero;
+    reg          [WMAG-1:0] s1_mag;
     reg signed [WSCALE-1:0] s1_scale;
-    reg [WLOG-1:0] s1_log2;
+    reg          [WLOG-1:0] s1_log2;
 
     // Stage 1 combinational exponent classification. Underflow is decided before rounding per the format spec.
-    wire signed [WEXP_WORK-1:0] bias_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WEXP_WORK-1:0] exp_max_finite_ext = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX_FINITE};
-    wire signed [WEXP_WORK-1:0] one_ext = {{(WEXP_WORK-1){1'b0}}, 1'b1};
-    wire signed [WEXP_WORK-1:0] min_exp_unbiased = one_ext - bias_ext;
-    wire signed [WEXP_WORK-1:0] max_exp_unbiased = exp_max_finite_ext - bias_ext;
-    wire signed [WEXP_WORK-1:0] s1_scale_ext = {{(WEXP_WORK-WSCALE){s1_scale[WSCALE-1]}}, s1_scale};
-    wire signed [WEXP_WORK-1:0] s1_log2_ext = {{(WEXP_WORK-WLOG){1'b0}}, s1_log2};
-    wire signed [WEXP_WORK-1:0] s1_exp_unbiased = s1_scale_ext + s1_log2_ext;
-    wire signed [WEXP_WORK-1:0] s1_exp_biased_ext = s1_exp_unbiased + bias_ext;
-    wire [WEXP-1:0] s1_exp_biased = s1_exp_biased_ext[WEXP-1:0];
-    wire s1_exp_underflow = s1_exp_unbiased < min_exp_unbiased;
-    wire s1_exp_overflow = s1_exp_unbiased > max_exp_unbiased;
+    wire signed [WEXP_WORK-1:0] bias_ext            = {{(WEXP_WORK-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WEXP_WORK-1:0] exp_max_finite_ext  = {{(WEXP_WORK-WEXP){1'b0}}, EXP_MAX_FINITE};
+    wire signed [WEXP_WORK-1:0] one_ext             = {{(WEXP_WORK-1){1'b0}}, 1'b1};
+    wire signed [WEXP_WORK-1:0] min_exp_unbiased    = one_ext - bias_ext;
+    wire signed [WEXP_WORK-1:0] max_exp_unbiased    = exp_max_finite_ext - bias_ext;
+    wire signed [WEXP_WORK-1:0] s1_scale_ext        = {{(WEXP_WORK-WSCALE){s1_scale[WSCALE-1]}}, s1_scale};
+    wire signed [WEXP_WORK-1:0] s1_log2_ext         = {{(WEXP_WORK-WLOG){1'b0}}, s1_log2};
+    wire signed [WEXP_WORK-1:0] s1_exp_unbiased     = s1_scale_ext + s1_log2_ext;
+    wire signed [WEXP_WORK-1:0] s1_exp_biased_ext   = s1_exp_unbiased + bias_ext;
+    wire             [WEXP-1:0] s1_exp_biased       = s1_exp_biased_ext[WEXP-1:0];
+    wire                        s1_exp_underflow    = s1_exp_unbiased < min_exp_unbiased;
+    wire                        s1_exp_overflow     = s1_exp_unbiased > max_exp_unbiased;
 
     // Stage 1 combinational normalization. The shifted window supplies the retained significand and G/R bits.
     localparam WALIGN = WMAG + WMAN + 1;
-    wire [WALIGN-1:0] s1_aligned = {s1_mag, {WMAN+1{1'b0}}} >> s1_log2;
-    wire [WMAN-1:0] s1_significand = s1_aligned[WMAN+1:2];
-    wire s1_guard = s1_aligned[1];
-    wire s1_round = s1_aligned[0];
+    wire [WALIGN-1:0] s1_aligned     = {s1_mag, {WMAN+1{1'b0}}} >> s1_log2;
+    wire   [WMAN-1:0] s1_significand = s1_aligned[WMAN+1:2];
+    wire              s1_guard       = s1_aligned[1];
+    wire              s1_round       = s1_aligned[0];
 
     // Sticky is true when any discarded bit below round is nonzero.
     wire [WMAG-1:0] s1_sticky_bits;
@@ -93,33 +91,32 @@ module _zkf_pack #(
     wire s1_sticky = |s1_sticky_bits;
 
     // Stage 2: pre-round normalized value.
-    reg s2_valid;
-    reg s2_sign;
-    reg s2_zero;
-    reg s2_underflow;
-    reg s2_overflow;
+    reg            s2_valid;
+    reg            s2_sign;
+    reg            s2_zero;
+    reg            s2_underflow;
+    reg            s2_overflow;
     reg [WEXP-1:0] s2_exp_biased;
     reg [WMAN-1:0] s2_significand;
-    reg s2_guard;
-    reg s2_round;
-    reg s2_sticky;
+    reg            s2_guard;
+    reg            s2_round;
+    reg            s2_sticky;
 
     // Stage 2 combinational rounding, round-to-nearest ties-to-even.
-    wire s2_round_increment = s2_guard && (s2_round || s2_sticky || s2_significand[0]);
-    wire [WMAN:0] s2_rounded_ext = {1'b0, s2_significand} + {{WMAN{1'b0}}, s2_round_increment};
-    wire s2_round_carry = s2_rounded_ext[WMAN];
-    wire s2_exp_round_overflow = (s2_exp_biased == EXP_MAX_FINITE) && s2_round_carry;
-    wire s2_infinity = s2_overflow || s2_exp_round_overflow;
-    wire [WMAN-1:0] s2_rounded_significand =
-        s2_round_carry ? s2_rounded_ext[WMAN:1] : s2_rounded_ext[WMAN-1:0];
-    wire [WEXP-1:0] s2_exp_rounded = s2_exp_biased + {{(WEXP-1){1'b0}}, s2_round_carry};
+    wire            s2_round_increment     = s2_guard && (s2_round || s2_sticky || s2_significand[0]);
+    wire [WMAN:0]   s2_rounded_ext         = {1'b0, s2_significand} + {{WMAN{1'b0}}, s2_round_increment};
+    wire            s2_round_carry         = s2_rounded_ext[WMAN];
+    wire            s2_exp_round_overflow  = (s2_exp_biased == EXP_MAX_FINITE) && s2_round_carry;
+    wire            s2_infinity            = s2_overflow || s2_exp_round_overflow;
+    wire [WMAN-1:0] s2_rounded_significand = s2_round_carry ? s2_rounded_ext[WMAN:1] : s2_rounded_ext[WMAN-1:0];
+    wire [WEXP-1:0] s2_exp_rounded         = s2_exp_biased + {{(WEXP-1){1'b0}}, s2_round_carry};
 
     // Final packing is deliberately outside the reset branch; only validity is reset.
-    wire s2_result_zero = s2_zero || s2_underflow;
-    wire s2_result_infinity = !s2_result_zero && s2_infinity;
-    wire [WFULL-1:0] s2_zero_y = {WFULL{1'b0}};
-    wire [WFULL-1:0] s2_infinity_y = {s2_sign, EXP_INF, {WFRAC{1'b0}}};
-    wire [WFULL-1:0] s2_normal_y = {s2_sign, s2_exp_rounded, s2_rounded_significand[WFRAC-1:0]};
+    wire             s2_result_zero     = s2_zero || s2_underflow;
+    wire             s2_result_infinity = !s2_result_zero && s2_infinity;
+    wire [WFULL-1:0] s2_zero_y          = {WFULL{1'b0}};
+    wire [WFULL-1:0] s2_infinity_y      = {s2_sign, EXP_INF, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] s2_normal_y        = {s2_sign, s2_exp_rounded, s2_rounded_significand[WFRAC-1:0]};
     wire [WFULL-1:0] s2_y = s2_result_zero ? s2_zero_y : (s2_result_infinity ? s2_infinity_y : s2_normal_y);
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.

@@ -5,7 +5,7 @@ module _zkf_ilog2_floor #(
     parameter W      = 16,
     parameter WINDEX = (W <= 2) ? 1 : $clog2(W)
 ) (
-    input  wire [W-1:0]      x,
+    input  wire      [W-1:0] x,
     output wire              zero,
     output wire [WINDEX-1:0] y
 );
@@ -14,8 +14,8 @@ module _zkf_ilog2_floor #(
             assign zero = ~x[0];
             assign y    = {WINDEX{1'b0}};
         end else begin : g_recurse
-            localparam WHI = W / 2;
-            localparam WLO = W - WHI;
+            localparam WHI     = W / 2;
+            localparam WLO     = W - WHI;
 
             wire zero_lo;
             wire zero_hi;

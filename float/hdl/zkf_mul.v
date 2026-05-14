@@ -1,7 +1,5 @@
 /// Streamed Zubax Kulibin float multiplier.
-/// The exact product is represented as:
-///
-///     (-1)^sign * mag * 2^scale
+/// The exact product is represented as: (-1)^sign * mag * 2^scale
 
 `default_nettype none
 
@@ -35,29 +33,29 @@ module zkf_mul #(
     localparam          [WLOG-1:0] PRODUCT_LOG2_LO = WMAG - 2;
 
     // Stage 1: input latch. Do not place logic/arithmetic directly on the public input path.
-    reg s1_valid;
+    reg             s1_valid;
     reg [WFULL-1:0] s1_a;
     reg [WFULL-1:0] s1_b;
 
-    wire s1_a_sign = s1_a[WFULL-1];
-    wire s1_b_sign = s1_b[WFULL-1];
-    wire [WEXP-1:0] s1_a_exp = s1_a[WFULL-2:WFRAC];
-    wire [WEXP-1:0] s1_b_exp = s1_b[WFULL-2:WFRAC];
+    wire             s1_a_sign = s1_a[WFULL-1];
+    wire             s1_b_sign = s1_b[WFULL-1];
+    wire [WEXP-1:0]  s1_a_exp  = s1_a[WFULL-2:WFRAC];
+    wire [WEXP-1:0]  s1_b_exp  = s1_b[WFULL-2:WFRAC];
     wire [WFRAC-1:0] s1_a_frac = s1_a[WFRAC-1:0];
     wire [WFRAC-1:0] s1_b_frac = s1_b[WFRAC-1:0];
 
-    wire s1_a_zero = s1_a_exp == {WEXP{1'b0}};
-    wire s1_b_zero = s1_b_exp == {WEXP{1'b0}};
-    wire s1_a_inf = s1_a_exp == EXP_INF;
-    wire s1_b_inf = s1_b_exp == EXP_INF;
-    wire s1_result_zero = s1_a_zero || s1_b_zero;
-    wire s1_result_inf = !s1_result_zero && (s1_a_inf || s1_b_inf);
-    wire [WMAN-1:0] s1_a_significand = {1'b1, s1_a_frac};
-    wire [WMAN-1:0] s1_b_significand = {1'b1, s1_b_frac};
+    wire            s1_a_zero         = s1_a_exp == {WEXP{1'b0}};
+    wire            s1_b_zero         = s1_b_exp == {WEXP{1'b0}};
+    wire            s1_a_inf          = s1_a_exp == EXP_INF;
+    wire            s1_b_inf          = s1_b_exp == EXP_INF;
+    wire            s1_result_zero    = s1_a_zero || s1_b_zero;
+    wire            s1_result_inf     = !s1_result_zero && (s1_a_inf || s1_b_inf);
+    wire [WMAN-1:0] s1_a_significand  = {1'b1, s1_a_frac};
+    wire [WMAN-1:0] s1_b_significand  = {1'b1, s1_b_frac};
 
-    wire signed [WSCALE-1:0] a_exp_ext = {{(WSCALE-WEXP){1'b0}}, s1_a_exp};
-    wire signed [WSCALE-1:0] b_exp_ext = {{(WSCALE-WEXP){1'b0}}, s1_b_exp};
-    wire signed [WSCALE-1:0] bias_ext = {{(WSCALE-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WSCALE-1:0] a_exp_ext        = {{(WSCALE-WEXP){1'b0}}, s1_a_exp};
+    wire signed [WSCALE-1:0] b_exp_ext        = {{(WSCALE-WEXP){1'b0}}, s1_b_exp};
+    wire signed [WSCALE-1:0] bias_ext         = {{(WSCALE-WEXP){1'b0}}, EXP_BIAS};
     wire signed [WSCALE-1:0] s1_decoded_scale = a_exp_ext + b_exp_ext - (bias_ext <<< 1) - (WFRAC_EXT <<< 1);
 
     // Stage 2: registered product.
