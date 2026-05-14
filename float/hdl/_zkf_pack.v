@@ -3,6 +3,9 @@
 ///
 ///     (-1)^sign * mag * 2^scale
 ///
+/// The mag_zero input identifies zero magnitude. The mag_flog2 input is floor(log2(mag)); it is ignored when
+/// mag_zero is set.
+///
 /// The output is canonical zero for zero/underflow, round-to-nearest ties-to-even for normal values,
 /// and signed saturation for exponent overflow.
 
@@ -12,7 +15,8 @@ module _zkf_pack #(
     parameter WEXP = 6,              // exponent field width
     parameter WMAN = 18,             // significand precision including the hidden bit
     parameter WMAG = 2 * WMAN,       // input magnitude width; usually set by the instantiator
-    parameter WSCALE = 1             // signed binary scale width; always set by the instantiator depending on usage
+    parameter WSCALE = 1,            // signed binary scale width; always set by the instantiator depending on usage
+    parameter WLOG = $clog2(WMAG)
 )(
     input  wire clk,
     input  wire rst,
@@ -20,16 +24,16 @@ module _zkf_pack #(
     input  wire                     in_valid,
     input  wire                     sign,
     input  wire          [WMAG-1:0] mag,
+    input  wire                     mag_zero,   // true if mag=0; usually determined by _zkf_ilog2_floor
+    input  wire          [WLOG-1:0] mag_flog2,  // floor(log2(mag)) unless mag_zero; usually from _zkf_ilog2_floor
     input  wire signed [WSCALE-1:0] scale,
 
     output reg                   out_valid,
     output reg  [WEXP+WMAN-1:0]  y,
     output reg                   saturated
 );
-    // Format dimensions.
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
-    localparam WLOG = (WMAG <= 2) ? 1 : $clog2(WMAG);
 
     // Internal exponent arithmetic is performed on the unbiased exponent:
     //
@@ -43,11 +47,6 @@ module _zkf_pack #(
 
     localparam [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
     localparam [WEXP-1:0] EXP_MAX = {WEXP{1'b1}};
-
-    // Input leading-one index. The registered stage 1 state below captures this alongside the raw input value.
-    wire mag_zero;
-    wire [WLOG-1:0] mag_log2;
-    _zkf_ilog2_floor #(.W(WMAG), .WINDEX(WLOG)) u_ilog2_floor (.x(mag), .zero(mag_zero), .y(mag_log2));
 
     // Stage 1: input sample plus leading-one index.
     reg s1_valid;
@@ -135,12 +134,12 @@ module _zkf_pack #(
             out_valid <= s2_valid;
         end
 
-        // Stage 1 capture.
+        // Stage 1 capture. Do not place logic/arithmetic directly on the public input path.
         s1_sign <= sign;
         s1_zero <= mag_zero;
         s1_mag <= mag;
         s1_scale <= scale;
-        s1_log2 <= mag_log2;
+        s1_log2 <= mag_flog2;
 
         // Stage 2 capture: pre-round normalized value.
         s2_sign <= s1_sign;

@@ -27,6 +27,7 @@ module zkf_mul_random_tb;
 
     wire out_valid;
     wire [WFULL-1:0] y;
+    wire saturated;
 
     reg [VECTOR_WIDTH-1:0] vectors [0:VECTOR_COUNT-1];
     reg expected_valid_pipe [0:LATENCY-1];
@@ -48,7 +49,8 @@ module zkf_mul_random_tb;
         .a(a),
         .b(b),
         .out_valid(out_valid),
-        .y(y)
+        .y(y),
+        .saturated(saturated)
     );
 
     task automatic clear_model;

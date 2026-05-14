@@ -60,6 +60,7 @@ def run(command: list[str], log_path: Path) -> None:
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
+    wlog = 1 if spec.wmag <= 2 else (spec.wmag - 1).bit_length()
     path.write_text(
         f"""`default_nettype none
 
@@ -69,6 +70,8 @@ module {spec.top} (
     input  wire                     in_valid,
     input  wire                     sign,
     input  wire [{spec.wmag - 1}:0] mag,
+    input  wire                     mag_zero,
+    input  wire [{wlog - 1}:0]      mag_flog2,
     input  wire signed [{spec.wscale - 1}:0] scale,
     output wire                     out_valid,
     output wire [{wfull - 1}:0]     y,
@@ -78,13 +81,16 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .WMAG({spec.wmag}),
-        .WSCALE({spec.wscale})
+        .WSCALE({spec.wscale}),
+        .WLOG({wlog})
     ) dut (
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
         .sign(sign),
         .mag(mag),
+        .mag_zero(mag_zero),
+        .mag_flog2(mag_flog2),
         .scale(scale),
         .out_valid(out_valid),
         .y(y),
@@ -109,7 +115,8 @@ module {spec.top} (
     input  wire [{wfull - 1}:0] a,
     input  wire [{wfull - 1}:0] b,
     output wire                 out_valid,
-    output wire [{wfull - 1}:0] y
+    output wire [{wfull - 1}:0] y,
+    output wire                 saturated
 );
     zkf_mul dut (
         .clk(clk),
@@ -118,7 +125,8 @@ module {spec.top} (
         .a(a),
         .b(b),
         .out_valid(out_valid),
-        .y(y)
+        .y(y),
+        .saturated(saturated)
     );
 endmodule
 

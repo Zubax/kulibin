@@ -25,6 +25,7 @@ module zkf_mul_manual_tb;
 
     wire out_valid;
     wire [WFULL-1:0] y;
+    wire saturated;
 
     reg default_in_valid = 1'b0;
     reg [DEFAULT_WFULL-1:0] default_a = 0;
@@ -32,11 +33,14 @@ module zkf_mul_manual_tb;
 
     wire default_out_valid;
     wire [DEFAULT_WFULL-1:0] default_y;
+    wire default_saturated;
 
     reg expected_valid_pipe [0:LATENCY-1];
     reg [WFULL-1:0] expected_y_pipe [0:LATENCY-1];
+    reg expected_saturated_pipe [0:LATENCY-1];
     reg default_expected_valid_pipe [0:LATENCY-1];
     reg [DEFAULT_WFULL-1:0] default_expected_y_pipe [0:LATENCY-1];
+    reg default_expected_saturated_pipe [0:LATENCY-1];
 
     integer pipe_i;
     integer flush_i;
@@ -56,7 +60,8 @@ module zkf_mul_manual_tb;
         .a(a),
         .b(b),
         .out_valid(out_valid),
-        .y(y)
+        .y(y),
+        .saturated(saturated)
     );
 
     zkf_mul default_dut (
@@ -66,7 +71,8 @@ module zkf_mul_manual_tb;
         .a(default_a),
         .b(default_b),
         .out_valid(default_out_valid),
-        .y(default_y)
+        .y(default_y),
+        .saturated(default_saturated)
     );
 
     task automatic clear_model;
@@ -74,8 +80,10 @@ module zkf_mul_manual_tb;
             for (pipe_i = 0; pipe_i < LATENCY; pipe_i = pipe_i + 1) begin
                 expected_valid_pipe[pipe_i] = 1'b0;
                 expected_y_pipe[pipe_i] = 0;
+                expected_saturated_pipe[pipe_i] = 1'b0;
                 default_expected_valid_pipe[pipe_i] = 1'b0;
                 default_expected_y_pipe[pipe_i] = 0;
+                default_expected_saturated_pipe[pipe_i] = 1'b0;
             end
         end
     endtask
@@ -83,33 +91,41 @@ module zkf_mul_manual_tb;
     task automatic tick;
         input expected_valid_in;
         input [WFULL-1:0] expected_y_in;
+        input expected_saturated_in;
         input default_expected_valid_in;
         input [DEFAULT_WFULL-1:0] default_expected_y_in;
+        input default_expected_saturated_in;
         begin
             @(posedge clk);
             #1;
             `REQUIRE(out_valid === expected_valid_pipe[LATENCY-1]);
             if (expected_valid_pipe[LATENCY-1]) begin
                 `REQUIRE(y === expected_y_pipe[LATENCY-1]);
+                `REQUIRE(saturated === expected_saturated_pipe[LATENCY-1]);
                 outputs_checked = outputs_checked + 1;
             end
 
             `REQUIRE(default_out_valid === default_expected_valid_pipe[LATENCY-1]);
             if (default_expected_valid_pipe[LATENCY-1]) begin
                 `REQUIRE(default_y === default_expected_y_pipe[LATENCY-1]);
+                `REQUIRE(default_saturated === default_expected_saturated_pipe[LATENCY-1]);
                 default_outputs_checked = default_outputs_checked + 1;
             end
 
             for (pipe_i = LATENCY - 1; pipe_i > 0; pipe_i = pipe_i - 1) begin
                 expected_valid_pipe[pipe_i] = expected_valid_pipe[pipe_i-1];
                 expected_y_pipe[pipe_i] = expected_y_pipe[pipe_i-1];
+                expected_saturated_pipe[pipe_i] = expected_saturated_pipe[pipe_i-1];
                 default_expected_valid_pipe[pipe_i] = default_expected_valid_pipe[pipe_i-1];
                 default_expected_y_pipe[pipe_i] = default_expected_y_pipe[pipe_i-1];
+                default_expected_saturated_pipe[pipe_i] = default_expected_saturated_pipe[pipe_i-1];
             end
             expected_valid_pipe[0] = expected_valid_in;
             expected_y_pipe[0] = expected_y_in;
+            expected_saturated_pipe[0] = expected_saturated_in;
             default_expected_valid_pipe[0] = default_expected_valid_in;
             default_expected_y_pipe[0] = default_expected_y_in;
+            default_expected_saturated_pipe[0] = default_expected_saturated_in;
         end
     endtask
 
@@ -118,6 +134,7 @@ module zkf_mul_manual_tb;
         input [WFULL-1:0] a_value;
         input [WFULL-1:0] b_value;
         input [WFULL-1:0] expected_y_value;
+        input expected_saturated_value;
         begin
             `REQUIRE(case_id == cases_checked);
             in_valid = 1'b1;
@@ -126,7 +143,7 @@ module zkf_mul_manual_tb;
             default_in_valid = 1'b0;
             default_a = 0;
             default_b = 0;
-            tick(1'b1, expected_y_value, 1'b0, 0);
+            tick(1'b1, expected_y_value, expected_saturated_value, 1'b0, 0, 1'b0);
             cases_checked = cases_checked + 1;
         end
     endtask
@@ -139,7 +156,7 @@ module zkf_mul_manual_tb;
             default_in_valid = 1'b0;
             default_a = 0;
             default_b = 0;
-            tick(1'b0, 0, 1'b0, 0);
+            tick(1'b0, 0, 1'b0, 1'b0, 0, 1'b0);
         end
     endtask
 
@@ -154,7 +171,7 @@ module zkf_mul_manual_tb;
             default_in_valid = 1'b1;
             default_a = a_value;
             default_b = b_value;
-            tick(1'b0, 0, 1'b1, expected_y_value);
+            tick(1'b0, 0, 1'b0, 1'b1, expected_y_value, 1'b0);
             default_cases_checked = default_cases_checked + 1;
         end
     endtask
@@ -195,28 +212,28 @@ module zkf_mul_manual_tb;
         rst = 1'b0;
         clear_model();
 
-        drive_case(0,  32'h00000000, 32'h3f800000, 32'h00000000);  // canonical zero
-        drive_case(1,  32'h805a5a5a, 32'h7fffffff, 32'h00000000);  // zero payload ignored
-        drive_case(2,  32'hbf800000, 32'h007fffff, 32'h00000000);  // zero exponent ignored
+        drive_case(0,  32'h00000000, 32'h3f800000, 32'h00000000, 1'b0);  // canonical zero
+        drive_case(1,  32'h805a5a5a, 32'h7fffffff, 32'h00000000, 1'b0);  // zero payload ignored
+        drive_case(2,  32'hbf800000, 32'h007fffff, 32'h00000000, 1'b0);  // zero exponent ignored
 
         drive_invalid();
 
-        drive_case(3,  32'h3f800000, 32'h3f800000, 32'h3f800000);  // +1 * +1
-        drive_case(4,  32'hbf800000, 32'h3f800000, 32'hbf800000);  // -1 * +1
-        drive_case(5,  32'hbf800000, 32'hbf800000, 32'h3f800000);  // -1 * -1
-        drive_case(6,  32'h3fc00000, 32'h40000000, 32'h40400000);  // 1.5 * 2.0
-        drive_case(7,  32'h3fa00000, 32'h3fc00000, 32'h3ff00000);  // 1.25 * 1.5
-        drive_case(8,  32'h3fc00000, 32'h3fc00000, 32'h40100000);  // normalization carry
+        drive_case(3,  32'h3f800000, 32'h3f800000, 32'h3f800000, 1'b0);  // +1 * +1
+        drive_case(4,  32'hbf800000, 32'h3f800000, 32'hbf800000, 1'b0);  // -1 * +1
+        drive_case(5,  32'hbf800000, 32'hbf800000, 32'h3f800000, 1'b0);  // -1 * -1
+        drive_case(6,  32'h3fc00000, 32'h40000000, 32'h40400000, 1'b0);  // 1.5 * 2.0
+        drive_case(7,  32'h3fa00000, 32'h3fc00000, 32'h3ff00000, 1'b0);  // 1.25 * 1.5
+        drive_case(8,  32'h3fc00000, 32'h3fc00000, 32'h40100000, 1'b0);  // normalization carry
 
         drive_invalid();
         drive_invalid();
 
-        drive_case(9,  32'h00800000, 32'h3f000000, 32'h00000000);  // underflow flush
-        drive_case(10, 32'h00800000, 32'h3f800000, 32'h00800000);  // minimum normal
-        drive_case(11, 32'h80800000, 32'h3f800000, 32'h80800000);  // negative minimum normal
-        drive_case(12, 32'h7fffffff, 32'h3f800000, 32'h7fffffff);  // maximum finite
-        drive_case(13, 32'h7fffffff, 32'h40000000, 32'h7fffffff);  // positive saturation
-        drive_case(14, 32'hffffffff, 32'h40000000, 32'hffffffff);  // negative saturation
+        drive_case(9,  32'h00800000, 32'h3f000000, 32'h00000000, 1'b0);  // underflow flush
+        drive_case(10, 32'h00800000, 32'h3f800000, 32'h00800000, 1'b0);  // minimum normal
+        drive_case(11, 32'h80800000, 32'h3f800000, 32'h80800000, 1'b0);  // negative minimum normal
+        drive_case(12, 32'h7fffffff, 32'h3f800000, 32'h7fffffff, 1'b0);  // maximum finite
+        drive_case(13, 32'h7fffffff, 32'h40000000, 32'h7fffffff, 1'b1);  // positive saturation
+        drive_case(14, 32'hffffffff, 32'h40000000, 32'hffffffff, 1'b1);  // negative saturation
 
         for (flush_i = 0; flush_i < LATENCY + 2; flush_i = flush_i + 1) begin
             drive_invalid();
@@ -227,10 +244,10 @@ module zkf_mul_manual_tb;
         rst = 1'b0;
         clear_model();
 
-        drive_case(15, 32'h3f800002, 32'h3fa00000, 32'h3fa00002);  // tie, retained even
-        drive_case(16, 32'h3f800001, 32'h3fc00000, 32'h3fc00002);  // tie, retained odd
-        drive_case(17, 32'h3f800001, 32'h3fa00000, 32'h3fa00001);  // round down
-        drive_case(18, 32'h3f800001, 32'h3fe00000, 32'h3fe00002);  // round up
+        drive_case(15, 32'h3f800002, 32'h3fa00000, 32'h3fa00002, 1'b0);  // tie, retained even
+        drive_case(16, 32'h3f800001, 32'h3fc00000, 32'h3fc00002, 1'b0);  // tie, retained odd
+        drive_case(17, 32'h3f800001, 32'h3fa00000, 32'h3fa00001, 1'b0);  // round down
+        drive_case(18, 32'h3f800001, 32'h3fe00000, 32'h3fe00002, 1'b0);  // round up
 
         drive_default_case(24'h3e0000, 24'h3e0000, 24'h3e0000);    // default WEXP=6, WMAN=18
 

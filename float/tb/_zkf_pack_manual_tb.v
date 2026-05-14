@@ -35,7 +35,7 @@ module _zkf_pack_manual_tb;
     integer cases_checked = 0;
     integer outputs_checked = 0;
 
-    _zkf_pack #(
+    _zkf_pack_tb_wrapper #(
         .WEXP(WEXP),
         .WMAN(WMAN),
         .WMAG(WMAG),

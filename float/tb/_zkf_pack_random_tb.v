@@ -45,7 +45,7 @@ module _zkf_pack_random_tb;
     integer outputs_checked = 0;
     reg [VECTOR_WIDTH-1:0] vector_word;
 
-    _zkf_pack #(
+    _zkf_pack_tb_wrapper #(
         .WEXP(WEXP),
         .WMAN(WMAN),
         .WMAG(WMAG),

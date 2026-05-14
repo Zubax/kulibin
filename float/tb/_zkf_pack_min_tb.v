@@ -47,7 +47,7 @@ module _zkf_pack_min_tb;
     reg [WFULL-1:0] directed_y;
     reg directed_saturated;
 
-    _zkf_pack #(
+    _zkf_pack_tb_wrapper #(
         .WEXP(WEXP),
         .WMAN(WMAN),
         .WMAG(WMAG),

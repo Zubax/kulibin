@@ -232,7 +232,8 @@ zkf_mul #(parameter int WEXP = 6, parameter int WMAN = 18) (
     input  wire [WFULL-1:0] b,
 
     output wire             out_valid,
-    output wire [WFULL-1:0] y
+    output wire [WFULL-1:0] y,
+    output wire             saturated
 );
 ```
 
