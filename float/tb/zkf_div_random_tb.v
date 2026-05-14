@@ -11,7 +11,7 @@ module zkf_div_random_tb;
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 4;
     localparam QFRAC = QFRAC_BASE + (QFRAC_BASE % 2);
-    localparam LATENCY = QFRAC + 5;
+    localparam LATENCY = QFRAC + 4;
     localparam VECTOR_COUNT = 20000;
     localparam VECTOR_WIDTH = (3 * WFULL) + 1;
 

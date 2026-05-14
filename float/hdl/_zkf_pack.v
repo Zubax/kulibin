@@ -119,40 +119,58 @@ module _zkf_pack #(
     wire [WFULL-1:0] s2_zero_y          = {WFULL{1'b0}};
     wire [WFULL-1:0] s2_infinity_y      = {s2_sign, EXP_INF, {WFRAC{1'b0}}};
     wire [WFULL-1:0] s2_normal_y        = {s2_sign, s2_exp_rounded, s2_rounded_significand[WFRAC-1:0]};
-    wire [WFULL-1:0] s2_y = s2_result_zero ? s2_zero_y : (s2_result_infinity ? s2_infinity_y : s2_normal_y);
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
         if (rst) begin
-            s1_valid <= 1'b0;
-            s2_valid <= 1'b0;
+            s1_valid  <= 1'b0;
+            s2_valid  <= 1'b0;
             out_valid <= 1'b0;
         end else begin
-            s1_valid <= in_valid;
-            s2_valid <= s1_valid;
+            s1_valid  <= in_valid;
+            s2_valid  <= s1_valid;
             out_valid <= s2_valid;
         end
 
-        // Stage 1 capture. Do not place logic/arithmetic directly on the public input path.
-        s1_sign <= sign;
-        s1_zero <= mag_zero;
-        s1_mag <= mag;
-        s1_scale <= scale;
-        s1_log2 <= mag_flog2;
+        // Stage 1 capture. Do not place logic/arithmetic directly on the input path.
+        s1_sign     <= sign;
+        s1_zero     <= mag_zero;
+        s1_mag      <= mag;
+        s1_scale    <= scale;
+        s1_log2     <= mag_flog2;
 
         // Stage 2 capture: pre-round normalized value.
-        s2_sign <= s1_sign;
-        s2_zero <= s1_zero;
-        s2_underflow <= s1_exp_underflow;
-        s2_overflow <= s1_exp_overflow;
-        s2_exp_biased <= s1_exp_biased;
-        s2_significand <= s1_significand;
-        s2_guard <= s1_guard;
-        s2_round <= s1_round;
-        s2_sticky <= s1_sticky;
+        s2_sign         <= s1_sign;
+        s2_zero         <= s1_zero;
+        s2_underflow    <= s1_exp_underflow;
+        s2_overflow     <= s1_exp_overflow;
+        s2_exp_biased   <= s1_exp_biased;
+        s2_significand  <= s1_significand;
+        s2_guard        <= s1_guard;
+        s2_round        <= s1_round;
+        s2_sticky       <= s1_sticky;
 
         // Output capture.
-        y <= s2_y;
+        y <= s2_result_zero ? s2_zero_y : (s2_result_infinity ? s2_infinity_y : s2_normal_y);
+    end
+endmodule
+
+/// Delay a sideband payload by the same number of cycles as _zkf_pack.
+/// When changing the packer pipeline, update this one as well.
+/// The reset can be tied off to zero if the delay is not used for carrying control signals.
+module _zkf_pack_delay#(parameter W = 1)(input wire clk, input wire rst, input wire [W-1:0] x, output reg [W-1:0] y);
+    reg [W-1:0] s1;
+    reg [W-1:0] s2;
+    always @(posedge clk) begin
+        if (rst) begin
+            s1 <= {W{1'b0}};
+            s2 <= {W{1'b0}};
+            y  <= {W{1'b0}};
+        end else begin
+            s1 <= x;
+            s2 <= s1;
+            y  <= s2;
+        end
     end
 endmodule
 
