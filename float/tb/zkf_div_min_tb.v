@@ -7,7 +7,7 @@
 
 module zkf_div_min_tb;
     localparam WEXP = 2;
-    localparam WMAN = 3;
+    localparam WMAN = 4;
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 4;
@@ -257,7 +257,7 @@ module zkf_div_min_tb;
         rst = 1'b0;
         clear_model();
 
-        drive_and_check(1'b0, 5'b1_00_11, 5'b0_11_11);
+        drive_and_check(1'b0, 6'b1_00_111, 6'b0_11_111);
 
         for (a_i = 0; a_i < (1 << WFULL); a_i = a_i + 1) begin
             for (b_i = 0; b_i < (1 << WFULL); b_i = b_i + 1) begin

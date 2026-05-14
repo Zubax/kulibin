@@ -7,8 +7,8 @@
 
 module _zkf_pack_min_tb;
     localparam WEXP = 2;
-    localparam WMAN = 3;
-    localparam WMAG = 6;
+    localparam WMAN = 4;
+    localparam WMAG = 8;
     localparam WSCALE = 3;
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -193,30 +193,30 @@ module _zkf_pack_min_tb;
         rst = 1'b0;
         clear_model();
 
-        pack_oracle(1'b1, 6'd0, 3'sd3, directed_y);
-        `REQUIRE(directed_y === 5'b0_00_00);
-        pack_oracle(1'b0, 6'd1, -1, directed_y);
-        `REQUIRE(directed_y === 5'b0_00_00);
-        pack_oracle(1'b0, 6'd1, 3'sd0, directed_y);
-        `REQUIRE(directed_y === 5'b0_01_00);
-        pack_oracle(1'b0, 6'd9, -3, directed_y);
-        `REQUIRE(directed_y === 5'b0_01_00);
-        pack_oracle(1'b0, 6'd11, -3, directed_y);
-        `REQUIRE(directed_y === 5'b0_01_10);
-        pack_oracle(1'b0, 6'd15, -3, directed_y);
-        `REQUIRE(directed_y === 5'b0_10_00);
-        pack_oracle(1'b1, 6'd15, -1, directed_y);
-        `REQUIRE(directed_y === 5'b1_11_00);
+        pack_oracle(1'b1, 8'd0, 3'sd3, directed_y);
+        `REQUIRE(directed_y === 6'b0_00_000);
+        pack_oracle(1'b0, 8'd1, -1, directed_y);
+        `REQUIRE(directed_y === 6'b0_00_000);
+        pack_oracle(1'b0, 8'd1, 3'sd0, directed_y);
+        `REQUIRE(directed_y === 6'b0_01_000);
+        pack_oracle(1'b0, 8'd9, -3, directed_y);
+        `REQUIRE(directed_y === 6'b0_01_001);
+        pack_oracle(1'b0, 8'd11, -3, directed_y);
+        `REQUIRE(directed_y === 6'b0_01_011);
+        pack_oracle(1'b0, 8'd31, -4, directed_y);
+        `REQUIRE(directed_y === 6'b0_10_000);
+        pack_oracle(1'b1, 8'd15, -1, directed_y);
+        `REQUIRE(directed_y === 6'b1_11_000);
 
-        drive_and_check(1'b0, 1'b1, 6'd63, 3'sd3);
-        drive_and_check(1'b1, 1'b1, 6'd0, 3'sd3);
-        drive_and_check(1'b0, 1'b0, 6'd63, -4);
-        drive_and_check(1'b1, 1'b0, 6'd1, -1);
-        drive_and_check(1'b1, 1'b0, 6'd1, 3'sd0);
-        drive_and_check(1'b1, 1'b0, 6'd9, -3);
-        drive_and_check(1'b1, 1'b0, 6'd11, -3);
-        drive_and_check(1'b1, 1'b0, 6'd15, -3);
-        drive_and_check(1'b1, 1'b1, 6'd15, -1);
+        drive_and_check(1'b0, 1'b1, 8'd255, 3'sd3);
+        drive_and_check(1'b1, 1'b1, 8'd0, 3'sd3);
+        drive_and_check(1'b0, 1'b0, 8'd255, -4);
+        drive_and_check(1'b1, 1'b0, 8'd1, -1);
+        drive_and_check(1'b1, 1'b0, 8'd1, 3'sd0);
+        drive_and_check(1'b1, 1'b0, 8'd9, -3);
+        drive_and_check(1'b1, 1'b0, 8'd11, -3);
+        drive_and_check(1'b1, 1'b0, 8'd31, -4);
+        drive_and_check(1'b1, 1'b1, 8'd15, -1);
 
         for (sign_i = 0; sign_i < 2; sign_i = sign_i + 1) begin
             for (mag_i = 0; mag_i < (1 << WMAG); mag_i = mag_i + 1) begin
@@ -227,7 +227,7 @@ module _zkf_pack_min_tb;
         end
 
         for (flush_i = 0; flush_i < LATENCY + 2; flush_i = flush_i + 1) begin
-            drive_and_check(1'b0, 1'b0, 6'd0, 3'sd0);
+            drive_and_check(1'b0, 1'b0, 8'd0, 3'sd0);
         end
 
         `REQUIRE(cases_checked == CASE_COUNT + 7);

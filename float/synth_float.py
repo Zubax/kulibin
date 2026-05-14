@@ -47,8 +47,7 @@ class ModuleSpec:
     kind: str
     wexp: int
     wman: int
-    wmag: int
-    wscale: int
+    wexp_unbiased: int
 
 
 @dataclass(frozen=True)
@@ -68,13 +67,12 @@ class DiamondReportPaths:
 MODULES = [
     ModuleSpec(
         name="_zkf_pack",
-        label="_zkf_pack (external mag_zero/mag_flog2)",
+        label="_zkf_pack (normalized GRS)",
         top="_zkf_pack_synth_top",
         kind="pack",
         wexp=6,
         wman=18,
-        wmag=36,
-        wscale=8,
+        wexp_unbiased=8,
     ),
     ModuleSpec(
         name="zkf_mul",
@@ -83,8 +81,7 @@ MODULES = [
         kind="mul",
         wexp=6,
         wman=18,
-        wmag=0,
-        wscale=0,
+        wexp_unbiased=0,
     ),
     ModuleSpec(
         name="_zkf_div_core",
@@ -93,8 +90,7 @@ MODULES = [
         kind="div_core",
         wexp=6,
         wman=18,
-        wmag=0,
-        wscale=0,
+        wexp_unbiased=0,
     ),
     ModuleSpec(
         name="zkf_div",
@@ -103,8 +99,7 @@ MODULES = [
         kind="div",
         wexp=6,
         wman=18,
-        wmag=0,
-        wscale=0,
+        wexp_unbiased=0,
     ),
 ]
 
@@ -182,13 +177,9 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
-def div_params(spec: ModuleSpec) -> tuple[int, int, int]:
+def div_qfrac(spec: ModuleSpec) -> int:
     qfrac_base = spec.wman + 4
-    qfrac = qfrac_base + (qfrac_base % 2)
-    qmag = qfrac + 2
-    wqfrac_bits = (qfrac + 1).bit_length()
-    wscale = max(spec.wexp, wqfrac_bits) + 2
-    return qmag, wscale, (qmag - 1).bit_length()
+    return qfrac_base + (qfrac_base % 2)
 
 
 def latency_cycles(spec: ModuleSpec) -> int:
@@ -215,18 +206,20 @@ def format_latency(cycles: int) -> str:
 def params(spec: ModuleSpec) -> str:
     if spec.kind == "pack":
         return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, "
-            f"WSCALE={spec.wscale}, log2=external"
+            f"WEXP={spec.wexp}, WMAN={spec.wman}, "
+            f"WEXP_UNBIASED={spec.wexp_unbiased}"
         )
     if spec.kind in {"div_core", "div"}:
-        qmag, wscale, _qlog = div_params(spec)
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, QWMAG={qmag}, WSCALE={wscale}"
+        return (
+            f"WEXP={spec.wexp}, WMAN={spec.wman}, "
+            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
+        )
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    wlog = 1 if spec.wmag <= 2 else (spec.wmag - 1).bit_length()
+    wexp_unbiased = spec.wexp_unbiased or (spec.wexp + 2)
     path.write_text(
         f"""`default_nettype none
 
@@ -235,28 +228,32 @@ module {spec.top} (
     input  wire                     rst,
     input  wire                     in_valid,
     input  wire                     sign,
-    input  wire [{spec.wmag - 1}:0] mag,
-    input  wire                     mag_zero,
-    input  wire [{wlog - 1}:0]      mag_flog2,
-    input  wire signed [{spec.wscale - 1}:0] scale,
+    input  wire                     force_zero,
+    input  wire                     force_inf,
+    input  wire signed [{wexp_unbiased - 1}:0] exp_unbiased,
+    input  wire [{spec.wman - 1}:0] significand,
+    input  wire                     guard,
+    input  wire                     round,
+    input  wire                     sticky,
     output wire                     out_valid,
     output wire [{wfull - 1}:0]     y
 );
     _zkf_pack #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .WMAG({spec.wmag}),
-        .WSCALE({spec.wscale}),
-        .WLOG({wlog})
+        .WEXP_UNBIASED({wexp_unbiased})
     ) dut (
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),
         .sign(sign),
-        .mag(mag),
-        .mag_zero(mag_zero),
-        .mag_flog2(mag_flog2),
-        .scale(scale),
+        .force_zero(force_zero),
+        .force_inf(force_inf),
+        .exp_unbiased(exp_unbiased),
+        .significand(significand),
+        .guard(guard),
+        .round(round),
+        .sticky(sticky),
         .out_valid(out_valid),
         .y(y)
     );
@@ -302,7 +299,7 @@ endmodule
 
 def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    qmag, wscale, qlog = div_params(spec)
+    wexp_unbiased = spec.wexp + 2
     path.write_text(
         f"""`default_nettype none
 
@@ -314,10 +311,13 @@ module {spec.top} (
     input  wire [{wfull - 1}:0]     b,
     output wire                     out_valid,
     output wire                     sign,
-    output wire [{qmag - 1}:0]      mag,
-    output wire                     mag_zero,
-    output wire [{qlog - 1}:0]      mag_flog2,
-    output wire signed [{wscale - 1}:0] scale,
+    output wire                     force_zero,
+    output wire                     force_inf,
+    output wire signed [{wexp_unbiased - 1}:0] exp_unbiased,
+    output wire [{spec.wman - 1}:0] significand,
+    output wire                     guard,
+    output wire                     round,
+    output wire                     sticky,
     output wire                     div0,
     output wire [{spec.wman - 1}:0] partial_rem
 );
@@ -336,10 +336,13 @@ module {spec.top} (
         .b(s1_b),
         .out_valid(out_valid),
         .sign(sign),
-        .mag(mag),
-        .mag_zero(mag_zero),
-        .mag_flog2(mag_flog2),
-        .scale(scale),
+        .force_zero(force_zero),
+        .force_inf(force_inf),
+        .exp_unbiased(exp_unbiased),
+        .significand(significand),
+        .guard(guard),
+        .round(round),
+        .sticky(sticky),
         .div0(div0),
         .partial_rem(partial_rem)
     );

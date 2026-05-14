@@ -1,5 +1,4 @@
 /// Streamed Zubax Kulibin float multiplier.
-/// The exact product is represented as: (-1)^sign * mag * 2^scale
 ///
 /// Pipeline depth: four stages from in_valid to out_valid:
 /// one public input latch, one product stage, and _zkf_pack with two stages.
@@ -20,20 +19,22 @@ module zkf_mul #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    localparam WFRAC       = WMAN - 1;
-    localparam WFULL       = WEXP + WMAN;
-    localparam WMAG        = 2 * WMAN;
-    localparam WLOG        = $clog2(WMAG);
-    localparam WMAN_BITS   = $clog2(WMAN + 1);
-    localparam WSCALE_BASE = (WEXP > (WMAN_BITS + 1)) ? WEXP : (WMAN_BITS + 1);
-    localparam WSCALE      = WSCALE_BASE + 2;
+    generate
+        if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
+            _zkf_invalid_wexp_or_wman u_invalid();
+        end
+    endgenerate
 
-    localparam          [WEXP-1:0] EXP_BIAS        = {1'b0, {WEXP-1{1'b1}}};
-    localparam          [WEXP-1:0] EXP_INF         = {WEXP{1'b1}};
-    localparam signed [WSCALE-1:0] WFRAC_EXT       = WFRAC;
-    localparam signed [WSCALE-1:0] FORCE_INF_SCALE = {1'b0, {WSCALE-1{1'b1}}};
-    localparam          [WLOG-1:0] PRODUCT_LOG2_HI = WMAG - 1;
-    localparam          [WLOG-1:0] PRODUCT_LOG2_LO = WMAG - 2;
+    localparam WFRAC         = WMAN - 1;
+    localparam WFULL         = WEXP + WMAN;
+    localparam WMAG          = 2 * WMAN;
+    localparam WEXP_UNBIASED = WEXP + 2;
+
+    localparam [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
+    localparam [WEXP-1:0] EXP_INF  = {WEXP{1'b1}};
+
+    localparam signed [WEXP_UNBIASED-1:0] ZERO_EXT = {WEXP_UNBIASED{1'b0}};
+    localparam signed [WEXP_UNBIASED-1:0] ONE_EXT  = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
 
     // Stage 1: input latch. Do not place logic/arithmetic directly on the public input path.
     reg             s1_valid;
@@ -56,33 +57,44 @@ module zkf_mul #(
     wire [WMAN-1:0] s1_a_significand  = {1'b1, s1_a_frac};
     wire [WMAN-1:0] s1_b_significand  = {1'b1, s1_b_frac};
 
-    wire signed [WSCALE-1:0] a_exp_ext        = {{(WSCALE-WEXP){1'b0}}, s1_a_exp};
-    wire signed [WSCALE-1:0] b_exp_ext        = {{(WSCALE-WEXP){1'b0}}, s1_b_exp};
-    wire signed [WSCALE-1:0] bias_ext         = {{(WSCALE-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WSCALE-1:0] s1_decoded_scale = a_exp_ext + b_exp_ext - (bias_ext <<< 1) - (WFRAC_EXT <<< 1);
+    wire signed [WEXP_UNBIASED-1:0] a_exp_ext       = {{(WEXP_UNBIASED-WEXP){1'b0}}, s1_a_exp};
+    wire signed [WEXP_UNBIASED-1:0] b_exp_ext       = {{(WEXP_UNBIASED-WEXP){1'b0}}, s1_b_exp};
+    wire signed [WEXP_UNBIASED-1:0] bias_ext        = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WEXP_UNBIASED-1:0] s1_exp_unbiased = a_exp_ext + b_exp_ext - (bias_ext <<< 1);
 
     // Stage 2: registered product.
     reg s2_valid;
     reg s2_sign;
     (* keep *) reg [WMAG-1:0] s2_mag;
-    reg signed [WSCALE-1:0] s2_scale;
+    reg signed [WEXP_UNBIASED-1:0] s2_exp_unbiased_base;
     reg s2_force_zero;
     reg s2_force_inf;
 
     // A nonzero hidden-bit product has its leading one in one of the two most-significant product bits.
-    // Thus we can compute floor(log2(mag)) much simpler than _zkf_ilog2_floor.
-    wire            s2_mag_zero  = !s2_mag[WMAG-1] && !s2_mag[WMAG-2];
-    wire [WLOG-1:0] s2_mag_flog2 = s2_mag[WMAG-1] ? PRODUCT_LOG2_HI : (s2_mag[WMAG-2] ? PRODUCT_LOG2_LO : {WLOG{1'b0}});
+    wire                            s2_product_high   = s2_mag[WMAG-1];
+    wire signed [WEXP_UNBIASED-1:0] s2_exp_adjust     = s2_product_high ? ONE_EXT : ZERO_EXT;
+    wire signed [WEXP_UNBIASED-1:0] s2_exp_unbiased   = s2_exp_unbiased_base + s2_exp_adjust;
+    wire                 [WMAN-1:0] s2_significand_hi = s2_mag[WMAG-1 -: WMAN];
+    wire                 [WMAN-1:0] s2_significand_lo = s2_mag[WMAG-2 -: WMAN];
+    wire                            s2_guard_hi       = s2_mag[WMAN-1];
+    wire                            s2_round_hi       = s2_mag[WMAN-2];
+    wire                            s2_guard_lo       = s2_mag[WMAN-2];
+    wire                            s2_round_lo       = s2_mag[WMAN-3];
+    wire                            s2_sticky_hi      = |s2_mag[WMAN-3:0];
+    wire                            s2_sticky_lo      = |s2_mag[WMAN-4:0];
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WSCALE(WSCALE), .WLOG(WLOG)) u_pack (
+    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN)) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s2_valid),
         .sign(s2_sign),
-        .mag(s2_mag),
-        .mag_zero(s2_force_zero || s2_mag_zero),
-        .mag_flog2(s2_mag_flog2),
-        .scale(s2_force_inf ? FORCE_INF_SCALE : s2_scale),
+        .force_zero(s2_force_zero),
+        .force_inf(s2_force_inf),
+        .exp_unbiased(s2_exp_unbiased),
+        .significand(s2_product_high ? s2_significand_hi : s2_significand_lo),
+        .guard(s2_product_high ? s2_guard_hi : s2_guard_lo),
+        .round(s2_product_high ? s2_round_hi : s2_round_lo),
+        .sticky(s2_product_high ? s2_sticky_hi : s2_sticky_lo),
         .out_valid(out_valid),
         .y(y)
     );
@@ -102,7 +114,7 @@ module zkf_mul #(
 
         s2_sign <= s1_a_sign ^ s1_b_sign;
         s2_mag <= s1_a_significand * s1_b_significand;
-        s2_scale <= s1_decoded_scale;
+        s2_exp_unbiased_base <= s1_exp_unbiased;
         s2_force_zero <= s1_result_zero;
         s2_force_inf <= s1_result_inf;
     end

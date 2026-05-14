@@ -27,7 +27,7 @@ Use two main parameters:
 
 ```verilog
 WEXP >= 2          // exponent field width
-WMAN >= 3          // total significand precision, including hidden leading 1
+WMAN >= 4          // total significand precision, including hidden leading 1
 ```
 
 Stored fraction width:

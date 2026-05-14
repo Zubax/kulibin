@@ -1,5 +1,4 @@
 /// Internal quotient generator for Zubax Kulibin float division.
-/// The exact quotient is approximated for packing as: (-1)^sign * mag * 2^scale
 ///
 /// The quotient bits are produced by an unrolled radix-4 restoring divider.
 /// The final partial remainder is exposed as well since it is a byproduct that is occasionally useful.
@@ -14,15 +13,11 @@
 `default_nettype none
 
 module _zkf_div_core #(
-    parameter WEXP         = 6,      // exponent field width
-    parameter WMAN         = 18,     // significand precision including the hidden bit
-    parameter QFRAC_BASE   = WMAN + 4,
-    parameter QFRAC        = QFRAC_BASE + (QFRAC_BASE % 2),
-    parameter QWMAG        = QFRAC + 2,
-    parameter QWLOG        = $clog2(QWMAG),
-    parameter WQFRAC_BITS  = $clog2(QFRAC + 2),
-    parameter WSCALE_BASE  = (WEXP > WQFRAC_BITS) ? WEXP : WQFRAC_BITS,
-    parameter WSCALE       = WSCALE_BASE + 2
+    parameter WEXP           = 6,      // exponent field width
+    parameter WMAN           = 18,     // significand precision including the hidden bit
+    parameter QFRAC_BASE     = WMAN + 4,
+    parameter QFRAC          = QFRAC_BASE + (QFRAC_BASE % 2),
+    parameter WEXP_UNBIASED = WEXP + 2
 ) (
     input wire clk,
     input wire rst,
@@ -31,15 +26,24 @@ module _zkf_div_core #(
     input wire [WEXP+WMAN-1:0] a,
     input wire [WEXP+WMAN-1:0] b,
 
-    output reg                     out_valid,
-    output reg                     sign,
-    output reg         [QWMAG-1:0] mag,
-    output reg                     mag_zero,
-    output reg         [QWLOG-1:0] mag_flog2,
-    output reg signed [WSCALE-1:0] scale,
-    output reg                     div0,
-    output reg          [WMAN-1:0] partial_rem
+    output reg                            out_valid,
+    output reg                            sign,
+    output reg                            force_zero,
+    output reg                            force_inf,
+    output reg signed [WEXP_UNBIASED-1:0] exp_unbiased,
+    output reg                 [WMAN-1:0] significand,
+    output reg                            guard,
+    output reg                            round,
+    output reg                            sticky,
+    output reg                            div0,
+    output reg                 [WMAN-1:0] partial_rem
 );
+    generate
+        if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
+            _zkf_invalid_wexp_or_wman u_invalid();
+        end
+    endgenerate
+
     localparam WFRAC   = WMAN - 1;
     localparam WFULL   = WEXP + WMAN;
     localparam QSTAGES = QFRAC / 2;
@@ -48,12 +52,9 @@ module _zkf_div_core #(
     localparam QTRI    = (QSTAGES + 1) * (QSTAGES + 1);
 
     // QRAW contains one integer quotient bit followed by QFRAC fractional bits.
-    // QWMAG adds one sticky bit below the packer's round bit.
     localparam          [WEXP-1:0] EXP_INF         = {WEXP{1'b1}};
-    localparam signed [WSCALE-1:0] QFRAC_PLUS_ONE  = QFRAC + 1;
-    localparam signed [WSCALE-1:0] FORCE_INF_SCALE = {1'b0, {WSCALE-1{1'b1}}};
-    localparam         [QWLOG-1:0] MAG_LOG2_HI     = QFRAC + 1;
-    localparam         [QWLOG-1:0] MAG_LOG2_LO     = QFRAC;
+    localparam signed [WEXP_UNBIASED-1:0] ZERO_EXT = {WEXP_UNBIASED{1'b0}};
+    localparam signed [WEXP_UNBIASED-1:0] ONE_EXT  = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
 
     wire             a_sign = a[WFULL-1];
     wire             b_sign = b[WFULL-1];
@@ -80,26 +81,24 @@ module _zkf_div_core #(
     wire  [WMAN-1:0] initial_rem  = initial_bit ? (a_significand - b_significand) : a_significand;
     wire [WREM4-1:0] initial_den3 = {1'b0, b_significand, 1'b0} + {2'b00, b_significand};  // x3
 
-    // The raw quotient magnitude is scaled as floor((sig_a / sig_b) * 2^QFRAC), plus sticky.
-    // _zkf_pack later adds floor(log2(mag)), so the base scale subtracts QFRAC+1.
-    wire signed [WSCALE-1:0] a_exp_ext     = {{(WSCALE-WEXP){1'b0}}, a_exp};
-    wire signed [WSCALE-1:0] b_exp_ext     = {{(WSCALE-WEXP){1'b0}}, b_exp};
-    wire signed [WSCALE-1:0] decoded_scale = a_exp_ext - b_exp_ext - QFRAC_PLUS_ONE;
+    wire signed [WEXP_UNBIASED-1:0] a_exp_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, a_exp};
+    wire signed [WEXP_UNBIASED-1:0] b_exp_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, b_exp};
+    wire signed [WEXP_UNBIASED-1:0] decoded_exp_unbiased = a_exp_ext - b_exp_ext;
 
     // Stage zero keeps input decode/classification and the first radix-4 digit off the same path. It also
     // precomputes 3*den once; later stages only form cheap 1*den and 2*den wires locally.
     // Each later pipeline stage resolves one radix-4 quotient digit. The quotient prefix is stored in a
     // triangular chain: stage i holds only the 1+2*i bits known by that point, not a full QRAW-wide word.
-    reg                     r_valid      [0:QSTAGES];
-    reg                     r_sign       [0:QSTAGES];
-    reg signed [WSCALE-1:0] r_scale      [0:QSTAGES];
-    reg                     r_force_zero [0:QSTAGES];
-    reg                     r_force_inf  [0:QSTAGES];
-    reg                     r_div0       [0:QSTAGES];
-    reg          [WMAN-1:0] r_den        [0:QSTAGES];
-    reg         [WREM4-1:0] r_den3       [0:QSTAGES];
-    reg          [WMAN-1:0] r_rem        [0:QSTAGES];
-    reg                     r_raw0;
+    reg                            r_valid        [0:QSTAGES];
+    reg                            r_sign         [0:QSTAGES];
+    reg signed [WEXP_UNBIASED-1:0] r_exp_unbiased [0:QSTAGES];
+    reg                            r_force_zero   [0:QSTAGES];
+    reg                            r_force_inf    [0:QSTAGES];
+    reg                            r_div0         [0:QSTAGES];
+    reg                 [WMAN-1:0] r_den          [0:QSTAGES];
+    reg                [WREM4-1:0] r_den3         [0:QSTAGES];
+    reg                 [WMAN-1:0] r_rem          [0:QSTAGES];
+    reg                            r_raw0;
 
     wire [QTRI-1:0] raw_tri;
     wire [QRAW-1:0] final_raw = raw_tri[(QSTAGES * QSTAGES) +: QRAW];
@@ -112,15 +111,15 @@ module _zkf_div_core #(
         end else begin
             r_valid[0] <= in_valid;
         end
-        r_sign[0]       <= result_sign;
-        r_scale[0]      <= decoded_scale;
-        r_force_zero[0] <= result_zero;
-        r_force_inf[0]  <= result_inf;
-        r_div0[0]       <= b_zero;
-        r_den[0]        <= b_significand;
-        r_den3[0]       <= initial_den3;
-        r_rem[0]        <= initial_rem;
-        r_raw0          <= initial_bit;
+        r_sign[0]         <= result_sign;
+        r_exp_unbiased[0] <= decoded_exp_unbiased;
+        r_force_zero[0]   <= result_zero;
+        r_force_inf[0]    <= result_inf;
+        r_div0[0]         <= b_zero;
+        r_den[0]          <= b_significand;
+        r_den3[0]         <= initial_den3;
+        r_rem[0]          <= initial_rem;
+        r_raw0            <= initial_bit;
     end
 
     genvar i_stage;
@@ -155,32 +154,49 @@ module _zkf_div_core #(
                 end else begin
                     r_valid[i_stage] <= r_valid[i_stage-1];
                 end
-                r_sign[i_stage]       <= r_sign[i_stage-1];
-                r_scale[i_stage]      <= r_scale[i_stage-1];
-                r_force_zero[i_stage] <= r_force_zero[i_stage-1];
-                r_force_inf[i_stage]  <= r_force_inf[i_stage-1];
-                r_div0[i_stage]       <= r_div0[i_stage-1];
-                r_den[i_stage]        <= r_den[i_stage-1];
-                r_den3[i_stage]       <= r_den3[i_stage-1];
-                r_rem[i_stage]        <= rem_next;
+                r_sign[i_stage]         <= r_sign[i_stage-1];
+                r_exp_unbiased[i_stage] <= r_exp_unbiased[i_stage-1];
+                r_force_zero[i_stage]   <= r_force_zero[i_stage-1];
+                r_force_inf[i_stage]    <= r_force_inf[i_stage-1];
+                r_div0[i_stage]         <= r_div0[i_stage-1];
+                r_den[i_stage]          <= r_den[i_stage-1];
+                r_den3[i_stage]         <= r_den3[i_stage-1];
+                r_rem[i_stage]          <= rem_next;
             end
         end
     endgenerate
 
-    // Final output stage closes the quotient-prefix/sticky/scale combinational paths at the module boundary.
+    wire                            final_high          = final_raw[QFRAC];
+    wire                            final_rem_sticky    = |r_rem[QSTAGES];
+    wire                 [WMAN-1:0] final_significand_hi = final_raw[QFRAC -: WMAN];
+    wire                 [WMAN-1:0] final_significand_lo = final_raw[QFRAC-1 -: WMAN];
+    wire                            final_guard_hi       = final_raw[QFRAC-WMAN];
+    wire                            final_guard_lo       = final_raw[QFRAC-WMAN-1];
+    wire                            final_round_hi       = final_raw[QFRAC-WMAN-1];
+    wire                            final_round_lo       = final_raw[QFRAC-WMAN-2];
+    wire                            final_tail_hi        = |final_raw[QFRAC-WMAN-2:0];
+    wire                            final_tail_lo        = |final_raw[QFRAC-WMAN-3:0];
+    wire                            final_sticky_hi      = final_tail_hi || final_rem_sticky;
+    wire                            final_sticky_lo      = final_tail_lo || final_rem_sticky;
+    wire signed [WEXP_UNBIASED-1:0] final_exp_adjust     = final_high ? ZERO_EXT : ONE_EXT;
+
+    // Final output stage closes the quotient-prefix/sticky/exponent combinational paths at the module boundary.
     always @(posedge clk) begin
         if (rst) begin
             out_valid <= 1'b0;
         end else begin
             out_valid <= r_valid[QSTAGES];
         end
-        sign        <= r_sign[QSTAGES];
-        mag         <= {final_raw, |r_rem[QSTAGES]};
-        mag_zero    <= r_force_zero[QSTAGES];
-        mag_flog2   <= final_raw[QFRAC] ? MAG_LOG2_HI : MAG_LOG2_LO;
-        scale       <= r_force_inf[QSTAGES] ? FORCE_INF_SCALE : r_scale[QSTAGES];
-        div0        <= r_div0[QSTAGES];
-        partial_rem <= r_rem[QSTAGES];
+        sign         <= r_sign[QSTAGES];
+        force_zero   <= r_force_zero[QSTAGES];
+        force_inf    <= r_force_inf[QSTAGES];
+        exp_unbiased <= r_exp_unbiased[QSTAGES] - final_exp_adjust;
+        significand  <= final_high ? final_significand_hi : final_significand_lo;
+        guard        <= final_high ? final_guard_hi : final_guard_lo;
+        round        <= final_high ? final_round_hi : final_round_lo;
+        sticky       <= final_high ? final_sticky_hi : final_sticky_lo;
+        div0         <= r_div0[QSTAGES];
+        partial_rem  <= r_rem[QSTAGES];
     end
 endmodule
 
