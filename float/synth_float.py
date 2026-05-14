@@ -184,9 +184,9 @@ def latency_cycles(spec: ModuleSpec) -> int:
     if spec.kind == "mul":
         return 4
     if spec.kind == "div_core":
-        return spec.wman + 5 + ((spec.wman + 4) % 2)
+        return spec.wman + 4 + ((spec.wman + 4) % 2)
     if spec.kind == "div":
-        return spec.wman + 8 + ((spec.wman + 4) % 2)
+        return spec.wman + 7 + ((spec.wman + 4) % 2)
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -882,8 +882,6 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <p>Flow: Yosys synth_ecp5 with -noabc9 -retime -abc2 -dff, nextpnr-ecp5 for LFE5U-85F CABGA381 speed grade 6 at 100 MHz.</p>
 <p>Helper-module rows are standalone out-of-context builds with unconstrained wrapper inputs. Parent-module rows are
 flattened and context-optimized, so helper and parent resource counts are not additive.</p>
-<p>The _zkf_pack helper row provides mag_zero and mag_flog2 as wrapper inputs; it does not include
-_zkf_ilog2_floor. A row that instantiates _zkf_ilog2_floor must be named as such.</p>
 <p>Yosys cell columns are post-synthesis primitive counts; placed utilization columns and hard-block capacities come
 from nextpnr.</p>
 <table>

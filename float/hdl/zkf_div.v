@@ -1,7 +1,7 @@
 /// Streamed Zubax Kulibin float divider.
 /// The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
 ///
-/// Pipeline depth: WMAN+8+((WMAN+4)%2) stages from in_valid to out_valid:
+/// Pipeline depth: WMAN+7+((WMAN+4)%2) stages from in_valid to out_valid:
 /// one public input latch, _zkf_div_core, and _zkf_pack with two stages.
 
 `default_nettype none
@@ -56,7 +56,7 @@ module zkf_div #(
         .mag_flog2(core_mag_flog2),
         .scale(core_scale),
         .div0(core_div0),
-        .partial_rem()  // Partial reminder is not used in this module.
+        .partial_rem()  // Partial remainder is not used in this module.
     );
 
     // The packer has registered outputs, so it is safe to connect it to the external signals directly.
