@@ -4,6 +4,29 @@ A small and FPGA-friendly floating point format that is similar to IEEE 754 but 
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted. See `zkf.py` for the encoding rules.
 
+## Semantics
+
+Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, underflow flushes to +0), no −0, no exceptions, overflow produces signed ±∞.
+
+Infinity cases that would be NaN in IEEE 754:
+
+| Expression          | Result                         |
+|---------------------|--------------------------------|
+| +∞ + −∞             | +0                             |
+| 0 · ±∞              | +0                             |
+| 0 ÷ 0               | +0                             |
+| ±∞ ÷ ±∞             | +0                             |
+
+Non-NaN infinity cases (same intent as IEEE 754):
+
+| Expression          | Result                         |
+|---------------------|--------------------------------|
+| finite ÷ 0          | ±∞  (sign = sign of dividend)  |
+| ±∞ ÷ 0              | ±∞  (sign = sign of dividend)  |
+| finite ÷ ±∞         | +0                             |
+| ±∞ · ±∞             | ±∞  (sign = signs XOR)         |
+| finite≠0 · ±∞       | ±∞  (sign = signs XOR)         |
+
 ## Usage
 
 The `zkf_*` modules implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have registered inputs, allowing direct connection to BRAM, which is useful in register files etc. Two two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
