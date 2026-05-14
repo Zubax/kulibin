@@ -4,18 +4,11 @@ A small and FPGA-friendly floating point format that is similar to IEEE 754 but 
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted. See `zkf.py` for the encoding rules.
 
+## Usage
+
+The `zkf_*` modules implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have registered inputs, allowing direct connection to BRAM, which is useful in register files etc. Two two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
+
 ## Notable sizes
-
-### WEXP=7 WMAN=17
-
-An MCU-friendly format with clean byte alignment: 8 bits for the sign and the exponent, 16 bits for the fractional bits.
-
-```
-WEXP=7 WMAN=17 WFRAC=16 WFULL=24 BIAS=63
-min_normal = 1/4611686018427387904 ≈ 2.168e-19
-max_value  = 36893206672442392576  ≈ 3.689e+19
-epsilon    = 1/65536               ≈ 1.526e-05
-```
 
 ### WEXP=? WMAN=18
 
@@ -26,6 +19,17 @@ WEXP=6 WMAN=18 WFRAC=17 WFULL=24 BIAS=31
 min_normal = 1/1073741824    ≈ 9.313e-10
 max_value  = 8589901824      ≈ 8.590e+09
 epsilon    = 1/131072        ≈ 7.629e-06
+```
+
+### WEXP=7 WMAN=17
+
+An MCU-friendly format with clean byte alignment: 8 bits for the sign and the exponent, 16 bits for the fractional bits.
+
+```
+WEXP=7 WMAN=17 WFRAC=16 WFULL=24 BIAS=63
+min_normal = 1/4611686018427387904 ≈ 2.168e-19
+max_value  = 36893206672442392576  ≈ 3.689e+19
+epsilon    = 1/65536               ≈ 1.526e-05
 ```
 
 ### IEEE 754-like

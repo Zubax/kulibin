@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from html import escape
 import json
@@ -17,10 +18,22 @@ BUILD = REPO / "build" / "float_synth"
 DEVICE_SPEED_GRADE = "6"
 TARGET_FREQ_MHZ = 100
 
+IMPORTANT_UTILIZATION_RESOURCES = (
+    "TRELLIS_COMB",
+    "TRELLIS_FF",
+    "TRELLIS_IO",
+    "MULT18X18D",
+    "ALU54B",
+    "DP16KD",
+    "TRELLIS_RAMW",
+    "DCCA",
+)
+
 
 @dataclass(frozen=True)
 class ModuleSpec:
     name: str
+    label: str
     top: str
     kind: str
     wexp: int
@@ -32,6 +45,7 @@ class ModuleSpec:
 MODULES = [
     ModuleSpec(
         name="_zkf_pack",
+        label="_zkf_pack (external mag_zero/mag_flog2)",
         top="_zkf_pack_synth_top",
         kind="pack",
         wexp=6,
@@ -41,6 +55,7 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_mul",
+        label="zkf_mul",
         top="zkf_mul_synth_top",
         kind="mul",
         wexp=6,
@@ -145,12 +160,20 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
 
 
 def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: Path) -> None:
-    rtl = [
-        REPO / "float" / "hdl" / "_zkf_ilog2_floor.v",
-        REPO / "float" / "hdl" / "_zkf_pack.v",
-        REPO / "float" / "hdl" / "zkf_mul.v",
-        wrapper,
-    ]
+    if spec.kind == "pack":
+        rtl = [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            wrapper,
+        ]
+    elif spec.kind == "mul":
+        rtl = [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "zkf_mul.v",
+            wrapper,
+        ]
+    else:
+        raise ValueError(f"unsupported module kind: {spec.kind}")
+
     script.write_text(
         "\n".join(
             [f"read_verilog {path}" for path in rtl]
@@ -176,6 +199,27 @@ def parse_cell_counts(yosys_log: str) -> dict[str, int]:
         if match:
             counts[match.group(2)] = int(match.group(1))
     return counts
+
+
+def read_yosys_cell_counts(netlist: Path, top: str) -> dict[str, int]:
+    try:
+        data = json.loads(netlist.read_text())
+    except json.JSONDecodeError:
+        return {}
+    modules = data.get("modules")
+    if not isinstance(modules, dict):
+        return {}
+    module = modules.get(top)
+    if not isinstance(module, dict):
+        return {}
+    cells = module.get("cells")
+    if not isinstance(cells, dict):
+        return {}
+    counts: Counter[str] = Counter()
+    for cell in cells.values():
+        if isinstance(cell, dict) and isinstance(cell.get("type"), str):
+            counts[cell["type"]] += 1
+    return dict(counts)
 
 
 def read_nextpnr_report(path: Path) -> dict[str, object]:
@@ -408,24 +452,98 @@ def critical_path_overview_html(report: dict[str, object], _anchor_prefix: str) 
     )
 
 
-def parse_nextpnr_utilization(nextpnr_log: str, report: dict[str, object]) -> str:
+def format_used_available(used: int, available: int | None = None) -> str:
+    if available is not None and available > 0:
+        return f"{used}/{available} ({100.0 * used / available:.2f}%)"
+    return str(used)
+
+
+def nextpnr_resource(report: dict[str, object], key: str) -> tuple[int, int | None] | None:
     utilization = report.get("utilization")
     if isinstance(utilization, dict):
-        lines = []
-        for key in ("TRELLIS_COMB", "TRELLIS_FF", "TRELLIS_IO", "CCU2C", "LUT4"):
-            item = utilization.get(key)
-            if not isinstance(item, dict):
-                continue
+        item = utilization.get(key)
+        if isinstance(item, dict):
             used = item.get("used")
             available = item.get("available")
-            if isinstance(used, int) and isinstance(available, int) and available > 0:
-                lines.append(f"{key}: {used}/{available} ({100.0 * used / available:.2f}%)")
+            if isinstance(used, int):
+                return used, available if isinstance(available, int) else None
+    return None
+
+
+def format_nextpnr_resource(report: dict[str, object], key: str, fallback_used: int | None = None) -> str:
+    resource = nextpnr_resource(report, key)
+    if resource is not None:
+        return format_used_available(resource[0], resource[1])
+    if fallback_used is not None:
+        return str(fallback_used)
+    return "not reported"
+
+
+def parse_nextpnr_total_lut4(nextpnr_log: str) -> tuple[int, int | None] | None:
+    match = re.search(r"Total LUT4s:\s*([0-9]+)/([0-9]+)", nextpnr_log)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def format_nextpnr_total_lut4(nextpnr_log: str) -> str:
+    resource = parse_nextpnr_total_lut4(nextpnr_log)
+    if resource is None:
+        return "not reported"
+    return format_used_available(resource[0], resource[1])
+
+
+def format_yosys_cell_counts(cells: dict[str, int]) -> str:
+    keys = [
+        "LUT4",
+        "TRELLIS_FF",
+        "CCU2C",
+        "PFUMX",
+        "L6MUX21",
+        "MULT18X18D",
+        "ALU54B",
+        "DP16KD",
+    ]
+    extra_keys = (
+        key
+        for key, value in cells.items()
+        if value and key not in keys and not key.startswith("$")
+    )
+    keys.extend(sorted(extra_keys))
+    lines = [f"{key}: {cells[key]}" for key in keys if cells.get(key, 0)]
+    return "\n".join(lines) if lines else "not reported"
+
+
+def parse_nextpnr_utilization(nextpnr_log: str, report: dict[str, object]) -> str:
+    lines = []
+    total_lut4 = parse_nextpnr_total_lut4(nextpnr_log)
+    if total_lut4 is not None:
+        lines.append(f"Total LUT4s: {format_used_available(total_lut4[0], total_lut4[1])}")
+
+    utilization = report.get("utilization")
+    if isinstance(utilization, dict):
+        keys = set(IMPORTANT_UTILIZATION_RESOURCES)
+        keys.update(
+            key
+            for key, item in utilization.items()
+            if isinstance(key, str)
+            and isinstance(item, dict)
+            and isinstance(item.get("used"), int)
+            and item["used"] > 0
+        )
+        for key in sorted(keys):
+            resource = nextpnr_resource(report, key)
+            if resource is not None:
+                lines.append(f"{key}: {format_used_available(resource[0], resource[1])}")
         if lines:
             return "\n".join(lines)
 
     useful = []
     for line in nextpnr_log.splitlines():
-        if any(cell in line for cell in ("TRELLIS_SLICE", "TRELLIS_FF", "LUT4", "PFU")):
+        if any(
+            cell in line
+            for cell in ("TRELLIS_SLICE", "TRELLIS_FF", "LUT4", "PFU", "MULT18X18D", "DP16KD")
+        ):
             useful.append(line.strip())
     return "\n".join(useful[-12:]) if useful else "not reported"
 
@@ -481,7 +599,7 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
     yosys_text = yosys_log.read_text()
     nextpnr_text = nextpnr_log.read_text()
     report_data = read_nextpnr_report(nextpnr_report)
-    cells = parse_cell_counts(yosys_text)
+    cells = read_yosys_cell_counts(netlist, spec.top) or parse_cell_counts(yosys_text)
     utilization = report_data.get("utilization")
     nextpnr_ff = None
     if isinstance(utilization, dict):
@@ -489,18 +607,29 @@ def synthesize(spec: ModuleSpec) -> dict[str, str]:
         if isinstance(ff_util, dict) and isinstance(ff_util.get("used"), int):
             nextpnr_ff = ff_util["used"]
     if spec.kind == "pack":
-        params = f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, WSCALE={spec.wscale}"
+        params = f"WEXP={spec.wexp}, WMAN={spec.wman}, WMAG={spec.wmag}, WSCALE={spec.wscale}, log2=external"
     else:
         params = f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
     return {
         "name": spec.name,
+        "label": spec.label,
         "params": params,
         "fmax": parse_fmax(nextpnr_text, report_data),
         "target": f"{TARGET_FREQ_MHZ} MHz",
         "status": "PASS" if timing_met(report_data) else "FAIL",
         "lut": str(cells.get("LUT4", cells.get("$_LUT_", "not reported"))),
+        "lut_placed": format_nextpnr_total_lut4(nextpnr_text),
         "ff": str(cells.get("TRELLIS_FF", nextpnr_ff if nextpnr_ff is not None else "not reported")),
+        "comb": format_nextpnr_resource(report_data, "TRELLIS_COMB"),
+        "carry": str(cells.get("CCU2C", 0)),
+        "pfumx": str(cells.get("PFUMX", 0)),
+        "l6mux21": str(cells.get("L6MUX21", 0)),
+        "dsp": format_nextpnr_resource(report_data, "MULT18X18D", cells.get("MULT18X18D", 0)),
+        "alu54": format_nextpnr_resource(report_data, "ALU54B", cells.get("ALU54B", 0)),
+        "bram": format_nextpnr_resource(report_data, "DP16KD", cells.get("DP16KD", 0)),
+        "io": format_nextpnr_resource(report_data, "TRELLIS_IO"),
+        "yosys_cells": format_yosys_cell_counts(cells),
         "utilization": parse_nextpnr_utilization(nextpnr_text, report_data),
         "slack": parse_slack(nextpnr_text, report_data),
         "path_overview": critical_path_overview_html(report_data, spec.name.replace("_", "-")),
@@ -520,13 +649,22 @@ def write_html(results: list[dict[str, str]]) -> None:
         status_class = "pass" if result["status"] == "PASS" else "fail"
         rows.append(
             "<tr>"
-            f"<td>{escape(result['name'])}</td>"
+            f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
             f"<td>{escape(result['target'])}</td>"
             f"<td>{escape(result['fmax'])}</td>"
             f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
-            f"<td>{escape(result['lut'])}</td>"
-            f"<td>{escape(result['ff'])}</td>"
+            f"<td class=\"resource\">{escape(result['lut'])}</td>"
+            f"<td class=\"resource\">{escape(result['lut_placed'])}</td>"
+            f"<td class=\"resource\">{escape(result['ff'])}</td>"
+            f"<td class=\"resource\">{escape(result['comb'])}</td>"
+            f"<td class=\"resource\">{escape(result['carry'])}</td>"
+            f"<td class=\"resource\">{escape(result['pfumx'])}</td>"
+            f"<td class=\"resource\">{escape(result['l6mux21'])}</td>"
+            f"<td class=\"resource\">{escape(result['dsp'])}</td>"
+            f"<td class=\"resource\">{escape(result['alu54'])}</td>"
+            f"<td class=\"resource\">{escape(result['bram'])}</td>"
+            f"<td class=\"resource\">{escape(result['io'])}</td>"
             "<td>"
             f"<a href=\"{escape(result['nextpnr_log'])}\">nextpnr</a> | "
             f"<a href=\"{escape(result['yosys_log'])}\">Yosys</a> | "
@@ -535,7 +673,7 @@ def write_html(results: list[dict[str, str]]) -> None:
             "</tr>"
         )
         details.append(
-            f"<h2>{escape(result['name'])}</h2>"
+            f"<h2>{escape(result['label'])}</h2>"
             "<h3>Artifacts</h3>"
             "<p>"
             f"<a href=\"{escape(result['nextpnr_log'])}\">nextpnr log</a> | "
@@ -548,6 +686,8 @@ def write_html(results: list[dict[str, str]]) -> None:
             f"{result['path_overview']}"
             "<h3>Utilization</h3>"
             f"<pre>{escape(result['utilization'])}</pre>"
+            "<h3>Yosys Cell Counts</h3>"
+            f"<pre>{escape(result['yosys_cells'])}</pre>"
             "<h3>Report JSON</h3>"
             f"<pre>{escape(result['json'])}</pre>"
         )
@@ -563,6 +703,7 @@ body { font-family: sans-serif; margin: 2rem; color: #111; }
 table { border-collapse: collapse; margin-bottom: 2rem; }
 th, td { border: 1px solid #bbb; padding: 0.35rem 0.6rem; text-align: left; }
 th { background: #eee; }
+td.resource { white-space: nowrap; }
 .status { border-radius: 999px; display: inline-block; font-weight: 700; padding: 0.2rem 0.6rem; }
 .status.pass { background: #11823b; color: #fff; }
 .status.fail { background: #c82424; color: #fff; }
@@ -577,8 +718,19 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <body>
 <h1>Kulibin Float Synthesis Report</h1>
 <p>Flow: Yosys synth_ecp5 with -noabc9 -retime -abc2 -dff, nextpnr-ecp5 for LFE5U-85F CABGA381 speed grade 6 at 100 MHz.</p>
+<p>Helper-module rows are standalone out-of-context builds with unconstrained wrapper inputs. Parent-module rows are
+flattened and context-optimized, so helper and parent resource counts are not additive.</p>
+<p>The _zkf_pack helper row provides mag_zero and mag_flog2 as wrapper inputs; it does not include
+_zkf_ilog2_floor. A row that instantiates _zkf_ilog2_floor must be named as such.</p>
+<p>Yosys cell columns are post-synthesis primitive counts; placed utilization columns and hard-block capacities come
+from nextpnr.</p>
 <table>
-<thead><tr><th>Module</th><th>Parameters</th><th>Target</th><th>Fmax</th><th>Status</th><th>LUT4</th><th>FF</th><th>Logs</th></tr></thead>
+<thead><tr>
+<th>Module</th><th>Parameters</th><th>Target</th><th>Fmax</th><th>Status</th>
+<th>Yosys LUT4</th><th>Placed LUT4</th><th>FF</th><th>TRELLIS_COMB</th>
+<th>CCU2C</th><th>PFUMX</th><th>L6MUX21</th><th>DSP MULT18X18D</th>
+<th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Logs</th>
+</tr></thead>
 <tbody>
 """
         + "\n".join(rows)
