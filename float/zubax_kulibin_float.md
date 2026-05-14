@@ -296,12 +296,12 @@ A 4-7 stage pipeline is acceptable.
 
 ---
 
-## 7. Divider With Residual Remainder
+## 7. Divider
 
-Combined quotient/residual module, streamed, zero-bubble:
+Quotient-only divider, streamed, zero-bubble:
 
 ```verilog
-zkf_divrem #(parameter int WEXP = 6, parameter int WMAN = 18)(
+zkf_div #(parameter int WEXP = 6, parameter int WMAN = 18)(
     input  wire clk,
     input  wire rst,
 
@@ -311,12 +311,11 @@ zkf_divrem #(parameter int WEXP = 6, parameter int WMAN = 18)(
 
     output wire             out_valid,
     output wire [WFULL-1:0] q,
-    output wire [WFULL-1:0] r,
     output wire             div0
 );
 ```
 
-Quotient semantics:
+Semantics:
 
 ```text
 if a == 0:
@@ -334,7 +333,41 @@ undefined IEEE cases such as `0 / 0` and `infinity / infinity` return canonical 
 
 The `div0` output is asserted when `b` decodes as zero.
 
-Residual remainder semantics:
+Implementation guidance:
+
+```text
+Use a radix-4 SRT or equivalent.
+Generate at least WMAN + guard/round/sticky quotient precision.
+Use the final partial remainder to decide round-to-nearest ties-to-even.
+```
+
+Performance target: at least two quotient bits per cycle.
+
+---
+
+## 8. Divider With Residual Remainder
+
+Combined quotient/residual divider, streamed, zero-bubble:
+
+```verilog
+zkf_divrem #(parameter int WEXP = 6, parameter int WMAN = 18)(
+    input  wire clk,
+    input  wire rst,
+
+    input  wire             in_valid,
+    input  wire [WFULL-1:0] a,
+    input  wire [WFULL-1:0] b,
+
+    output wire             out_valid,
+    output wire [WFULL-1:0] q,
+    output wire [WFULL-1:0] r,
+    output wire             div0
+);
+```
+
+The `q` and `div0` outputs are bit-for-bit identical to `zkf_div` with the same parameters and inputs.
+
+Residual semantics:
 
 ```text
 This is a division residual, not C fmod and not IEEE remainder.
@@ -352,7 +385,8 @@ else:
     r = pack(a - b * q)
 ```
 
-The residual expression above is evaluated using the same deterministic no-NaN infinity arithmetic as the rest of this format:
+The residual expression above uses the decoded, rounded value of output `q` and is evaluated using the same
+deterministic no-NaN infinity arithmetic as the rest of this format. Notable consequences:
 
 ```text
 finite / infinity:
@@ -371,17 +405,18 @@ infinity / finite nonzero:
 Implementation guidance:
 
 ```text
-Use a radix-4 SRT or equivalent.
-Generate at least WMAN + guard/round/sticky quotient precision.
-Use the final partial remainder to decide round-to-nearest ties-to-even.
+Share the quotient generation path with zkf_div.
+Use the final partial remainder instead of directly evaluating a - b * q with a separate multiplier.
 After quotient rounding, adjust the residual if the quotient was incremented.
+Pack the residual alongside the quotient so both outputs are aligned under out_valid.
 ```
 
-Performance target: at least two quotient bits per cycle.
+Reusable logic shared by `zkf_div` and `zkf_divrem` should be extracted into nonpublic, underscore-prefixed helper
+modules, consistent with the internal helper module convention above.
 
 ---
 
-## 8. Cast From Signed Integer
+## 9. Cast From Signed Integer
 
 ```verilog
 zkf_from_sint #(
@@ -419,7 +454,7 @@ zero input maps to canonical +0
 
 ---
 
-## 9. Cast To Signed Integer
+## 10. Cast To Signed Integer
 
 ```verilog
 zkf_to_sint #(
@@ -462,7 +497,7 @@ Zero maps to integer zero.
 
 ---
 
-## 10. Cast Between Two Format Sizes
+## 11. Cast Between Two Format Sizes
 
 ```verilog
 zkf_resize #(
@@ -503,7 +538,7 @@ target overflow maps to signed infinity
 
 ---
 
-## 11. Combinational helpers
+## 12. Combinational helpers
 
 These circuits are very simple and as such usually do not warrant a separate pipeline stage.
 
