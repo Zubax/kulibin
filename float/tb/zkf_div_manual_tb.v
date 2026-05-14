@@ -11,14 +11,14 @@ module zkf_div_manual_tb;
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 4;
     localparam QFRAC = QFRAC_BASE + (QFRAC_BASE % 2);
-    localparam LATENCY = (QFRAC / 2) + 4;
+    localparam LATENCY = (QFRAC / 2) + 5;
 
     localparam DEFAULT_WEXP = 6;
     localparam DEFAULT_WMAN = 18;
     localparam DEFAULT_WFULL = DEFAULT_WEXP + DEFAULT_WMAN;
     localparam DEFAULT_QFRAC_BASE = DEFAULT_WMAN + 4;
     localparam DEFAULT_QFRAC = DEFAULT_QFRAC_BASE + (DEFAULT_QFRAC_BASE % 2);
-    localparam DEFAULT_LATENCY = (DEFAULT_QFRAC / 2) + 4;
+    localparam DEFAULT_LATENCY = (DEFAULT_QFRAC / 2) + 5;
 
     reg clk = 1'b0;
     always #5 clk = !clk;

@@ -194,7 +194,7 @@ def div_params(spec: ModuleSpec) -> tuple[int, int, int]:
 def latency_cycles(spec: ModuleSpec) -> int:
     qfrac_base = spec.wman + 4
     qfrac = qfrac_base + (qfrac_base % 2)
-    div_core_latency = 1 + (qfrac // 2)
+    div_core_latency = 2 + (qfrac // 2)
 
     if spec.kind == "pack":
         return 2

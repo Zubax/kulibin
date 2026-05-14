@@ -6,10 +6,10 @@
 ///
 /// This module does not have an input latch, since it is internal -- inputs feed combinational circuit directly.
 /// Public modules should take that into account if connecting their inputs directly to the inputs of this module.
-/// The outputs are not registered either -- combinational paths exposed.
+/// The outputs are registered by the final stage, so no internal combinational paths spill through the ports.
 ///
-/// Pipeline depth: 1+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid:
-/// one preparation stage plus one stage per radix-4 quotient digit. Throughput is one sample per cycle.
+/// Pipeline depth: 2+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid.
+/// Throughput is one sample per cycle.
 
 `default_nettype none
 
@@ -31,14 +31,14 @@ module _zkf_div_core #(
     input wire [WEXP+WMAN-1:0] a,
     input wire [WEXP+WMAN-1:0] b,
 
-    output wire                     out_valid,
-    output wire                     sign,
-    output wire         [QWMAG-1:0] mag,
-    output wire                     mag_zero,
-    output wire         [QWLOG-1:0] mag_flog2,
-    output wire signed [WSCALE-1:0] scale,
-    output wire                     div0,
-    output wire          [WMAN-1:0] partial_rem
+    output reg                     out_valid,
+    output reg                     sign,
+    output reg         [QWMAG-1:0] mag,
+    output reg                     mag_zero,
+    output reg         [QWLOG-1:0] mag_flog2,
+    output reg signed [WSCALE-1:0] scale,
+    output reg                     div0,
+    output reg          [WMAN-1:0] partial_rem
 );
     localparam WFRAC   = WMAN - 1;
     localparam WFULL   = WEXP + WMAN;
@@ -167,14 +167,21 @@ module _zkf_div_core #(
         end
     endgenerate
 
-    assign out_valid   = r_valid[QSTAGES];
-    assign sign        = r_sign[QSTAGES];
-    assign mag         = {final_raw, |r_rem[QSTAGES]};
-    assign mag_zero    = r_force_zero[QSTAGES];
-    assign mag_flog2   = final_raw[QFRAC] ? MAG_LOG2_HI : MAG_LOG2_LO;
-    assign scale       = r_force_inf[QSTAGES] ? FORCE_INF_SCALE : r_scale[QSTAGES];
-    assign div0        = r_div0[QSTAGES];
-    assign partial_rem = r_rem[QSTAGES];
+    // Final output stage closes the quotient-prefix/sticky/scale combinational paths at the module boundary.
+    always @(posedge clk) begin
+        if (rst) begin
+            out_valid <= 1'b0;
+        end else begin
+            out_valid <= r_valid[QSTAGES];
+        end
+        sign        <= r_sign[QSTAGES];
+        mag         <= {final_raw, |r_rem[QSTAGES]};
+        mag_zero    <= r_force_zero[QSTAGES];
+        mag_flog2   <= final_raw[QFRAC] ? MAG_LOG2_HI : MAG_LOG2_LO;
+        scale       <= r_force_inf[QSTAGES] ? FORCE_INF_SCALE : r_scale[QSTAGES];
+        div0        <= r_div0[QSTAGES];
+        partial_rem <= r_rem[QSTAGES];
+    end
 endmodule
 
 
