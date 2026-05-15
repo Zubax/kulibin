@@ -29,7 +29,7 @@ Non-NaN infinity cases (same intent as IEEE 754):
 
 ## Usage
 
-The `zkf_*` modules implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have fully registered inputs and outputs, allowing direct connection to BRAM, which is useful in register files etc. The two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
+The `zkf_*` modules implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have registered outputs. The two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
 
 There are private helper modules named `_zkf_*`; they are not supposed to be instantiated by the user but the public modules depend on them. They do not offer any of the guarantees that are valid for the public modules.
 

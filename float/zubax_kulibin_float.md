@@ -223,8 +223,7 @@ References:
 
 # Required Modules
 
-Arguments and results of all public (end-user) modules must be registered because the results may be fed by long
-combinational circuits or be assigned from memory. This requirement does not apply to internal helper modules.
+Results of all public (end-user) modules must be registered.
 
 Arbitrary hardcoded widths are not allowed; all width parameters must be ultimately derived from WEXP and WMAN.
 
