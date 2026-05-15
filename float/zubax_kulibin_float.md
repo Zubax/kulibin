@@ -251,11 +251,11 @@ zkf_addsub #(parameter int WEXP = 6, parameter int WMAN = 18)(
 Implementation guidance (rough):
 
 ```text
-stage 1: unpack, zero/infinity detection, exponent compare
-stage 2: align smaller significand using sticky bit
-stage 3: signed add/subtract
-stage 4: normalize
-stage 5: round, infinity/flush, pack
+unpack, zero/infinity detection, exponent compare
+align smaller significand using sticky bit
+signed add/subtract
+normalize
+round, infinity/flush, pack
 ```
 
 ---
@@ -290,8 +290,6 @@ round-to-nearest ties-to-even
 flush underflow to zero after rounding
 map overflow to signed infinity
 ```
-
-A 4-7 stage pipeline is acceptable.
 
 ---
 
@@ -537,17 +535,37 @@ target overflow maps to signed infinity
 
 ---
 
-## 12. Combinational helpers
+## 12. Comparator
 
-These circuits are very simple and as such usually do not warrant a separate pipeline stage.
+Infinities of the same sign compare equal.
 
 ```verilog
-// True if the input is an infinity.
-zkf_isinf #(parameter int WEXP = 6, parameter int WMAN = 18) (input wire [WFULL-1:0] x, output wire isinf);
+zkf_cmp #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
 
-// If the input is an infinity, convert it to the nearest representable finite value. Otherwise y=x.
-zkf_clamp #(parameter int WEXP = 6, parameter int WMAN = 18) (input wire [WFULL-1:0] x, output wire [WFULL-1:0] finite);
+    input wire             in_valid,
+    input wire [WFULL-1:0] a,
+    input wire [WFULL-1:0] b,
+
+    output reg out_valid,
+    output reg a_gt_b, // a > b
+    output reg a_eq_b, // a = b
+    output reg a_lt_b  // a < b
+);
 ```
+
+---
+
+## 13. Combinational helpers
+
+These circuits are very simple and as such usually do not warrant a separate pipeline stage.
+They may be implemented as functions inside a parameterized module, or macros; better ideas welcome.
+
+- `zkf_is_finite(x) -> bool` -- true if x is finite
+- `zkf_saturate(x) -> X` -- if x is finite, returns it as-is; if infinite, returns the nearest representable finite.
+- `zkf_abs(x) -> X` -- zero the sign bit.
+- `zkf_neg(x) -> X` -- flip the sign bit.
 
 ---
 
