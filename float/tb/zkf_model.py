@@ -314,6 +314,31 @@ def div_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, int]:
     return round_fraction_to_zkf(fmt, result_sign, value), div0
 
 
+def addsub_reference(fmt: ZkfFormat, a_bits: int, b_bits: int, op_sub: int) -> int:
+    a = decode(fmt, a_bits)
+    b = decode(fmt, b_bits)
+    b_eff_sign = b.sign ^ (op_sub & 1)
+
+    if a.is_inf and b.is_inf:
+        return canonical_inf(fmt, a.sign) if a.sign == b_eff_sign else zero(fmt)
+    if a.is_inf:
+        return canonical_inf(fmt, a.sign)
+    if b.is_inf:
+        return canonical_inf(fmt, b_eff_sign)
+
+    def finite_value(item: Decoded, sign: int) -> Fraction:
+        if item.is_zero:
+            return Fraction(0, 1)
+        value = Fraction(significand(fmt, item.bits), 1)
+        value *= pow2_fraction(item.exp - fmt.bias - fmt.wfrac)
+        return -value if sign else value
+
+    result = finite_value(a, a.sign) + finite_value(b, b_eff_sign)
+    if result == 0:
+        return zero(fmt)
+    return round_fraction_to_zkf(fmt, 1 if result < 0 else 0, abs(result))
+
+
 def ilog2_floor_reference(width: int, value: int) -> tuple[int, int]:
     if value == 0:
         return 1, 0
@@ -386,6 +411,28 @@ def numpy_div_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, 
     with np.errstate(all="ignore"):
         result = dtype(_bits_to_numpy(a_bits, dtype)) / dtype(_bits_to_numpy(b_bits, dtype))
     return _canonicalize_numpy_result(fmt, _numpy_to_bits(result, dtype)), div0
+
+
+def numpy_addsub_reference(fmt: ZkfFormat, a_bits: int, b_bits: int, op_sub: int) -> int | None:
+    dtype = _numpy_dtype(fmt)
+    if dtype is None or not is_canonical_numpy_operand(fmt, a_bits) or not is_canonical_numpy_operand(fmt, b_bits):
+        return None
+
+    a = decode(fmt, a_bits)
+    b = decode(fmt, b_bits)
+    b_eff_sign = b.sign ^ (op_sub & 1)
+    if a.is_inf and b.is_inf:
+        return canonical_inf(fmt, a.sign) if a.sign == b_eff_sign else zero(fmt)
+    if a.is_inf:
+        return canonical_inf(fmt, a.sign)
+    if b.is_inf:
+        return canonical_inf(fmt, b_eff_sign)
+
+    lhs = dtype(_bits_to_numpy(a_bits, dtype))
+    rhs = dtype(_bits_to_numpy(b_bits, dtype))
+    with np.errstate(all="ignore"):
+        result = dtype(lhs - rhs) if op_sub else dtype(lhs + rhs)
+    return _canonicalize_numpy_result(fmt, _numpy_to_bits(result, dtype))
 
 
 def hex_bits(value: int, width: int) -> str:

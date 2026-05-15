@@ -22,10 +22,11 @@ RTL = FLOAT / "hdl"
 RTL_ILOG2 = [RTL / "_zkf_ilog2_floor.v"]
 RTL_PACK = [RTL / "_zkf_pack.v"]
 RTL_MUL = [RTL / "_zkf_pack.v", RTL / "zkf_mul.v"]
+RTL_ADDSUB = [RTL / "_zkf_ilog2_floor.v", RTL / "_zkf_pack.v", RTL / "zkf_addsub.v"]
 RTL_DIV = [RTL / "_zkf_pack.v", RTL / "_zkf_div_core.v", RTL / "zkf_div.v"]
 
 SIMS = ("icarus", "verilator")
-SUITES = ("ilog2", "pack", "mul", "div")
+SUITES = ("ilog2", "pack", "mul", "addsub", "div")
 SKIP_REASON = {
     ("verilator", "ilog2"): "Verilator mis-elaborates the recursive _zkf_ilog2_floor implementation",
 }
@@ -92,6 +93,10 @@ def arithmetic_configs(suite: str) -> list[RunConfig]:
         top = "zkf_mul"
         test_module = "test_mul"
         sources = tuple(RTL_MUL)
+    elif suite == "addsub":
+        top = "zkf_addsub"
+        test_module = "test_addsub"
+        sources = tuple(RTL_ADDSUB)
     elif suite == "div":
         top = "zkf_div"
         test_module = "test_div"
@@ -135,7 +140,7 @@ def configs_for_suite(suite: str) -> list[RunConfig]:
         return ilog2_configs()
     if suite == "pack":
         return pack_configs()
-    if suite in ("mul", "div"):
+    if suite in ("mul", "addsub", "div"):
         return arithmetic_configs(suite)
     raise ValueError(suite)
 

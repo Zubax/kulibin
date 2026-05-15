@@ -9,6 +9,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
+      - hdl/zkf_addsub.v
       - hdl/zkf_div.v
     file_type: verilogSource
 
@@ -32,6 +33,8 @@ filesets:
       - tb/test_pack.py:
           file_type: user
       - tb/test_mul.py:
+          file_type: user
+      - tb/test_addsub.py:
           file_type: user
       - tb/test_div.py:
           file_type: user
@@ -77,6 +80,13 @@ scripts:
       - sh
       - -c
       - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite mul'
+    filesets: [rtl, tb_cocotb_runner]
+
+  run_cocotb_addsub:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite addsub'
     filesets: [rtl, tb_cocotb_runner]
 
   run_cocotb_div:
@@ -150,6 +160,17 @@ targets:
     hooks:
       pre_build:
         - run_cocotb_mul
+    toplevel: zkf_cocotb_alias_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_addsub:
+    filesets: [tb_cocotb_alias]
+    hooks:
+      pre_build:
+        - run_cocotb_addsub
     toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
