@@ -35,6 +35,10 @@ There are private helper modules named `_zkf_*`; they are not supposed to be ins
 
 The latency is documented in the doc comments separately for each module.
 
+## TODO
+
+- Insert the `_zkf_optional_stage` at the inputs of the public modules, controlled via the new `REGISTER_INPUT` parameter, disabled by default. This may be useful in certain circuits where arithmetic inputs are fed by long combinational paths or where they are connected to a register file etc.
+
 ## Notable sizes
 
 ### WEXP=? WMAN=18
