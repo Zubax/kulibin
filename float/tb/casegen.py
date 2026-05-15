@@ -201,7 +201,7 @@ def _generic_mul_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
 
 def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     v = _directed_numbers(fmt)
-    return [
+    cases = [
         ("zero_plus_one", v["zero"], v["one"]),
         ("zero_payload_plus_one", v["neg_zero"], v["one"]),
         ("one_plus_zero_payload", v["one"], v["neg_zero"]),
@@ -226,6 +226,67 @@ def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
         ("neg_inf_plus_neg_inf", v["neg_inf"], v["noncanonical_neg_inf"]),
         ("pos_inf_plus_neg_inf", v["pos_inf"], v["neg_inf"]),
     ]
+    near_exp = fmt.bias
+    cases.extend(
+        [
+            ("near_cancellation_positive", normal(fmt, 0, near_exp, 2), normal(fmt, 1, near_exp, 1)),
+            ("near_cancellation_negative", normal(fmt, 1, near_exp, 2), normal(fmt, 0, near_exp, 1)),
+            ("underflow_after_cancellation", normal(fmt, 0, 1, 1), normal(fmt, 1, 1, 0)),
+            ("noncanonical_zero_plus_noncanonical_inf", v["neg_zero"], v["noncanonical_pos_inf"]),
+            ("noncanonical_opposite_infinities_zero", v["noncanonical_pos_inf"], v["noncanonical_neg_inf"]),
+        ]
+    )
+
+    high_exp = min(fmt.exp_max_finite, fmt.bias + 4)
+    for exp_diff in range(5):
+        cases.append(
+            (
+                f"exp_diff_{exp_diff}_same_sign",
+                normal(fmt, 0, high_exp, 0),
+                normal(fmt, 0, high_exp - exp_diff, fmt.frac_mask),
+            )
+        )
+        cases.append(
+            (
+                f"exp_diff_{exp_diff}_opposite_sign",
+                normal(fmt, 0, high_exp, 0),
+                normal(fmt, 1, high_exp - exp_diff, fmt.frac_mask),
+            )
+        )
+
+    round_exp = fmt.exp_max_finite
+    half_exp = round_exp - fmt.wman
+    below_half_exp = half_exp - 1
+    if half_exp >= 1:
+        half_ulp = normal(fmt, 0, half_exp, 0)
+        cases.extend(
+            [
+                ("tie_retains_even_add", normal(fmt, 0, round_exp, 0), half_ulp),
+                ("tie_rounds_odd_up_add", normal(fmt, 0, round_exp, 1), half_ulp),
+                ("round_up_above_half_add", normal(fmt, 0, round_exp, 0), normal(fmt, 0, half_exp, 1)),
+                ("post_round_overflow_add", v["max_finite"], half_ulp),
+            ]
+        )
+    if below_half_exp >= 1:
+        cases.append(
+            (
+                "round_down_below_half_add",
+                normal(fmt, 0, round_exp, 0),
+                normal(fmt, 0, below_half_exp, fmt.frac_mask),
+            )
+        )
+
+    sticky_diff = fmt.wman + 4
+    if fmt.exp_max_finite - sticky_diff >= 1:
+        cases.append(
+            (
+                "far_operand_sticky_only",
+                normal(fmt, 0, fmt.exp_max_finite, 0),
+                normal(fmt, 0, fmt.exp_max_finite - sticky_diff, fmt.frac_mask),
+            )
+        )
+
+    return cases
 
 
 def _generic_div_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
