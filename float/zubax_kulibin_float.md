@@ -543,37 +543,39 @@ target overflow maps to signed infinity
 
 ---
 
-## 12. Comparator
+## Combinational helpers
 
+These circuits are very simple and as such usually do not warrant a separate pipeline stage.
+They may be implemented as functions inside a parameterized module, or macros; better ideas welcome.
 Infinities of the same sign compare equal.
+
+- `zkf_is_finite(x) -> bool` -- true if x is finite
+- `zkf_saturate(x) -> X` -- if x is finite, returns it as-is; if infinite, returns the nearest representable finite.
+- `zkf_abs(x) -> X` -- zero the sign bit.
+- `zkf_neg(x) -> X` -- flip the sign bit.
+
+Comparison/sorting is cheap as it can be done using WFULL-wide integer arithmetic.
 
 ```verilog
 zkf_cmp #(parameter WEXP = 6, parameter WMAN = 18) (
-    input wire clk,
-    input wire rst,
-
-    input wire             in_valid,
     input wire [WFULL-1:0] a,
     input wire [WFULL-1:0] b,
 
-    output reg out_valid,
     output reg a_gt_b, // a > b
     output reg a_eq_b, // a = b
     output reg a_lt_b  // a < b
 );
 ```
 
----
+```verilog
+zkf_sort #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire [WFULL-1:0] a,
+    input wire [WFULL-1:0] b,
 
-## 13. Combinational helpers
-
-These circuits are very simple and as such usually do not warrant a separate pipeline stage.
-They may be implemented as functions inside a parameterized module, or macros; better ideas welcome.
-
-- `zkf_is_finite(x) -> bool` -- true if x is finite
-- `zkf_saturate(x) -> X` -- if x is finite, returns it as-is; if infinite, returns the nearest representable finite.
-- `zkf_abs(x) -> X` -- zero the sign bit.
-- `zkf_neg(x) -> X` -- flip the sign bit.
+    output reg min, // min(a,b)
+    output reg max  // max(a,b)
+);
+```
 
 ---
 
