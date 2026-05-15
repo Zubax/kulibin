@@ -12,218 +12,156 @@ filesets:
       - hdl/zkf_div.v
     file_type: verilogSource
 
-  tb_pack_min:
+  tb_cocotb_alias:
     files:
-      - tb/_zkf_pack_tb_wrapper.v
-      - tb/_zkf_pack_min_tb.v
+      - tb/zkf_cocotb_alias_tb.v
     file_type: verilogSource
 
-  tb_pack_manual:
+  tb_cocotb_runner:
     files:
-      - tb/_zkf_pack_tb_wrapper.v
-      - tb/_zkf_pack_manual_tb.v
-    file_type: verilogSource
-
-  tb_pack_random:
-    files:
-      - tb/_zkf_pack_tb_wrapper.v:
-          file_type: verilogSource
-      - tb/_zkf_pack_random_tb.v:
-          file_type: verilogSource
-
-  tb_pack_random_gen:
-    files:
-      - tb/gen_pack_random_vectors.py:
+      - tb/run_cocotb.py:
           file_type: user
-
-  tb_mul_min:
-    files:
-      - tb/zkf_mul_min_tb.v
-    file_type: verilogSource
-
-  tb_mul_manual:
-    files:
-      - tb/zkf_mul_manual_tb.v
-    file_type: verilogSource
-
-  tb_mul_random:
-    files:
-      - tb/zkf_mul_random_tb.v
-    file_type: verilogSource
-
-  tb_mul_random_gen:
-    files:
-      - tb/gen_mul_random_vectors.py:
+      - tb/zkf_model.py:
           file_type: user
-
-  tb_div_min:
-    files:
-      - tb/zkf_div_min_tb.v
-    file_type: verilogSource
-
-  tb_div_manual:
-    files:
-      - tb/zkf_div_manual_tb.v
-    file_type: verilogSource
-
-  tb_div_random:
-    files:
-      - tb/zkf_div_random_tb.v
-    file_type: verilogSource
-
-  tb_div_random_gen:
-    files:
-      - tb/gen_div_random_vectors.py:
+      - tb/casegen.py:
           file_type: user
-
-  tb_div_extensive:
-    files:
-      - tb/zkf_div_extensive_tb.v
-    file_type: verilogSource
-
-  tb_div_extensive_data:
-    files:
-      - tb/div_ext_w3_m5.memh:
+      - tb/cocotb_utils.py:
           file_type: user
-      - tb/div_ext_w4_m6.memh:
+      - tb/test_ilog2.py:
           file_type: user
-      - tb/div_ext_w5_m11.memh:
+      - tb/test_pack.py:
           file_type: user
-      - tb/div_ext_w6_m18.memh:
+      - tb/test_mul.py:
           file_type: user
-      - tb/div_ext_w7_m17.memh:
-          file_type: user
-      - tb/div_ext_w8_m24.memh:
-          file_type: user
-      - tb/div_ext_w11_m53.memh:
-          file_type: user
-      - tb/gen_div_extensive_vectors.py:
+      - tb/test_div.py:
           file_type: user
 
 scripts:
-  gen_pack_random_vectors:
+  run_cocotb_all:
     cmd:
       - sh
       - -c
-      - 'python3 "$FILES_ROOT"/tb/gen_pack_random_vectors.py'
-    filesets:
-      - tb_pack_random_gen
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite all'
+    filesets: [rtl, tb_cocotb_runner]
 
-  gen_mul_random_vectors:
+  run_cocotb_icarus:
     cmd:
       - sh
       - -c
-      - 'python3 "$FILES_ROOT"/tb/gen_mul_random_vectors.py'
-    filesets:
-      - tb_mul_random_gen
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim icarus --suite all'
+    filesets: [rtl, tb_cocotb_runner]
 
-  gen_div_random_vectors:
+  run_cocotb_verilator:
     cmd:
       - sh
       - -c
-      - 'python3 "$FILES_ROOT"/tb/gen_div_random_vectors.py'
-    filesets:
-      - tb_div_random_gen
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim verilator --suite all'
+    filesets: [rtl, tb_cocotb_runner]
 
-  copy_div_extensive_vectors:
+  run_cocotb_ilog2:
     cmd:
       - sh
       - -c
-      - 'cp "$FILES_ROOT"/tb/div_ext_w*_m*.memh .'
-    filesets:
-      - tb_div_extensive_data
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite ilog2'
+    filesets: [rtl, tb_cocotb_runner]
+
+  run_cocotb_pack:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite pack'
+    filesets: [rtl, tb_cocotb_runner]
+
+  run_cocotb_mul:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite mul'
+    filesets: [rtl, tb_cocotb_runner]
+
+  run_cocotb_div:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite div'
+    filesets: [rtl, tb_cocotb_runner]
 
 targets:
   default:
     filesets: [rtl]
 
-  sim_pack_min:
-    filesets: [rtl, tb_pack_min]
-    toplevel: _zkf_pack_min_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_pack_manual:
-    filesets: [rtl, tb_pack_manual]
-    toplevel: _zkf_pack_manual_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_pack_random:
-    filesets: [rtl, tb_pack_random]
+  sim:
+    filesets: [tb_cocotb_alias]
     hooks:
       pre_build:
-        - gen_pack_random_vectors
-    toplevel: _zkf_pack_random_tb
+        - run_cocotb_all
+    toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
       icarus:
         iverilog_options: [-Wall, -Wno-timescale]
 
-  sim_mul_min:
-    filesets: [rtl, tb_mul_min]
-    toplevel: zkf_mul_min_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_mul_manual:
-    filesets: [rtl, tb_mul_manual]
-    toplevel: zkf_mul_manual_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_mul_random:
-    filesets: [rtl, tb_mul_random]
+  sim_icarus:
+    filesets: [tb_cocotb_alias]
     hooks:
       pre_build:
-        - gen_mul_random_vectors
-    toplevel: zkf_mul_random_tb
+        - run_cocotb_icarus
+    toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
       icarus:
         iverilog_options: [-Wall, -Wno-timescale]
 
-  sim_div_min:
-    filesets: [rtl, tb_div_min]
-    toplevel: zkf_div_min_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_div_manual:
-    filesets: [rtl, tb_div_manual]
-    toplevel: zkf_div_manual_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_div_random:
-    filesets: [rtl, tb_div_random]
+  sim_verilator:
+    filesets: [tb_cocotb_alias]
     hooks:
       pre_build:
-        - gen_div_random_vectors
-    toplevel: zkf_div_random_tb
+        - run_cocotb_verilator
+    toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
       icarus:
         iverilog_options: [-Wall, -Wno-timescale]
 
-  sim_div_extensive:
-    filesets: [rtl, tb_div_extensive]
+  sim_ilog2:
+    filesets: [tb_cocotb_alias]
     hooks:
       pre_build:
-        - copy_div_extensive_vectors
-    toplevel: zkf_div_extensive_tb
+        - run_cocotb_ilog2
+    toplevel: zkf_cocotb_alias_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_pack:
+    filesets: [tb_cocotb_alias]
+    hooks:
+      pre_build:
+        - run_cocotb_pack
+    toplevel: zkf_cocotb_alias_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_mul:
+    filesets: [tb_cocotb_alias]
+    hooks:
+      pre_build:
+        - run_cocotb_mul
+    toplevel: zkf_cocotb_alias_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_div:
+    filesets: [tb_cocotb_alias]
+    hooks:
+      pre_build:
+        - run_cocotb_div
+    toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
       icarus:

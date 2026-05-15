@@ -12,17 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install iverilog
+      - name: Install HDL simulators
         run: |
           sudo apt-get update
-          sudo apt-get install -y iverilog
+          sudo apt-get install -y iverilog verilator
 
       - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
       - name: Install Python dependencies
-        run: pip install fusesoc numpy scipy sympy matplotlib
+        run: pip install cocotb fusesoc numpy scipy sympy matplotlib
 
       - name: Install Verible
         run: |

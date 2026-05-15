@@ -21,16 +21,7 @@ TARGETS = \
 	zubax:kulibin:iir::sim_lpf \
 	zubax:kulibin:iir::sim_hpf \
 	zubax:kulibin:fir::sim \
-	zubax:kulibin:float::sim_pack_min \
-	zubax:kulibin:float::sim_pack_manual \
-	zubax:kulibin:float::sim_pack_random \
-	zubax:kulibin:float::sim_mul_min \
-	zubax:kulibin:float::sim_mul_manual \
-	zubax:kulibin:float::sim_mul_random \
-	zubax:kulibin:float::sim_div_min \
-	zubax:kulibin:float::sim_div_manual \
-	zubax:kulibin:float::sim_div_random \
-	zubax:kulibin:float::sim_div_extensive \
+	zubax:kulibin:float::sim \
 	zubax:kulibin:cic_decimator::sim_comb_m1 \
 	zubax:kulibin:cic_decimator::sim_cic_decimator \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_stagger \
@@ -46,7 +37,7 @@ TARGETS = \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim
 
-.PHONY: verify lint library coverage-float synth-float synth-float-yosys synth-float-diamond clean
+.PHONY: verify lint library synth-float synth-float-yosys synth-float-diamond clean
 
 verify: library
 	@set -e; \
@@ -63,9 +54,6 @@ lint:
 
 library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true
-
-coverage-float:
-	$(PYTHON) float/coverage_float.py
 
 synth-float:
 	$(PYTHON) float/synth_float.py

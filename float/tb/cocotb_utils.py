@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Shared Cocotb helpers for the ZKF tests."""
+
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass
+import os
+from typing import Callable
+
+import cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import RisingEdge, Timer
+
+from zkf_model import hex_bits, mask, signed_to_bits
+
+
+@dataclass(frozen=True)
+class TestContext:
+    suite: str
+    sim: str
+    config: str
+    seed: int
+    wexp: int | None = None
+    wman: int | None = None
+
+    @property
+    def params(self) -> str:
+        if self.wexp is None:
+            return self.config
+        return f"{self.config} WEXP={self.wexp} WMAN={self.wman}"
+
+    def prefix(self) -> str:
+        return f"suite={self.suite} sim={self.sim} params={self.params} seed=0x{self.seed:016x}"
+
+
+def env_str(name: str, default: str = "") -> str:
+    return os.environ.get(name, default)
+
+
+def env_int(name: str, default: int = 0) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return int(value, 0)
+
+
+def context_from_env(suite: str) -> TestContext:
+    return TestContext(
+        suite=suite,
+        sim=env_str("ZKF_SIM", "unknown"),
+        config=env_str("ZKF_CONFIG", "default"),
+        seed=env_int("ZKF_SEED", 0),
+        wexp=env_int("ZKF_WEXP") if "ZKF_WEXP" in os.environ else None,
+        wman=env_int("ZKF_WMAN") if "ZKF_WMAN" in os.environ else None,
+    )
+
+
+def start_clock(dut, period_ns: int = 10) -> None:
+    cocotb.start_soon(Clock(dut.clk, period_ns, unit="ns").start())
+
+
+def is_resolvable(handle) -> bool:
+    return bool(handle.value.is_resolvable)
+
+
+def int_value(handle) -> int:
+    if not is_resolvable(handle):
+        raise ValueError(str(handle.value))
+    return int(handle.value)
+
+
+def drive_signed(handle, value: int) -> None:
+    handle.value = signed_to_bits(value, len(handle))
+
+
+def drive_unsigned(handle, value: int) -> None:
+    handle.value = value & mask(len(handle))
+
+
+class FixedLatencyScoreboard:
+    def __init__(
+        self,
+        dut,
+        latency: int,
+        context: TestContext,
+        outputs: dict[str, tuple[object, int]],
+    ) -> None:
+        self._dut = dut
+        self._latency = latency
+        self._context = context
+        self._outputs = outputs
+        self._queue: deque[tuple[dict[str, int], str] | None] = deque([None] * latency)
+        self.checked = 0
+
+    def clear(self) -> None:
+        self._queue = deque([None] * self._latency)
+
+    def _message(self, detail: str, case_description: str = "") -> str:
+        suffix = f" {case_description}" if case_description else ""
+        return f"{self._context.prefix()} {detail}{suffix}"
+
+    async def tick(self, expected: dict[str, int] | None, case_description: str = "") -> None:
+        await RisingEdge(self._dut.clk)
+        await Timer(1, unit="ns")
+
+        due = self._queue.popleft()
+        out_valid = self._dut.out_valid
+        assert is_resolvable(out_valid), self._message("out_valid is unresolved", case_description)
+        observed_valid = int(out_valid.value)
+
+        if due is None:
+            assert observed_valid == 0, self._message(
+                f"expected out_valid=0 observed={observed_valid}",
+                case_description,
+            )
+        else:
+            expected_outputs, expected_case = due
+            assert observed_valid == 1, self._message(
+                f"expected out_valid=1 observed={observed_valid}",
+                expected_case,
+            )
+            for name, expected_value in expected_outputs.items():
+                handle, width = self._outputs[name]
+                assert is_resolvable(handle), self._message(f"{name} is unresolved while out_valid=1", expected_case)
+                observed_value = int(handle.value)
+                assert observed_value == expected_value, self._message(
+                    f"{name} mismatch expected={hex_bits(expected_value, width)} "
+                    f"observed={hex_bits(observed_value, width)}",
+                    expected_case,
+                )
+            self.checked += 1
+
+        self._queue.append((expected, case_description) if expected is not None else None)
+
+    async def reset(
+        self,
+        cycles: int,
+        drive_during_reset: Callable[[], None] | None = None,
+    ) -> None:
+        self._dut.rst.value = 1
+        self.clear()
+        for _ in range(cycles):
+            if drive_during_reset is not None:
+                drive_during_reset()
+            await RisingEdge(self._dut.clk)
+            await Timer(1, unit="ns")
+            assert is_resolvable(self._dut.out_valid), self._message("out_valid is unresolved during reset")
+            assert int(self._dut.out_valid.value) == 0, self._message("out_valid asserted during reset")
+            self.clear()
+        self._dut.rst.value = 0
+        self.clear()
+
+
+async def run_stream_cases(
+    dut,
+    scoreboard: FixedLatencyScoreboard,
+    cases: list[object],
+    drive_case: Callable[[object], dict[str, int]],
+    invalid_drive: Callable[[], None],
+    describe_case: Callable[[int, object], str],
+) -> None:
+    if cases:
+        stress_count = min(len(cases), scoreboard._latency + 3)
+        for index, case in enumerate(cases[:stress_count]):
+            dut.in_valid.value = 1
+            expected = drive_case(case)
+            await scoreboard.tick(expected, describe_case(index, case))
+
+        def drive_reset_sample() -> None:
+            dut.in_valid.value = 1
+            drive_case(cases[0])
+
+        await scoreboard.reset(2, drive_during_reset=drive_reset_sample)
+        scoreboard.checked = 0
+
+    for index, case in enumerate(cases):
+        dut.in_valid.value = 1
+        expected = drive_case(case)
+        await scoreboard.tick(expected, describe_case(index, case))
+
+        if index % 17 == 3:
+            invalid_drive()
+            await scoreboard.tick(None, f"gap_after_case={index}")
+        if index % 43 == 7:
+            invalid_drive()
+            await scoreboard.tick(None, f"gap_after_case={index}")
+            await scoreboard.tick(None, f"gap_after_case={index}")
+
+    invalid_drive()
+    for flush_index in range(scoreboard._latency + 2):
+        await scoreboard.tick(None, f"flush={flush_index}")
