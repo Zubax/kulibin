@@ -147,10 +147,10 @@ module zkf_add #(
             s1_valid <= in_valid;
         end
 
-        // Any infinity input is an infinity case, but opposite-sign infinity sum is forced to canonical +0 by
-        // the packer because force_zero wins over force_inf.
-        s1_sign         <= (a_inf || b_inf) ? (a_inf ? a_sign : b_sign) : finite_sign;
-        s1_force_zero   <= (a_inf && b_inf && !same_sign) || (!(a_inf || b_inf) && finite_zero);
+        // Special cases as explicit boolean terms: opposite-sign infinities force canonical +0; otherwise a single
+        // infinity propagates its sign, and finite-only inputs use the finite datapath result.
+        s1_sign         <= (a_inf && a_sign) || (!a_inf && b_inf && b_sign) || (!a_inf && !b_inf && finite_sign);
+        s1_force_zero   <= (a_inf && b_inf && !same_sign) || (!a_inf && !b_inf && finite_zero);
         s1_force_inf    <= a_inf || b_inf;
         s1_exp_unbiased <= same_sign ? add_exp_unbiased : sub_exp_unbiased;
         s1_significand  <= same_sign ? add_significand  : sub_significand;
