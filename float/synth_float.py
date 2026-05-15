@@ -178,14 +178,14 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
 
 
 def div_qfrac(spec: ModuleSpec) -> int:
-    qfrac_base = spec.wman + 4
+    qfrac_base = spec.wman + 2
     return qfrac_base + (qfrac_base % 2)
 
 
 def latency_cycles(spec: ModuleSpec) -> int:
-    qfrac_base = spec.wman + 4
+    qfrac_base = spec.wman + 2
     qfrac = qfrac_base + (qfrac_base % 2)
-    div_core_latency = 2 + (qfrac // 2)
+    div_core_latency = 1 + (qfrac // 2)
 
     if spec.kind == "pack":
         return 1
@@ -194,7 +194,7 @@ def latency_cycles(spec: ModuleSpec) -> int:
     if spec.kind == "div_core":
         return div_core_latency
     if spec.kind == "div":
-        return div_core_latency + 2
+        return div_core_latency + 3
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 

@@ -76,6 +76,30 @@ filesets:
       - tb/gen_div_random_vectors.py:
           file_type: user
 
+  tb_div_extensive:
+    files:
+      - tb/zkf_div_extensive_tb.v
+    file_type: verilogSource
+
+  tb_div_extensive_data:
+    files:
+      - tb/div_ext_w3_m5.memh:
+          file_type: user
+      - tb/div_ext_w4_m6.memh:
+          file_type: user
+      - tb/div_ext_w5_m11.memh:
+          file_type: user
+      - tb/div_ext_w6_m18.memh:
+          file_type: user
+      - tb/div_ext_w7_m17.memh:
+          file_type: user
+      - tb/div_ext_w8_m24.memh:
+          file_type: user
+      - tb/div_ext_w11_m53.memh:
+          file_type: user
+      - tb/gen_div_extensive_vectors.py:
+          file_type: user
+
 scripts:
   gen_pack_random_vectors:
     cmd:
@@ -100,6 +124,14 @@ scripts:
       - 'python3 "$FILES_ROOT"/tb/gen_div_random_vectors.py'
     filesets:
       - tb_div_random_gen
+
+  copy_div_extensive_vectors:
+    cmd:
+      - sh
+      - -c
+      - 'cp "$FILES_ROOT"/tb/div_ext_w*_m*.memh .'
+    filesets:
+      - tb_div_extensive_data
 
 targets:
   default:
@@ -181,6 +213,17 @@ targets:
       pre_build:
         - gen_div_random_vectors
     toplevel: zkf_div_random_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_div_extensive:
+    filesets: [rtl, tb_div_extensive]
+    hooks:
+      pre_build:
+        - copy_div_extensive_vectors
+    toplevel: zkf_div_extensive_tb
     default_tool: icarus
     tools:
       icarus:

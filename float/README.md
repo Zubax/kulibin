@@ -4,10 +4,6 @@ A small and FPGA-friendly floating point format that is similar to IEEE 754 but 
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted. See `zkf.py` for the encoding rules.
 
-# TODO
-
-- Reduce divider quotient depth from WMAN+4 to WMAN+2. Current QFRAC=22 for WMAN=18, giving 11 radix-4 stages. For correct round-to-nearest with final remainder folded into sticky, WMAN + guard + round + sticky should need only WMAN+2 quotient fractional bits, rounded up to even for radix-4. That makes QFRAC=20, removing one radix-4 stage. It needs careful sticky handling when no produced tail bits remain -- zero-length tail ranges need generate-time handling.
-
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, post-round underflow flushes to +0), no −0, no exceptions, overflow produces signed ±∞.

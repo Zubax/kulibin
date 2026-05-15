@@ -7,16 +7,16 @@
 /// Public modules should take that into account if connecting their inputs directly to the inputs of this module.
 /// The outputs are registered by the final stage, so no internal combinational paths spill through the ports.
 ///
-/// Pipeline depth: 2+((WMAN+4+((WMAN+4)%2))/2) stages from in_valid to out_valid.
+/// Pipeline depth: 1+((WMAN+2+((WMAN+2)%2))/2) stages from in_valid to out_valid.
 /// Throughput is one sample per cycle.
 
 `default_nettype none
 
 module _zkf_div_core #(
-    parameter WEXP           = 6,      // exponent field width
-    parameter WMAN           = 18,     // significand precision including the hidden bit
-    parameter QFRAC_BASE     = WMAN + 4,
-    parameter QFRAC          = QFRAC_BASE + (QFRAC_BASE % 2),
+    parameter WEXP          = 6,      // exponent field width
+    parameter WMAN          = 18,     // significand precision including the hidden bit
+    parameter QFRAC_BASE    = WMAN + 2,
+    parameter QFRAC         = QFRAC_BASE + (QFRAC_BASE % 2),
     parameter WEXP_UNBIASED = WEXP + 2
 ) (
     input wire clk,
@@ -44,12 +44,14 @@ module _zkf_div_core #(
         end
     endgenerate
 
-    localparam WFRAC   = WMAN - 1;
-    localparam WFULL   = WEXP + WMAN;
-    localparam QSTAGES = QFRAC / 2;
-    localparam QRAW    = QFRAC + 1;
-    localparam WREM4   = WMAN + 2;
-    localparam QTRI    = (QSTAGES + 1) * (QSTAGES + 1);
+    localparam WFRAC         = WMAN - 1;
+    localparam WFULL         = WEXP + WMAN;
+    localparam QSTAGES       = QFRAC / 2;
+    localparam QRAW          = QFRAC + 1;
+    localparam WREM4         = WMAN + 2;
+    localparam QTRI          = (QSTAGES + 1) * (QSTAGES + 1);
+    localparam TAIL_HI_WIDTH = QFRAC - WMAN - 1;
+    localparam TAIL_LO_WIDTH = QFRAC - WMAN - 2;
 
     // QRAW contains one integer quotient bit followed by QFRAC fractional bits.
     localparam          [WEXP-1:0] EXP_INF         = {WEXP{1'b1}};
@@ -174,11 +176,25 @@ module _zkf_div_core #(
     wire                            final_guard_lo       = final_raw[QFRAC-WMAN-1];
     wire                            final_round_hi       = final_raw[QFRAC-WMAN-1];
     wire                            final_round_lo       = final_raw[QFRAC-WMAN-2];
-    wire                            final_tail_hi        = |final_raw[QFRAC-WMAN-2:0];
-    wire                            final_tail_lo        = |final_raw[QFRAC-WMAN-3:0];
+    wire                            final_tail_hi;
+    wire                            final_tail_lo;
     wire                            final_sticky_hi      = final_tail_hi || final_rem_sticky;
     wire                            final_sticky_lo      = final_tail_lo || final_rem_sticky;
     wire signed [WEXP_UNBIASED-1:0] final_exp_adjust     = final_high ? ZERO_EXT : ONE_EXT;
+
+    generate
+        if (TAIL_HI_WIDTH > 0) begin : g_final_tail_hi
+            assign final_tail_hi = |final_raw[TAIL_HI_WIDTH-1:0];
+        end else begin : g_no_final_tail_hi
+            assign final_tail_hi = 1'b0;
+        end
+
+        if (TAIL_LO_WIDTH > 0) begin : g_final_tail_lo
+            assign final_tail_lo = |final_raw[TAIL_LO_WIDTH-1:0];
+        end else begin : g_no_final_tail_lo
+            assign final_tail_lo = 1'b0;
+        end
+    endgenerate
 
     // Final output stage closes the quotient-prefix/sticky/exponent combinational paths at the module boundary.
     always @(posedge clk) begin

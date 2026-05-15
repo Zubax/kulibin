@@ -1,18 +1,140 @@
-// iverilog -Wall -Wno-timescale -y../hdl zkf_div_random_tb.v && vvp a.out
+// iverilog -Wall -Wno-timescale -y../hdl zkf_div_extensive_tb.v && vvp a.out
 
 `timescale 1ns/1ps
 `default_nettype none
 
 `define REQUIRE(cond) if (!(cond)) $fatal
 
-module zkf_div_random_tb;
-    localparam WEXP = 8;
-    localparam WMAN = 24;
+module zkf_div_extensive_tb;
+    reg clk = 1'b0;
+    always #5 clk = !clk;
+
+    reg rst = 1'b1;
+
+    wire done_w3_m5;
+    wire done_w4_m6;
+    wire done_w5_m11;
+    wire done_w6_m18;
+    wire done_w7_m17;
+    wire done_w8_m24;
+    wire done_w11_m53;
+
+    zkf_div_extensive_case #(
+        .WEXP(3),
+        .WMAN(5),
+        .VECTOR_COUNT(4096),
+        .MEM_FILE("div_ext_w3_m5.memh")
+    ) u_w3_m5 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w3_m5)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(4),
+        .WMAN(6),
+        .VECTOR_COUNT(4096),
+        .MEM_FILE("div_ext_w4_m6.memh")
+    ) u_w4_m6 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w4_m6)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(5),
+        .WMAN(11),
+        .VECTOR_COUNT(8192),
+        .MEM_FILE("div_ext_w5_m11.memh")
+    ) u_w5_m11 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w5_m11)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(6),
+        .WMAN(18),
+        .VECTOR_COUNT(8192),
+        .MEM_FILE("div_ext_w6_m18.memh")
+    ) u_w6_m18 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w6_m18)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(7),
+        .WMAN(17),
+        .VECTOR_COUNT(8192),
+        .MEM_FILE("div_ext_w7_m17.memh")
+    ) u_w7_m17 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w7_m17)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(8),
+        .WMAN(24),
+        .VECTOR_COUNT(20000),
+        .MEM_FILE("div_ext_w8_m24.memh")
+    ) u_w8_m24 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w8_m24)
+    );
+
+    zkf_div_extensive_case #(
+        .WEXP(11),
+        .WMAN(53),
+        .VECTOR_COUNT(20000),
+        .MEM_FILE("div_ext_w11_m53.memh")
+    ) u_w11_m53 (
+        .clk(clk),
+        .rst(rst),
+        .done(done_w11_m53)
+    );
+
+    initial begin
+        repeat (8) begin
+            @(posedge clk);
+        end
+        #1;
+        rst = 1'b0;
+
+        wait (
+            done_w3_m5 &&
+            done_w4_m6 &&
+            done_w5_m11 &&
+            done_w6_m18 &&
+            done_w7_m17 &&
+            done_w8_m24 &&
+            done_w11_m53
+        );
+
+        @(posedge clk);
+        $display("checked extensive divider vector sets");
+        $finish;
+    end
+endmodule
+
+
+module zkf_div_extensive_case #(
+    parameter WEXP = 6,
+    parameter WMAN = 18,
+    parameter VECTOR_COUNT = 8192,
+    parameter MEM_FILE = "div_ext_w6_m18.memh"
+) (
+    input wire clk,
+    input wire rst,
+
+    output reg done
+);
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 2;
     localparam QFRAC = QFRAC_BASE + (QFRAC_BASE % 2);
     localparam LATENCY = (QFRAC / 2) + 4;
-    localparam VECTOR_COUNT = 20000;
     localparam VECTOR_WIDTH = (3 * WFULL) + 1;
 
     localparam DIV0_LSB = 0;
@@ -20,10 +142,6 @@ module zkf_div_random_tb;
     localparam B_LSB = Q_LSB + WFULL;
     localparam A_LSB = B_LSB + WFULL;
 
-    reg clk = 1'b0;
-    always #5 clk = !clk;
-
-    reg rst = 1'b1;
     reg in_valid = 1'b0;
     reg [WFULL-1:0] a = 0;
     reg [WFULL-1:0] b = 0;
@@ -103,16 +221,13 @@ module zkf_div_random_tb;
     endtask
 
     initial begin
-        $readmemh("div_random_vectors.memh", vectors);
+        done = 1'b0;
+        $readmemh(MEM_FILE, vectors);
         clear_model();
 
-        repeat (LATENCY + 2) begin
-            @(posedge clk);
-            #1;
-            `REQUIRE(out_valid === 1'b0);
-        end
-
-        rst = 1'b0;
+        wait (rst === 1'b0);
+        @(posedge clk);
+        #1;
         clear_model();
 
         for (vector_i = 0; vector_i < VECTOR_COUNT; vector_i = vector_i + 1) begin
@@ -128,8 +243,8 @@ module zkf_div_random_tb;
         end
 
         `REQUIRE(outputs_checked == VECTOR_COUNT);
-        $display("checked %0d deterministic large-format divider vectors", outputs_checked);
-        $finish;
+        $display("%m checked %0d divider vectors from %s", outputs_checked, MEM_FILE);
+        done = 1'b1;
     end
 endmodule
 
