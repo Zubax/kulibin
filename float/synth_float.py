@@ -38,6 +38,8 @@ IMPORTANT_UTILIZATION_RESOURCES = (
     "DCCA",
 )
 
+SYNTH_REG_ATTR = '(* keep = "true", syn_preserve = "true" *)'
+
 
 @dataclass(frozen=True)
 class ModuleSpec:
@@ -255,6 +257,38 @@ module {spec.top} (
     output wire                     out_valid,
     output wire [{wfull - 1}:0]     y
 );
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                            r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg                            r_sign;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_zero;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_inf;
+    {SYNTH_REG_ATTR}
+    reg signed [{wexp_unbiased - 1}:0] r_exp_unbiased;
+    {SYNTH_REG_ATTR}
+    reg                 [{spec.wman - 1}:0] r_significand;
+    {SYNTH_REG_ATTR}
+    reg                            r_guard;
+    {SYNTH_REG_ATTR}
+    reg                            r_round;
+    {SYNTH_REG_ATTR}
+    reg                            r_sticky;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
     _zkf_pack #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
@@ -262,18 +296,38 @@ module {spec.top} (
     ) dut (
         .clk(clk),
         .rst(rst),
-        .in_valid(in_valid),
-        .sign(sign),
-        .force_zero(force_zero),
-        .force_inf(force_inf),
-        .exp_unbiased(exp_unbiased),
-        .significand(significand),
-        .guard(guard),
-        .round(round),
-        .sticky(sticky),
-        .out_valid(out_valid),
-        .y(y)
+        .in_valid(r_in_valid),
+        .sign(r_sign),
+        .force_zero(r_force_zero),
+        .force_inf(r_force_inf),
+        .exp_unbiased(r_exp_unbiased),
+        .significand(r_significand),
+        .guard(r_guard),
+        .round(r_round),
+        .sticky(r_sticky),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_sign          <= sign;
+        r_force_zero    <= force_zero;
+        r_force_inf     <= force_inf;
+        r_exp_unbiased  <= exp_unbiased;
+        r_significand   <= significand;
+        r_guard         <= guard;
+        r_round         <= round;
+        r_sticky        <= sticky;
+        r_y             <= dut_y;
+    end
 endmodule
 
 `default_nettype wire
@@ -295,18 +349,52 @@ module {spec.top} (
     output wire                 out_valid,
     output wire [{wfull - 1}:0] y
 );
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
     zkf_mul #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman})
     ) dut (
         .clk(clk),
         .rst(rst),
-        .in_valid(in_valid),
-        .a(a),
-        .b(b),
-        .out_valid(out_valid),
-        .y(y)
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_b <= b;
+        r_y <= dut_y;
+    end
 endmodule
 
 `default_nettype wire
@@ -328,18 +416,52 @@ module {spec.top} (
     output wire                 out_valid,
     output wire [{wfull - 1}:0] y
 );
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
     zkf_add #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman})
     ) dut (
         .clk(clk),
         .rst(rst),
-        .in_valid(in_valid),
-        .a(a),
-        .b(b),
-        .out_valid(out_valid),
-        .y(y)
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_b <= b;
+        r_y <= dut_y;
+    end
 endmodule
 
 `default_nettype wire
@@ -371,9 +493,61 @@ module {spec.top} (
     output wire                     div0,
     output wire [{spec.wman - 1}:0] partial_rem
 );
-    reg                 s1_valid;
-    reg [{wfull - 1}:0] s1_a;
-    reg [{wfull - 1}:0] s1_b;
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire                            dut_out_valid;
+    wire                            dut_sign;
+    wire                            dut_force_zero;
+    wire                            dut_force_inf;
+    wire signed [{wexp_unbiased - 1}:0] dut_exp_unbiased;
+    wire                 [{spec.wman - 1}:0] dut_significand;
+    wire                            dut_guard;
+    wire                            dut_round;
+    wire                            dut_sticky;
+    wire                            dut_div0;
+    wire                 [{spec.wman - 1}:0] dut_partial_rem;
+
+    {SYNTH_REG_ATTR}
+    reg                            r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg                            r_sign;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_zero;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_inf;
+    {SYNTH_REG_ATTR}
+    reg signed [{wexp_unbiased - 1}:0] r_exp_unbiased;
+    {SYNTH_REG_ATTR}
+    reg                 [{spec.wman - 1}:0] r_significand;
+    {SYNTH_REG_ATTR}
+    reg                            r_guard;
+    {SYNTH_REG_ATTR}
+    reg                            r_round;
+    {SYNTH_REG_ATTR}
+    reg                            r_sticky;
+    {SYNTH_REG_ATTR}
+    reg                            r_div0;
+    {SYNTH_REG_ATTR}
+    reg                 [{spec.wman - 1}:0] r_partial_rem;
+
+    assign out_valid    = r_out_valid;
+    assign sign         = r_sign;
+    assign force_zero   = r_force_zero;
+    assign force_inf    = r_force_inf;
+    assign exp_unbiased = r_exp_unbiased;
+    assign significand  = r_significand;
+    assign guard        = r_guard;
+    assign round        = r_round;
+    assign sticky       = r_sticky;
+    assign div0         = r_div0;
+    assign partial_rem  = r_partial_rem;
 
     _zkf_div_core #(
         .WEXP({spec.wexp}),
@@ -381,31 +555,43 @@ module {spec.top} (
     ) dut (
         .clk(clk),
         .rst(rst),
-        .in_valid(s1_valid),
-        .a(s1_a),
-        .b(s1_b),
-        .out_valid(out_valid),
-        .sign(sign),
-        .force_zero(force_zero),
-        .force_inf(force_inf),
-        .exp_unbiased(exp_unbiased),
-        .significand(significand),
-        .guard(guard),
-        .round(round),
-        .sticky(sticky),
-        .div0(div0),
-        .partial_rem(partial_rem)
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .sign(dut_sign),
+        .force_zero(dut_force_zero),
+        .force_inf(dut_force_inf),
+        .exp_unbiased(dut_exp_unbiased),
+        .significand(dut_significand),
+        .guard(dut_guard),
+        .round(dut_round),
+        .sticky(dut_sticky),
+        .div0(dut_div0),
+        .partial_rem(dut_partial_rem)
     );
 
     always @(posedge clk) begin
         if (rst) begin
-            s1_valid <= 1'b0;
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
         end else begin
-            s1_valid <= in_valid;
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
         end
 
-        s1_a <= a;
-        s1_b <= b;
+        r_a             <= a;
+        r_b             <= b;
+        r_sign          <= dut_sign;
+        r_force_zero    <= dut_force_zero;
+        r_force_inf     <= dut_force_inf;
+        r_exp_unbiased  <= dut_exp_unbiased;
+        r_significand   <= dut_significand;
+        r_guard         <= dut_guard;
+        r_round         <= dut_round;
+        r_sticky        <= dut_sticky;
+        r_div0          <= dut_div0;
+        r_partial_rem   <= dut_partial_rem;
     end
 endmodule
 
@@ -429,19 +615,58 @@ module {spec.top} (
     output wire [{wfull - 1}:0] q,
     output wire                 div0
 );
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_q;
+    wire                 dut_div0;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_q;
+    {SYNTH_REG_ATTR}
+    reg                 r_div0;
+
+    assign out_valid = r_out_valid;
+    assign q         = r_q;
+    assign div0      = r_div0;
+
     zkf_div #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman})
     ) dut (
         .clk(clk),
         .rst(rst),
-        .in_valid(in_valid),
-        .a(a),
-        .b(b),
-        .out_valid(out_valid),
-        .q(q),
-        .div0(div0)
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .q(dut_q),
+        .div0(dut_div0)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a    <= a;
+        r_b    <= b;
+        r_q    <= dut_q;
+        r_div0 <= dut_div0;
+    end
 endmodule
 
 `default_nettype wire
@@ -576,11 +801,11 @@ def parse_yosys_fmax(nextpnr_log: str, report: dict[str, object]) -> str:
             if isinstance(clock, dict) and isinstance(clock.get("achieved"), (int, float)):
                 achieved.append(float(clock["achieved"]))
         if achieved:
-            return f"{max(achieved):.2f} MHz"
+            return f"{min(achieved):.2f} MHz"
 
     matches = re.findall(r"Max frequency[^:]*:\s*([0-9.]+)\s*MHz", nextpnr_log)
     if matches:
-        return f"{max(float(item) for item in matches):.2f} MHz"
+        return f"{min(float(item) for item in matches):.2f} MHz"
     return "not reported"
 
 
@@ -886,8 +1111,11 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + "nextpnr-ecp5 for LFE5U-85F CABGA381 speed grade "
         + f"{DEVICE_SPEED_GRADE} at {format_mhz(YOSYS_TARGET_FREQ_MHZ)}.</p>"
         + """
-<p>Helper-module rows are standalone out-of-context builds with unconstrained wrapper inputs. Parent-module rows are
-flattened and context-optimized, so helper and parent resource counts are not additive.</p>
+<p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
+every DUT output is captured by a wrapper register. This makes the reported Fmax a register-to-register limit instead
+of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
+<p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
+helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
 <th>Module</th><th>Parameters</th><th>Latency</th><th>Target</th><th>Fmax</th><th>Status</th>
@@ -1334,8 +1562,11 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + "MAP register retiming is enabled, PAR placement effort is 5, and routing passes are "
         + f"{DIAMOND_ROUTE_PASSES}.</p>"
         + """
-<p>Helper-module rows are standalone out-of-context builds with unconstrained wrapper inputs. Parent-module rows are
-flattened and context-optimized, so helper and parent resource counts are not additive.</p>
+<p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
+every DUT output is captured by a wrapper register. This makes the reported Fmax a register-to-register limit instead
+of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
+<p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
+helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
 <th>Module</th><th>Parameters</th><th>Latency</th><th>Target</th><th>Fmax</th><th>Slack</th><th>Status</th>
