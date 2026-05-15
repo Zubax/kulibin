@@ -38,39 +38,35 @@ module zkf_add #(
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
     wire             a_sign = a[WFULL-1];
     wire             b_sign = b[WFULL-1];
+    wire             same_sign = ~(a_sign ^ b_sign);
     wire  [WEXP-1:0] a_exp  = a[WFULL-2:WFRAC];
     wire  [WEXP-1:0] b_exp  = b[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
 
-    wire            a_zero        = ~|a_exp;
-    wire            b_zero        = ~|b_exp;
     wire            a_inf         = &a_exp;
     wire            b_inf         = &b_exp;
-    wire            a_finite      = !a_zero && !a_inf;
-    wire            b_finite      = !b_zero && !b_inf;
+    wire            a_finite      = (|a_exp) && !a_inf;
+    wire            b_finite      = (|b_exp) && !b_inf;
     wire            any_inf       = a_inf || b_inf;
-    wire            opposite_inf  = a_inf && b_inf && (a_sign != b_sign);
-    wire [WMAN-1:0] a_significand = {1'b1, a_frac};
-    wire [WMAN-1:0] b_significand = {1'b1, b_frac};
+    wire            opposite_inf  = a_inf && b_inf && !same_sign;
+    wire [WMAN-1:0] a_significand = {1'b1, a[WFRAC-1:0]};
+    wire [WMAN-1:0] b_significand = {1'b1, b[WFRAC-1:0]};
 
     // Finite magnitude order is determined before alignment from decoded exponent/significand keys. Zeros use a
     // zero significand; infinities are consumed by the special-case controls and omitted from the finite datapath.
-    wire  [WEXP-1:0] a_key_exp      = a_finite ? a_exp : {WEXP{1'b0}};
-    wire  [WEXP-1:0] b_key_exp      = b_finite ? b_exp : {WEXP{1'b0}};
-    wire  [WMAN-1:0] a_key_sig      = a_finite ? a_significand : {WMAN{1'b0}};
-    wire  [WMAN-1:0] b_key_sig      = b_finite ? b_significand : {WMAN{1'b0}};
+    wire  [WEXP-1:0] a_key_exp      = a_exp & {WEXP{a_finite}};
+    wire  [WEXP-1:0] b_key_exp      = b_exp & {WEXP{b_finite}};
+    wire  [WMAN-1:0] a_key_sig      = a_significand & {WMAN{a_finite}};
+    wire  [WMAN-1:0] b_key_sig      = b_significand & {WMAN{b_finite}};
     wire [WFULL-1:0] a_mag_key      = {a_key_exp, a_key_sig};
     wire [WFULL-1:0] b_mag_key      = {b_key_exp, b_key_sig};
     wire             a_mag_ge_b_mag = a_mag_key >= b_mag_key;
 
-    wire            a_exp_ge_b = a_key_exp >= b_key_exp;
-    wire [WEXP-1:0] max_exp    = a_exp_ge_b ? a_key_exp : b_key_exp;
+    wire [WEXP-1:0] max_exp    = (a_key_exp >= b_key_exp) ? a_key_exp : b_key_exp;
     wire [WEXP-1:0] a_exp_diff = max_exp - a_key_exp;
     wire [WEXP-1:0] b_exp_diff = max_exp - b_key_exp;
 
-    wire [WEXT-1:0] a_ext_base = a_finite ? {a_significand, {WGRS{1'b0}}} : {WEXT{1'b0}};
-    wire [WEXT-1:0] b_ext_base = b_finite ? {b_significand, {WGRS{1'b0}}} : {WEXT{1'b0}};
+    wire [WEXT-1:0] a_ext_base = {a_key_sig, {WGRS{1'b0}}};
+    wire [WEXT-1:0] b_ext_base = {b_key_sig, {WGRS{1'b0}}};
     wire [WEXT-1:0] a_aligned;
     wire [WEXT-1:0] b_aligned;
 
@@ -95,19 +91,11 @@ module zkf_add #(
     // Same-sign addition never left-normalizes, so a jammed LSB remains sticky. For subtraction, close
     // cancellation only occurs with small exact alignment shifts; far cancellation cannot require a full-width
     // discarded tail, and the compact GRS representation supplies the packer with sufficient rounding state.
-    wire            add_carry          = raw_add[WRAW-1];
-    wire [WMAN-1:0] add_significand_hi = raw_add[WRAW-1 -: WMAN];
-    wire            add_guard_hi       = raw_add[WRAW-WMAN-1];
-    wire            add_round_hi       = raw_add[WRAW-WMAN-2];
-    wire            add_sticky_hi      = |raw_add[WRAW-WMAN-3:0];
-    wire [WMAN-1:0] add_significand_lo = raw_add[NORM_TOP -: WMAN];
-    wire            add_guard_lo       = raw_add[NORM_TOP-WMAN];
-    wire            add_round_lo       = raw_add[NORM_TOP-WMAN-1];
-    wire            add_sticky_lo      = |raw_add[NORM_TOP-WMAN-2:0];
-    wire [WMAN-1:0] add_significand    = add_carry ? add_significand_hi : add_significand_lo;
-    wire            add_guard          = add_carry ? add_guard_hi       : add_guard_lo;
-    wire            add_round          = add_carry ? add_round_hi       : add_round_lo;
-    wire            add_sticky         = add_carry ? add_sticky_hi      : add_sticky_lo;
+    wire            add_carry       = raw_add[WRAW-1];
+    wire [WMAN-1:0] add_significand = add_carry ?   raw_add[WRAW-1 -: WMAN] :   raw_add[NORM_TOP -: WMAN];
+    wire            add_guard       = add_carry ?   raw_add[WRAW-WMAN-1]    :   raw_add[NORM_TOP-WMAN];
+    wire            add_round       = add_carry ?   raw_add[WRAW-WMAN-2]    :   raw_add[NORM_TOP-WMAN-1];
+    wire            add_sticky      = add_carry ? (|raw_add[WRAW-WMAN-3:0]) : (|raw_add[NORM_TOP-WMAN-2:0]);
 
     wire              sub_zero;
     wire [WINDEX-1:0] sub_index;
@@ -120,25 +108,17 @@ module zkf_add #(
 
     _zkf_ilog2_floor #(.W(WRAW), .WINDEX(WINDEX)) u_sub_norm (.x(raw_sub), .zero(sub_zero), .y(sub_index));
 
-    wire same_sign   = a_sign == b_sign;
     wire finite_zero = same_sign ? (~|raw_add) : sub_zero;
     wire finite_sign = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
 
-    wire result_inf_sign = a_inf ? a_sign : b_sign;
-    wire result_inf      = any_inf && !opposite_inf;
-    wire result_zero     = opposite_inf || (!any_inf && finite_zero);
-    wire result_sign     = result_inf ? result_inf_sign : finite_sign;
+    wire result_inf  = any_inf && !opposite_inf;
+    wire result_zero = opposite_inf || (!any_inf && finite_zero);
+    wire result_sign = result_inf ? (a_inf ? a_sign : b_sign) : finite_sign;
 
-    wire signed [WEXP_UNBIASED-1:0] max_exp_ext      = {{(WEXP_UNBIASED-WEXP){1'b0}}, max_exp};
-    wire signed [WEXP_UNBIASED-1:0] bias_ext         = {{(WEXP_UNBIASED-WEXP+1){1'b0}}, {WEXP-1{1'b1}}};
-    wire signed [WEXP_UNBIASED-1:0] com_exp_unbiased = max_exp_ext - bias_ext;
+    wire signed [WEXP_UNBIASED-1:0] com_exp_unbiased = {{(WEXP_UNBIASED-WEXP){1'b0}}, max_exp} -
+                                                       {{(WEXP_UNBIASED-WEXP+1){1'b0}}, {WEXP-1{1'b1}}};
     wire signed [WEXP_UNBIASED-1:0] add_exp_unbiased = com_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, add_carry};
     wire signed [WEXP_UNBIASED-1:0] sub_exp_unbiased = com_exp_unbiased - {{(WEXP_UNBIASED-WINDEX){1'b0}}, sub_shift};
-    wire signed [WEXP_UNBIASED-1:0] finite_exp_unbiased = same_sign ? add_exp_unbiased : sub_exp_unbiased;
-    wire                 [WMAN-1:0] finite_significand  = same_sign ? add_significand  : sub_significand;
-    wire                            finite_guard        = same_sign ? add_guard        : sub_guard;
-    wire                            finite_round        = same_sign ? add_round        : sub_round;
-    wire                            finite_sticky       = same_sign ? add_sticky       : sub_sticky;
 
     // Stage 1: registered normalized value for _zkf_pack.
     reg                            s1_valid;
@@ -175,14 +155,14 @@ module zkf_add #(
             s1_valid <= in_valid;
         end
 
-        s1_sign          <= result_sign;
-        s1_force_zero    <= result_zero;
-        s1_force_inf     <= result_inf;
-        s1_exp_unbiased  <= finite_exp_unbiased;
-        s1_significand   <= finite_significand;
-        s1_guard         <= finite_guard;
-        s1_round         <= finite_round;
-        s1_sticky        <= finite_sticky;
+        s1_sign         <= result_sign;
+        s1_force_zero   <= result_zero;
+        s1_force_inf    <= result_inf;
+        s1_exp_unbiased <= same_sign ? add_exp_unbiased : sub_exp_unbiased;
+        s1_significand  <= same_sign ? add_significand  : sub_significand;
+        s1_guard        <= same_sign ? add_guard        : sub_guard;
+        s1_round        <= same_sign ? add_round        : sub_round;
+        s1_sticky       <= same_sign ? add_sticky       : sub_sticky;
     end
 endmodule
 
@@ -203,7 +183,7 @@ module _zkf_add_align_sticky #(parameter W = 16, parameter WSHIFT = $clog2(W) + 
     wire      [W-1:0] lost_window    = x << lost_shift;
     wire              lost           = (|shamt) && (shift_ge_width ? (|x) : (|lost_window));
 
-    assign y = shifted | {{(W-1){1'b0}}, lost};
+    assign y = {shifted[W-1:1], shifted[0] | lost};
 endmodule
 
 `default_nettype wire
