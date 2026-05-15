@@ -3,12 +3,8 @@
 /// The quotient bits are produced by an unrolled radix-4 restoring divider.
 /// The final partial remainder is exposed as well since it is a byproduct that is occasionally useful.
 ///
-/// This module does not have an input latch, since it is internal -- inputs feed combinational circuit directly.
-/// Public modules should take that into account if connecting their inputs directly to the inputs of this module.
-/// The outputs are registered by the final stage, so no internal combinational paths spill through the ports.
-///
 /// Pipeline depth: 1+((WMAN+2+((WMAN+2)%2))/2) stages from in_valid to out_valid.
-/// Throughput is one sample per cycle.
+/// The inputs are not latched but the outputs are. Throughput is one sample per cycle.
 
 `default_nettype none
 

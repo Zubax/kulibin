@@ -1,7 +1,7 @@
 /// Streamed Zubax Kulibin float divider.
 /// The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
-///
-/// Pipeline depth: 4+((WMAN+2+((WMAN+2)%2))/2) stages from in_valid to out_valid.
+/// The outputs are latched and are only valid when out_valid is asserted.
+/// Pipeline depth: 3+((WMAN+2+((WMAN+2)%2))/2) stages from in_valid to out_valid.
 
 `default_nettype none
 
@@ -20,13 +20,7 @@ module zkf_div #(
     output wire [WEXP+WMAN-1:0] q,
     output wire                 div0
 );
-    localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
-
-    // A single stage is needed to latch the inputs to shield the combinational paths in the div core.
-    reg             s1_valid;
-    reg [WFULL-1:0] s1_a;
-    reg [WFULL-1:0] s1_b;
 
     wire                            core_valid;
     wire                            core_sign;
@@ -42,9 +36,9 @@ module zkf_div #(
     _zkf_div_core #(.WEXP(WEXP), .WMAN(WMAN)) u_core (
         .clk(clk),
         .rst(rst),
-        .in_valid(s1_valid),
-        .a(s1_a),
-        .b(s1_b),
+        .in_valid(in_valid),
+        .a(a),
+        .b(b),
         .out_valid(core_valid),
         .sign(core_sign),
         .force_zero(core_force_zero),
@@ -77,17 +71,6 @@ module zkf_div #(
 
     // The delay line needs no reset since it doesn't carry control signals. See reset policy.
     _zkf_pack_delay#(.W(1)) u_pack_delay(.clk(clk), .rst(1'b0), .x(core_div0), .y(div0));
-
-    // Reset only stream validity. Payload registers intentionally free-run.
-    always @(posedge clk) begin
-        if (rst) begin
-            s1_valid <= 1'b0;
-        end else begin
-            s1_valid <= in_valid;
-        end
-        s1_a <= a;
-        s1_b <= b;
-    end
 endmodule
 
 `default_nettype wire

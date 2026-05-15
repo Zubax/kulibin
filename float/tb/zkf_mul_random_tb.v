@@ -9,7 +9,7 @@ module zkf_mul_random_tb;
     localparam WEXP = 8;
     localparam WMAN = 24;
     localparam WFULL = WEXP + WMAN;
-    localparam LATENCY = 3;
+    localparam LATENCY = 2;
     localparam VECTOR_COUNT = 20000;
     localparam VECTOR_WIDTH = 3 * WFULL;
 

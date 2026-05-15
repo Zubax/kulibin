@@ -10,7 +10,7 @@ module zkf_mul_min_tb;
     localparam WMAN = 4;
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
-    localparam LATENCY = 3;
+    localparam LATENCY = 2;
     localparam Q = 8;
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;

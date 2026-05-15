@@ -134,7 +134,7 @@ module zkf_div_extensive_case #(
     localparam WFULL = WEXP + WMAN;
     localparam QFRAC_BASE = WMAN + 2;
     localparam QFRAC = QFRAC_BASE + (QFRAC_BASE % 2);
-    localparam LATENCY = (QFRAC / 2) + 4;
+    localparam LATENCY = (QFRAC / 2) + 3;
     localparam VECTOR_WIDTH = (3 * WFULL) + 1;
 
     localparam DIV0_LSB = 0;

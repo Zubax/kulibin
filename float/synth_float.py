@@ -190,11 +190,11 @@ def latency_cycles(spec: ModuleSpec) -> int:
     if spec.kind == "pack":
         return 1
     if spec.kind == "mul":
-        return 3
+        return 2
     if spec.kind == "div_core":
         return div_core_latency
     if spec.kind == "div":
-        return div_core_latency + 3
+        return div_core_latency + 2
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
