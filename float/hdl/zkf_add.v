@@ -36,18 +36,16 @@ module zkf_add #(
     localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
 
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
-    wire             a_sign = a[WFULL-1];
-    wire             b_sign = b[WFULL-1];
+    wire             a_sign    = a[WFULL-1];
+    wire             b_sign    = b[WFULL-1];
     wire             same_sign = ~(a_sign ^ b_sign);
-    wire  [WEXP-1:0] a_exp  = a[WFULL-2:WFRAC];
-    wire  [WEXP-1:0] b_exp  = b[WFULL-2:WFRAC];
+    wire  [WEXP-1:0] a_exp     = a[WFULL-2:WFRAC];
+    wire  [WEXP-1:0] b_exp     = b[WFULL-2:WFRAC];
 
     wire            a_inf         = &a_exp;
     wire            b_inf         = &b_exp;
     wire            a_finite      = (|a_exp) && !a_inf;
     wire            b_finite      = (|b_exp) && !b_inf;
-    wire            any_inf       = a_inf || b_inf;
-    wire            opposite_inf  = a_inf && b_inf && !same_sign;
     wire [WMAN-1:0] a_significand = {1'b1, a[WFRAC-1:0]};
     wire [WMAN-1:0] b_significand = {1'b1, b[WFRAC-1:0]};
 
@@ -57,9 +55,7 @@ module zkf_add #(
     wire  [WEXP-1:0] b_key_exp      = b_exp & {WEXP{b_finite}};
     wire  [WMAN-1:0] a_key_sig      = a_significand & {WMAN{a_finite}};
     wire  [WMAN-1:0] b_key_sig      = b_significand & {WMAN{b_finite}};
-    wire [WFULL-1:0] a_mag_key      = {a_key_exp, a_key_sig};
-    wire [WFULL-1:0] b_mag_key      = {b_key_exp, b_key_sig};
-    wire             a_mag_ge_b_mag = a_mag_key >= b_mag_key;
+    wire             a_mag_ge_b_mag = {a_key_exp, a_key_sig} >= {b_key_exp, b_key_sig};
 
     wire [WEXP-1:0] max_exp    = (a_key_exp >= b_key_exp) ? a_key_exp : b_key_exp;
     wire [WEXP-1:0] a_exp_diff = max_exp - a_key_exp;
@@ -111,10 +107,6 @@ module zkf_add #(
     wire finite_zero = same_sign ? (~|raw_add) : sub_zero;
     wire finite_sign = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
 
-    wire result_inf  = any_inf && !opposite_inf;
-    wire result_zero = opposite_inf || (!any_inf && finite_zero);
-    wire result_sign = result_inf ? (a_inf ? a_sign : b_sign) : finite_sign;
-
     wire signed [WEXP_UNBIASED-1:0] com_exp_unbiased = {{(WEXP_UNBIASED-WEXP){1'b0}}, max_exp} -
                                                        {{(WEXP_UNBIASED-WEXP+1){1'b0}}, {WEXP-1{1'b1}}};
     wire signed [WEXP_UNBIASED-1:0] add_exp_unbiased = com_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, add_carry};
@@ -155,9 +147,11 @@ module zkf_add #(
             s1_valid <= in_valid;
         end
 
-        s1_sign         <= result_sign;
-        s1_force_zero   <= result_zero;
-        s1_force_inf    <= result_inf;
+        // Any infinity input is an infinity case, but opposite-sign infinity sum is forced to canonical +0 by
+        // the packer because force_zero wins over force_inf.
+        s1_sign         <= (a_inf || b_inf) ? (a_inf ? a_sign : b_sign) : finite_sign;
+        s1_force_zero   <= (a_inf && b_inf && !same_sign) || (!(a_inf || b_inf) && finite_zero);
+        s1_force_inf    <= a_inf || b_inf;
         s1_exp_unbiased <= same_sign ? add_exp_unbiased : sub_exp_unbiased;
         s1_significand  <= same_sign ? add_significand  : sub_significand;
         s1_guard        <= same_sign ? add_guard        : sub_guard;

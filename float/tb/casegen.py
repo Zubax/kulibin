@@ -225,6 +225,7 @@ def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
         ("pos_inf_plus_pos_inf", v["pos_inf"], v["noncanonical_pos_inf"]),
         ("neg_inf_plus_neg_inf", v["neg_inf"], v["noncanonical_neg_inf"]),
         ("pos_inf_plus_neg_inf", v["pos_inf"], v["neg_inf"]),
+        ("neg_inf_plus_pos_inf", v["noncanonical_neg_inf"], v["pos_inf"]),
     ]
     near_exp = fmt.bias
     cases.extend(
@@ -234,6 +235,7 @@ def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             ("underflow_after_cancellation", normal(fmt, 0, 1, 1), normal(fmt, 1, 1, 0)),
             ("noncanonical_zero_plus_noncanonical_inf", v["neg_zero"], v["noncanonical_pos_inf"]),
             ("noncanonical_opposite_infinities_zero", v["noncanonical_pos_inf"], v["noncanonical_neg_inf"]),
+            ("noncanonical_opposite_infinities_zero_reversed", v["noncanonical_neg_inf"], v["noncanonical_pos_inf"]),
         ]
     )
 
