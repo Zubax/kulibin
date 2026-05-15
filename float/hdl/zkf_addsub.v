@@ -29,7 +29,7 @@ module zkf_addsub #(
     localparam WFULL          = WEXP + WMAN;
     localparam WTAIL          = WMAN + 3;
     localparam WMAG           = WMAN + WTAIL + 1;
-    localparam WINDEX         = (WMAG <= 2) ? 1 : $clog2(WMAG);
+    localparam WINDEX         = $clog2(WMAG);
     localparam WSHIFT         = (WEXP > (WINDEX + 1)) ? WEXP : (WINDEX + 1);
     localparam WEXP_UNBIASED  = WEXP + WINDEX + 2;
     localparam SCALE_OFFSET   = WFRAC + WTAIL;
