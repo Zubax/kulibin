@@ -543,6 +543,63 @@ target overflow maps to signed infinity
 
 ---
 
+## 12. Sqrt/log2/exp2
+
+These may be FSM-based instead of streaming, which would necessitate in_ready/out_ready; this remains to be seen.
+
+```verilog
+/// sqrt(+0)       = +0
+/// sqrt(finite>0) = correctly rounded sqrt(x)
+/// sqrt(+inf)     = +inf
+/// sqrt(x<0)      = -inf, domain_error=1
+module zkf_sqrt #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire                 in_valid,
+    input wire [WEXP+WMAN-1:0] x,
+
+    output wire                 out_valid,
+    output wire [WEXP+WMAN-1:0] y,
+    output wire                 domain_error
+);
+
+/// log2(finite>0) = log2(x)
+/// log2(+inf)     = +inf
+/// log2(+0)       = -inf, pole=1
+/// log2(x<0)      = -inf, domain_error=1
+module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire                 in_valid,
+    input wire [WEXP+WMAN-1:0] x,
+
+    output wire                 out_valid,
+    output wire [WEXP+WMAN-1:0] y,
+    output wire                 domain_error,
+    output wire                 pole
+);
+
+/// exp2(-inf)       = +0
+/// exp2(finite)     = 2^x
+/// exp2(+inf)       = +inf
+/// post-round underflow = +0
+/// overflow             = +inf
+module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire                 in_valid,
+    input wire [WEXP+WMAN-1:0] x,
+
+    output wire                 out_valid,
+    output wire [WEXP+WMAN-1:0] y
+);
+```
+
+---
+
 ## Combinational helpers
 
 These circuits are very simple and as such usually do not warrant a separate pipeline stage.
