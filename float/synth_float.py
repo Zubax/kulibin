@@ -84,10 +84,10 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_addsub",
-        label="zkf_addsub",
-        top="zkf_addsub_synth_top",
-        kind="addsub",
+        name="zkf_add",
+        label="zkf_add",
+        top="zkf_add_synth_top",
+        kind="add",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
@@ -175,11 +175,11 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "zkf_mul.v",
         ]
-    if spec.kind == "addsub":
+    if spec.kind == "add":
         return [
             REPO / "float" / "hdl" / "_zkf_ilog2_floor.v",
             REPO / "float" / "hdl" / "_zkf_pack.v",
-            REPO / "float" / "hdl" / "zkf_addsub.v",
+            REPO / "float" / "hdl" / "zkf_add.v",
         ]
     if spec.kind == "div_core":
         return [REPO / "float" / "hdl" / "_zkf_div_core.v"]
@@ -206,7 +206,7 @@ def latency_cycles(spec: ModuleSpec) -> int:
         return 1
     if spec.kind == "mul":
         return 2
-    if spec.kind == "addsub":
+    if spec.kind == "add":
         return 2
     if spec.kind == "div_core":
         return div_core_latency
@@ -314,7 +314,7 @@ endmodule
     )
 
 
-def write_addsub_wrapper(spec: ModuleSpec, path: Path) -> None:
+def write_add_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     path.write_text(
         f"""`default_nettype none
@@ -325,11 +325,10 @@ module {spec.top} (
     input  wire                 in_valid,
     input  wire [{wfull - 1}:0] a,
     input  wire [{wfull - 1}:0] b,
-    input  wire                 op_sub,
     output wire                 out_valid,
     output wire [{wfull - 1}:0] y
 );
-    zkf_addsub #(
+    zkf_add #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman})
     ) dut (
@@ -338,7 +337,6 @@ module {spec.top} (
         .in_valid(in_valid),
         .a(a),
         .b(b),
-        .op_sub(op_sub),
         .out_valid(out_valid),
         .y(y)
     );
@@ -456,8 +454,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_pack_wrapper(spec, path)
     elif spec.kind == "mul":
         write_mul_wrapper(spec, path)
-    elif spec.kind == "addsub":
-        write_addsub_wrapper(spec, path)
+    elif spec.kind == "add":
+        write_add_wrapper(spec, path)
     elif spec.kind == "div_core":
         write_div_core_wrapper(spec, path)
     elif spec.kind == "div":

@@ -232,6 +232,25 @@ Internal helper modules are underscore-prefixed like `_zkf_`.
 
 ## 5. Add/Subtract
 
+The core function is `zkf_add`:
+
+```verilog
+zkf_add #(parameter int WEXP = 6, parameter int WMAN = 18)(
+    input wire clk,
+    input wire rst,
+
+    input wire             in_valid,
+    input wire [WFULL-1:0] a,
+    input wire [WFULL-1:0] b,
+
+    output wire             out_valid,
+    output wire [WFULL-1:0] y
+);
+```
+
+Based on that, a dual-purpose add/sub module can be defined that instantiates only a single adder (which is large)
+and computes a-b as a+(-b) by xoring the b sign with `op_sub`:
+
 ```verilog
 zkf_addsub #(parameter int WEXP = 6, parameter int WMAN = 18)(
     input  wire clk,
@@ -245,16 +264,6 @@ zkf_addsub #(parameter int WEXP = 6, parameter int WMAN = 18)(
     output wire             out_valid,
     output wire [WFULL-1:0] y
 );
-```
-
-Implementation guidance (rough):
-
-```text
-unpack, zero/infinity detection, exponent compare
-align smaller significand using sticky bit
-signed add/subtract
-normalize
-round, infinity/flush, pack
 ```
 
 ---

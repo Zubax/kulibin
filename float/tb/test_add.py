@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import cocotb
 
-from casegen import AddSubCase, addsub_cases
+from casegen import AddCase, add_cases
 from cocotb_utils import (
     FixedLatencyScoreboard,
     context_from_env,
@@ -18,37 +18,34 @@ from zkf_model import ZkfFormat
 
 
 @cocotb.test()
-async def addsub_runtime_cases(dut) -> None:
+async def add_runtime_cases(dut) -> None:
     wexp = env_int("ZKF_WEXP")
     wman = env_int("ZKF_WMAN")
     kind = env_str("ZKF_KIND", "random")
     count = env_int("ZKF_RANDOM_COUNT", 1024)
     fmt = ZkfFormat(wexp, wman)
-    context = context_from_env("addsub")
-    cases = addsub_cases(fmt, kind, context.seed, count)
+    context = context_from_env("add")
+    cases = add_cases(fmt, kind, context.seed, count)
 
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
     dut.a.value = 0
     dut.b.value = 0
-    dut.op_sub.value = 0
 
     scoreboard = FixedLatencyScoreboard(dut, 2, context, {"y": (dut.y, fmt.wfull)})
 
-    def drive_case(case: AddSubCase) -> dict[str, int]:
+    def drive_case(case: AddCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
         drive_unsigned(dut.b, case.b)
-        dut.op_sub.value = case.op_sub
         return {"y": case.expected}
 
     def invalid_drive() -> None:
         dut.in_valid.value = 0
         drive_unsigned(dut.a, (1 << fmt.wfull) - 1)
         drive_unsigned(dut.b, 0)
-        dut.op_sub.value = 1
 
-    def describe(index: int, case: AddSubCase) -> str:
+    def describe(index: int, case: AddCase) -> str:
         return f"case={index} {case.describe(fmt)}"
 
     def drive_reset_sample() -> None:

@@ -1,10 +1,10 @@
-/// Streamed Zubax Kulibin float adder/subtractor.
+/// Streamed Zubax Kulibin float adder.
 /// The outputs are latched and are only valid when out_valid is asserted.
 /// Pipeline depth: two stages from in_valid to out_valid.
 
 `default_nettype none
 
-module zkf_addsub #(
+module zkf_add #(
     parameter WEXP = 6,      // exponent field width
     parameter WMAN = 18      // significand precision including the hidden bit
 ) (
@@ -14,7 +14,6 @@ module zkf_addsub #(
     input wire                 in_valid,
     input wire [WEXP+WMAN-1:0] a,
     input wire [WEXP+WMAN-1:0] b,
-    input wire                 op_sub, // if op_sub: y=a-b; else: y=a+b
 
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
@@ -25,14 +24,14 @@ module zkf_addsub #(
         end
     endgenerate
 
-    localparam WFRAC          = WMAN - 1;
-    localparam WFULL          = WEXP + WMAN;
-    localparam WTAIL          = WMAN + 3;
-    localparam WMAG           = WMAN + WTAIL + 1;
-    localparam WINDEX         = $clog2(WMAG);
-    localparam WSHIFT         = (WEXP > (WINDEX + 1)) ? WEXP : (WINDEX + 1);
-    localparam WEXP_UNBIASED  = WEXP + WINDEX + 2;
-    localparam SCALE_OFFSET   = WFRAC + WTAIL;
+    localparam WFRAC         = WMAN - 1;
+    localparam WFULL         = WEXP + WMAN;
+    localparam WTAIL         = WMAN + 3;
+    localparam WMAG          = WMAN + WTAIL + 1;
+    localparam WINDEX        = $clog2(WMAG);
+    localparam WSHIFT        = (WEXP > (WINDEX + 1)) ? WEXP : (WINDEX + 1);
+    localparam WEXP_UNBIASED = WEXP + WINDEX + 2;
+    localparam SCALE_OFFSET  = WFRAC + WTAIL;
 
     localparam   [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
     localparam   [WEXP-1:0] EXP_INF  = {WEXP{1'b1}};
@@ -41,24 +40,23 @@ module zkf_addsub #(
     localparam signed [WEXP_UNBIASED-1:0] SCALE_OFFSET_EXT = SCALE_OFFSET;
 
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
-    wire             a_sign     = a[WFULL-1];
-    wire             b_sign     = b[WFULL-1];
-    wire             b_eff_sign = b_sign ^ op_sub;
-    wire  [WEXP-1:0] a_exp      = a[WFULL-2:WFRAC];
-    wire  [WEXP-1:0] b_exp      = b[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac     = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_frac     = b[WFRAC-1:0];
+    wire             a_sign = a[WFULL-1];
+    wire             b_sign = b[WFULL-1];
+    wire  [WEXP-1:0] a_exp  = a[WFULL-2:WFRAC];
+    wire  [WEXP-1:0] b_exp  = b[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
+    wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
 
     wire            a_zero        = a_exp == {WEXP{1'b0}};
     wire            b_zero        = b_exp == {WEXP{1'b0}};
     wire            a_inf         = a_exp == EXP_INF;
     wire            b_inf         = b_exp == EXP_INF;
     wire            any_inf       = a_inf || b_inf;
-    wire            opposite_inf  = a_inf && b_inf && (a_sign != b_eff_sign);
+    wire            opposite_inf  = a_inf && b_inf && (a_sign != b_sign);
     wire [WMAN-1:0] a_significand = {1'b1, a_frac};
     wire [WMAN-1:0] b_significand = {1'b1, b_frac};
 
-    // Finite add/subtract datapath. The low WTAIL bits provide room for GRS and cancellation.
+    // Finite addition datapath. The low WTAIL bits provide room for GRS and cancellation.
     wire [WMAG-1:0] a_mag_base = a_zero ? {WMAG{1'b0}} : {1'b0, a_significand, {WTAIL{1'b0}}};
     wire [WMAG-1:0] b_mag_base = b_zero ? {WMAG{1'b0}} : {1'b0, b_significand, {WTAIL{1'b0}}};
 
@@ -70,26 +68,26 @@ module zkf_addsub #(
     wire [WMAG-1:0] a_mag_aligned;
     wire [WMAG-1:0] b_mag_aligned;
 
-    _zkf_addsub_align_sticky #(.W(WMAG), .WSHIFT(WSHIFT)) u_align_a (
+    _zkf_add_align_sticky #(.W(WMAG), .WSHIFT(WSHIFT)) u_align_a (
         .x(a_mag_base),
         .shamt({{(WSHIFT-WEXP){1'b0}}, a_exp_diff}),
         .y(a_mag_aligned)
     );
-    _zkf_addsub_align_sticky #(.W(WMAG), .WSHIFT(WSHIFT)) u_align_b (
+    _zkf_add_align_sticky #(.W(WMAG), .WSHIFT(WSHIFT)) u_align_b (
         .x(b_mag_base),
         .shamt({{(WSHIFT-WEXP){1'b0}}, b_exp_diff}),
         .y(b_mag_aligned)
     );
 
-    wire            same_sign       = a_sign == b_eff_sign;
+    wire            same_sign       = a_sign == b_sign;
     wire            a_mag_ge_b_mag  = a_mag_aligned >= b_mag_aligned;
     wire [WMAG-1:0] finite_mag_sum  = a_mag_aligned + b_mag_aligned;
     wire [WMAG-1:0] finite_mag_diff = a_mag_ge_b_mag ? (a_mag_aligned - b_mag_aligned) :
                                                        (b_mag_aligned - a_mag_aligned);
     wire [WMAG-1:0] finite_mag      = same_sign ? finite_mag_sum : finite_mag_diff;
     wire            finite_zero     = finite_mag == {WMAG{1'b0}};
-    wire            finite_sign     = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_eff_sign);
-    wire            result_inf_sign = a_inf ? a_sign : b_eff_sign;
+    wire            finite_sign     = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
+    wire            result_inf_sign = a_inf ? a_sign : b_sign;
     wire            result_inf      = any_inf && !opposite_inf;
     wire            result_zero     = opposite_inf || (!any_inf && finite_zero);
     wire            result_sign     = result_inf ? result_inf_sign : finite_sign;
@@ -160,7 +158,7 @@ endmodule
 // Right-shift x by shamt bit positions while making y[0] sticky.
 // y[0] includes the shifted bit and every low bit discarded by the shift.
 // The shift amount (shamt) is the exponent-difference alignment shift; W_EXT is W represented at WSHIFT width.
-module _zkf_addsub_align_sticky #(parameter W = 16, parameter WSHIFT = $clog2(W) + 1) (
+module _zkf_add_align_sticky #(parameter W = 16, parameter WSHIFT = $clog2(W) + 1) (
     input  wire      [W-1:0] x,
     input  wire [WSHIFT-1:0] shamt,
     output wire      [W-1:0] y

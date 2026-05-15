@@ -10,7 +10,7 @@ import numpy as np
 
 from zkf_model import (
     ZkfFormat,
-    addsub_reference,
+    add_reference,
     canonical_inf,
     decode,
     div_reference,
@@ -19,7 +19,7 @@ from zkf_model import (
     mask,
     mul_reference,
     normal,
-    numpy_addsub_reference,
+    numpy_add_reference,
     numpy_div_reference,
     numpy_mul_reference,
     pack_bits,
@@ -64,16 +64,14 @@ class BinaryCase:
 
 
 @dataclass(frozen=True)
-class AddSubCase:
+class AddCase:
     label: str
     a: int
     b: int
-    op_sub: int
     expected: int
 
     def describe(self, fmt: ZkfFormat) -> str:
-        op = "-" if self.op_sub else "+"
-        return f"{self.label} a={hex_bits(self.a, fmt.wfull)} {op} b={hex_bits(self.b, fmt.wfull)}"
+        return f"{self.label} a={hex_bits(self.a, fmt.wfull)} + b={hex_bits(self.b, fmt.wfull)}"
 
 
 @dataclass(frozen=True)
@@ -121,29 +119,27 @@ def _add_unique_binary(
         raise ValueError(op)
 
 
-def _add_unique_addsub(
-    cases: list[AddSubCase],
-    seen: set[tuple[int, int, int]],
+def _add_unique_add(
+    cases: list[AddCase],
+    seen: set[tuple[int, int]],
     label: str,
     fmt: ZkfFormat,
     a: int,
     b: int,
-    op_sub: int,
 ) -> None:
-    key = (a & mask(fmt.wfull), b & mask(fmt.wfull), op_sub & 1)
+    key = (a & mask(fmt.wfull), b & mask(fmt.wfull))
     if key in seen:
         return
     seen.add(key)
-    expected = addsub_reference(fmt, a, b, op_sub)
-    np_ref = numpy_addsub_reference(fmt, a, b, op_sub)
+    expected = add_reference(fmt, a, b)
+    np_ref = numpy_add_reference(fmt, a, b)
     if np_ref is not None and np_ref != expected:
-        op = "-" if op_sub else "+"
         raise AssertionError(
-            f"NumPy cross-check failed for addsub {fmt}: a={hex_bits(a, fmt.wfull)} {op} "
+            f"NumPy cross-check failed for add {fmt}: a={hex_bits(a, fmt.wfull)} + "
             f"b={hex_bits(b, fmt.wfull)} exact={hex_bits(expected, fmt.wfull)} "
             f"numpy={hex_bits(np_ref, fmt.wfull)}"
         )
-    cases.append(AddSubCase(label, a, b, op_sub & 1, expected))
+    cases.append(AddCase(label, a, b, expected))
 
 
 def _directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
@@ -203,42 +199,32 @@ def _generic_mul_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     ]
 
 
-def _generic_addsub_directed(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
+def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     v = _directed_numbers(fmt)
     return [
-        ("zero_plus_one", v["zero"], v["one"], 0),
-        ("zero_payload_minus_one", v["neg_zero"], v["one"], 1),
-        ("one_plus_zero_payload", v["one"], v["neg_zero"], 0),
-        ("one_plus_one", v["one"], v["one"], 0),
-        ("one_minus_one", v["one"], v["one"], 1),
-        ("one_plus_minus_one", v["one"], v["minus_one"], 0),
-        ("minus_one_minus_minus_one", v["minus_one"], v["minus_one"], 1),
-        ("minus_one_plus_one", v["minus_one"], v["one"], 0),
-        ("one_plus_half", v["one"], v["half"], 0),
-        ("one_minus_half", v["one"], v["half"], 1),
-        ("half_minus_one", v["half"], v["one"], 1),
-        ("one_and_half_plus_one_and_quarter", v["one_and_half"], v["one_and_quarter"], 0),
-        ("normalization_carry", v["one_and_three_quarters"], v["one_and_three_quarters"], 0),
-        ("min_normal_plus_min_normal", v["min_normal"], v["min_normal"], 0),
-        ("min_normal_minus_min_normal", v["min_normal"], v["min_normal"], 1),
-        ("min_normal_plus_neg_min_normal", v["min_normal"], v["neg_min_normal"], 0),
-        ("neg_min_normal_minus_min_normal", v["neg_min_normal"], v["min_normal"], 1),
-        ("max_finite_plus_one", v["max_finite"], v["one"], 0),
-        ("neg_max_finite_minus_one", v["neg_max_finite"], v["one"], 1),
-        ("max_finite_plus_max_finite", v["max_finite"], v["max_finite"], 0),
-        ("neg_max_finite_plus_neg_max_finite", v["neg_max_finite"], v["neg_max_finite"], 0),
-        ("max_finite_minus_neg_max_finite", v["max_finite"], v["neg_max_finite"], 1),
-        ("neg_max_finite_minus_max_finite", v["neg_max_finite"], v["max_finite"], 1),
-        ("pos_inf_plus_one", v["pos_inf"], v["one"], 0),
-        ("one_plus_pos_inf", v["one"], v["pos_inf"], 0),
-        ("one_minus_pos_inf", v["one"], v["pos_inf"], 1),
-        ("one_minus_neg_inf", v["one"], v["noncanonical_neg_inf"], 1),
-        ("pos_inf_plus_pos_inf", v["pos_inf"], v["noncanonical_pos_inf"], 0),
-        ("neg_inf_plus_neg_inf", v["neg_inf"], v["noncanonical_neg_inf"], 0),
-        ("pos_inf_plus_neg_inf", v["pos_inf"], v["neg_inf"], 0),
-        ("pos_inf_minus_pos_inf", v["pos_inf"], v["pos_inf"], 1),
-        ("neg_inf_minus_pos_inf", v["neg_inf"], v["pos_inf"], 1),
-        ("noncanonical_pos_inf_minus_neg_inf", v["noncanonical_pos_inf"], v["neg_inf"], 1),
+        ("zero_plus_one", v["zero"], v["one"]),
+        ("zero_payload_plus_one", v["neg_zero"], v["one"]),
+        ("one_plus_zero_payload", v["one"], v["neg_zero"]),
+        ("one_plus_one", v["one"], v["one"]),
+        ("one_plus_minus_one", v["one"], v["minus_one"]),
+        ("minus_one_plus_one", v["minus_one"], v["one"]),
+        ("minus_one_plus_minus_one", v["minus_one"], v["minus_one"]),
+        ("one_plus_half", v["one"], v["half"]),
+        ("half_plus_minus_one", v["half"], v["minus_one"]),
+        ("one_and_half_plus_one_and_quarter", v["one_and_half"], v["one_and_quarter"]),
+        ("normalization_carry", v["one_and_three_quarters"], v["one_and_three_quarters"]),
+        ("min_normal_plus_min_normal", v["min_normal"], v["min_normal"]),
+        ("min_normal_plus_neg_min_normal", v["min_normal"], v["neg_min_normal"]),
+        ("max_finite_plus_one", v["max_finite"], v["one"]),
+        ("max_finite_plus_max_finite", v["max_finite"], v["max_finite"]),
+        ("neg_max_finite_plus_neg_max_finite", v["neg_max_finite"], v["neg_max_finite"]),
+        ("max_finite_plus_neg_max_finite", v["max_finite"], v["neg_max_finite"]),
+        ("pos_inf_plus_one", v["pos_inf"], v["one"]),
+        ("one_plus_pos_inf", v["one"], v["pos_inf"]),
+        ("one_plus_neg_inf", v["one"], v["noncanonical_neg_inf"]),
+        ("pos_inf_plus_pos_inf", v["pos_inf"], v["noncanonical_pos_inf"]),
+        ("neg_inf_plus_neg_inf", v["neg_inf"], v["noncanonical_neg_inf"]),
+        ("pos_inf_plus_neg_inf", v["pos_inf"], v["neg_inf"]),
     ]
 
 
@@ -458,44 +444,43 @@ def _random_div_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int
     return random_operand(fmt, rng), random_operand(fmt, rng)
 
 
-def _random_addsub_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int]:
+def _random_add_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int]:
     v = _directed_numbers(fmt)
     mode = int(rng.integers(0, 14))
-    op_sub = int(rng.integers(0, 2))
     if mode == 0:
-        return _random_zero(fmt, rng), random_operand(fmt, rng), op_sub
+        return _random_zero(fmt, rng), random_operand(fmt, rng)
     if mode == 1:
-        return random_operand(fmt, rng), _random_zero(fmt, rng), op_sub
+        return random_operand(fmt, rng), _random_zero(fmt, rng)
     if mode == 2:
-        return _random_inf(fmt, rng), random_operand(fmt, rng), op_sub
+        return _random_inf(fmt, rng), random_operand(fmt, rng)
     if mode == 3:
-        return random_operand(fmt, rng), _random_inf(fmt, rng), op_sub
+        return random_operand(fmt, rng), _random_inf(fmt, rng)
     if mode == 4:
-        return _random_inf(fmt, rng), _random_inf(fmt, rng), op_sub
+        return _random_inf(fmt, rng), _random_inf(fmt, rng)
     if mode == 5:
         exp = int(rng.integers(1, fmt.exp_max_finite + 1))
         frac = int(rng.integers(0, fmt.frac_mask))
         sign = int(rng.integers(0, 2))
-        return normal(fmt, sign, exp, frac + 1), normal(fmt, sign, exp, frac), 1
+        return normal(fmt, sign, exp, frac + 1), normal(fmt, sign ^ 1, exp, frac)
     if mode == 6:
         exp = int(rng.integers(1, fmt.exp_max_finite + 1))
         frac = int(rng.integers(0, fmt.frac_mask))
         sign = int(rng.integers(0, 2))
-        return normal(fmt, sign, exp, frac + 1), normal(fmt, sign ^ 1, exp, frac), 0
+        return normal(fmt, sign, exp, frac + 1), normal(fmt, sign ^ 1, exp, frac)
     if mode == 7:
-        return _random_normal_near(fmt, rng, [1, 2], [0, 1]), _random_normal_near(fmt, rng, [1, 2], [0, 1]), op_sub
+        return _random_normal_near(fmt, rng, [1, 2], [0, 1]), _random_normal_near(fmt, rng, [1, 2], [0, 1])
     if mode == 8:
         return _random_normal_near(
             fmt,
             rng,
             [fmt.exp_max_finite],
             [fmt.frac_mask],
-        ), _random_normal_near(fmt, rng, [fmt.exp_max_finite], [fmt.frac_mask]), op_sub
+        ), _random_normal_near(fmt, rng, [fmt.exp_max_finite], [fmt.frac_mask])
     if mode == 9:
-        return v["max_finite"], v["max_finite"], 0
+        return v["max_finite"], v["max_finite"]
     if mode == 10:
-        return v["neg_max_finite"], v["max_finite"], 1
-    return random_operand(fmt, rng), random_operand(fmt, rng), op_sub
+        return v["neg_max_finite"], v["neg_max_finite"]
+    return random_operand(fmt, rng), random_operand(fmt, rng)
 
 
 @dataclass(frozen=True)
@@ -678,29 +663,27 @@ def div_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[BinaryCa
     return cases
 
 
-def addsub_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddSubCase]:
-    cases: list[AddSubCase] = []
-    seen: set[tuple[int, int, int]] = set()
+def add_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddCase]:
+    cases: list[AddCase] = []
+    seen: set[tuple[int, int]] = set()
 
     if kind == "exhaustive":
         for a in range(1 << fmt.wfull):
             for b in range(1 << fmt.wfull):
-                for op_sub in (0, 1):
-                    _add_unique_addsub(cases, seen, "exhaustive", fmt, a, b, op_sub)
+                _add_unique_add(cases, seen, "exhaustive", fmt, a, b)
         return cases
 
     rng = np.random.default_rng(seed)
     if fmt.wexp >= 3:
-        for label, a, b, op_sub in _generic_addsub_directed(fmt):
-            _add_unique_addsub(cases, seen, label, fmt, a, b, op_sub)
+        for label, a, b in _generic_add_directed(fmt):
+            _add_unique_add(cases, seen, label, fmt, a, b)
 
     if (fmt.wexp, fmt.wman) == (6, 18):
-        _add_unique_addsub(cases, seen, "default_parameter_smoke_add", fmt, 0x3E0000, 0x3E0000, 0)
-        _add_unique_addsub(cases, seen, "default_parameter_smoke_sub", fmt, 0x3E0000, 0x3E0000, 1)
+        _add_unique_add(cases, seen, "default_parameter_smoke", fmt, 0x3E0000, 0x3E0000)
 
     while len(cases) < count:
-        a, b, op_sub = _random_addsub_case(fmt, rng)
-        _add_unique_addsub(cases, seen, "random", fmt, a, b, op_sub)
+        a, b = _random_add_case(fmt, rng)
+        _add_unique_add(cases, seen, "random", fmt, a, b)
     return cases
 
 
