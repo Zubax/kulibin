@@ -33,7 +33,7 @@ async def add_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    scoreboard = FixedLatencyScoreboard(dut, 2, context, {"y": (dut.y, fmt.wfull)})
+    scoreboard = FixedLatencyScoreboard(dut, 4, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)

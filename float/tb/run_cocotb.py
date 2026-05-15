@@ -22,7 +22,7 @@ RTL = FLOAT / "hdl"
 RTL_ILOG2 = [RTL / "_zkf_ilog2_floor.v"]
 RTL_PACK = [RTL / "_zkf_pack.v"]
 RTL_MUL = [RTL / "_zkf_pack.v", RTL / "zkf_mul.v"]
-RTL_ADD = [RTL / "_zkf_ilog2_floor.v", RTL / "_zkf_pack.v", RTL / "zkf_add.v"]
+RTL_ADD = [RTL / "_zkf_pack.v", RTL / "zkf_add.v"]
 RTL_DIV = [RTL / "_zkf_pack.v", RTL / "_zkf_div_core.v", RTL / "zkf_div.v"]
 
 SIMS = ("icarus", "verilator")

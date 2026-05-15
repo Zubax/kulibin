@@ -179,7 +179,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         ]
     if spec.kind == "add":
         return [
-            REPO / "float" / "hdl" / "_zkf_ilog2_floor.v",
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "zkf_add.v",
         ]
@@ -209,7 +208,7 @@ def latency_cycles(spec: ModuleSpec) -> int:
     if spec.kind == "mul":
         return 2
     if spec.kind == "add":
-        return 2
+        return 4
     if spec.kind == "div_core":
         return div_core_latency
     if spec.kind == "div":
