@@ -33,10 +33,7 @@ module zkf_add #(
     localparam WSHIFT        = (WEXP > (WINDEX + 1)) ? WEXP : (WINDEX + 1);
     localparam WEXP_UNBIASED = WEXP + WINDEX + 2;
 
-    localparam                 [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
-    localparam                 [WEXP-1:0] EXP_INF  = {WEXP{1'b1}};
-    localparam               [WINDEX-1:0] NORM_TOP = WMAN + 2;
-    localparam signed [WEXP_UNBIASED-1:0] NORM_TOP_EXT = WMAN + 2;
+    localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
 
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
     wire             a_sign = a[WFULL-1];
@@ -46,10 +43,10 @@ module zkf_add #(
     wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
     wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
 
-    wire            a_zero        = a_exp == {WEXP{1'b0}};
-    wire            b_zero        = b_exp == {WEXP{1'b0}};
-    wire            a_inf         = a_exp == EXP_INF;
-    wire            b_inf         = b_exp == EXP_INF;
+    wire            a_zero        = ~|a_exp;
+    wire            b_zero        = ~|b_exp;
+    wire            a_inf         = &a_exp;
+    wire            b_inf         = &b_exp;
     wire            a_finite      = !a_zero && !a_inf;
     wire            b_finite      = !b_zero && !b_inf;
     wire            any_inf       = a_inf || b_inf;
@@ -61,8 +58,8 @@ module zkf_add #(
     // zero significand; infinities are consumed by the special-case controls and omitted from the finite datapath.
     wire  [WEXP-1:0] a_key_exp      = a_finite ? a_exp : {WEXP{1'b0}};
     wire  [WEXP-1:0] b_key_exp      = b_finite ? b_exp : {WEXP{1'b0}};
-    wire [WMAN-1:0]  a_key_sig      = a_finite ? a_significand : {WMAN{1'b0}};
-    wire [WMAN-1:0]  b_key_sig      = b_finite ? b_significand : {WMAN{1'b0}};
+    wire  [WMAN-1:0] a_key_sig      = a_finite ? a_significand : {WMAN{1'b0}};
+    wire  [WMAN-1:0] b_key_sig      = b_finite ? b_significand : {WMAN{1'b0}};
     wire [WFULL-1:0] a_mag_key      = {a_key_exp, a_key_sig};
     wire [WFULL-1:0] b_mag_key      = {b_key_exp, b_key_sig};
     wire             a_mag_ge_b_mag = a_mag_key >= b_mag_key;
@@ -124,7 +121,7 @@ module zkf_add #(
     _zkf_ilog2_floor #(.W(WRAW), .WINDEX(WINDEX)) u_sub_norm (.x(raw_sub), .zero(sub_zero), .y(sub_index));
 
     wire same_sign   = a_sign == b_sign;
-    wire finite_zero = same_sign ? (raw_add == {WRAW{1'b0}}) : sub_zero;
+    wire finite_zero = same_sign ? (~|raw_add) : sub_zero;
     wire finite_sign = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
 
     wire result_inf_sign = a_inf ? a_sign : b_sign;
@@ -132,14 +129,11 @@ module zkf_add #(
     wire result_zero     = opposite_inf || (!any_inf && finite_zero);
     wire result_sign     = result_inf ? result_inf_sign : finite_sign;
 
-    wire signed [WEXP_UNBIASED-1:0] max_exp_ext         = {{(WEXP_UNBIASED-WEXP){1'b0}}, max_exp};
-    wire signed [WEXP_UNBIASED-1:0] bias_ext            = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WEXP_UNBIASED-1:0] one_ext             = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
-    wire signed [WEXP_UNBIASED-1:0] common_exp_unbiased = max_exp_ext - bias_ext;
-    wire signed [WEXP_UNBIASED-1:0] add_exp_unbiased    = common_exp_unbiased +
-                                                           (add_carry ? one_ext : {WEXP_UNBIASED{1'b0}});
-    wire signed [WEXP_UNBIASED-1:0] sub_index_ext       = {{(WEXP_UNBIASED-WINDEX){1'b0}}, sub_index};
-    wire signed [WEXP_UNBIASED-1:0] sub_exp_unbiased    = common_exp_unbiased + sub_index_ext - NORM_TOP_EXT;
+    wire signed [WEXP_UNBIASED-1:0] max_exp_ext      = {{(WEXP_UNBIASED-WEXP){1'b0}}, max_exp};
+    wire signed [WEXP_UNBIASED-1:0] bias_ext         = {{(WEXP_UNBIASED-WEXP+1){1'b0}}, {WEXP-1{1'b1}}};
+    wire signed [WEXP_UNBIASED-1:0] com_exp_unbiased = max_exp_ext - bias_ext;
+    wire signed [WEXP_UNBIASED-1:0] add_exp_unbiased = com_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, add_carry};
+    wire signed [WEXP_UNBIASED-1:0] sub_exp_unbiased = com_exp_unbiased - {{(WEXP_UNBIASED-WINDEX){1'b0}}, sub_shift};
     wire signed [WEXP_UNBIASED-1:0] finite_exp_unbiased = same_sign ? add_exp_unbiased : sub_exp_unbiased;
     wire                 [WMAN-1:0] finite_significand  = same_sign ? add_significand  : sub_significand;
     wire                            finite_guard        = same_sign ? add_guard        : sub_guard;
@@ -207,7 +201,7 @@ module _zkf_add_align_sticky #(parameter W = 16, parameter WSHIFT = $clog2(W) + 
     wire      [W-1:0] shifted        = shift_ge_width ? {W{1'b0}} : (x >> shamt);
     wire [WSHIFT-1:0] lost_shift     = W_EXT - shamt;
     wire      [W-1:0] lost_window    = x << lost_shift;
-    wire              lost           = (shamt != {WSHIFT{1'b0}}) && (shift_ge_width ? (|x) : (|lost_window));
+    wire              lost           = (|shamt) && (shift_ge_width ? (|x) : (|lost_window));
 
     assign y = shifted | {{(W-1){1'b0}}, lost};
 endmodule
