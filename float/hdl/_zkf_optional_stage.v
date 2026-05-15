@@ -17,20 +17,17 @@ module _zkf_optional_stage #(parameter W = 1, parameter ENABLE = 0) (
             reg         valid_q;
             reg [W-1:0] payload_q;
 
-            assign out_valid   = valid_q;
-            assign out_payload = payload_q;
+            assign out_valid = valid_q;
+            assign out       = payload_q;
 
             always @(posedge clk) begin
-                if (rst) begin
-                    valid_q <= 1'b0;
-                end else begin
-                    valid_q <= in_valid;
-                end
-                payload_q <= in_payload;
+                if (rst) valid_q <= 1'b0;
+                else     valid_q <= in_valid;
+                payload_q <= in;
             end
         end else begin : g_passthrough
-            assign out_valid  = in_valid;
-            assign out_payload = in_payload;
+            assign out_valid = in_valid;
+            assign out       = in;
         end
     endgenerate
 endmodule
