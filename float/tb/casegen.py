@@ -15,7 +15,6 @@ from zkf_model import (
     decode,
     div_reference,
     hex_bits,
-    ilog2_floor_reference,
     mask,
     mul_reference,
     normal,
@@ -72,14 +71,6 @@ class AddCase:
 
     def describe(self, fmt: ZkfFormat) -> str:
         return f"{self.label} a={hex_bits(self.a, fmt.wfull)} + b={hex_bits(self.b, fmt.wfull)}"
-
-
-@dataclass(frozen=True)
-class Ilog2Case:
-    label: str
-    x: int
-    expected_zero: int
-    expected_y: int
 
 
 def _add_unique_binary(
@@ -934,38 +925,3 @@ def pack_cases(fmt: ZkfFormat, kind: str, seed: int, count: int, wunbiased: int)
         cases.append(_pack_case(fmt, "random_mag_scale", *args))
     return cases
 
-
-def ilog2_cases(width: int, seed: int, count: int) -> list[Ilog2Case]:
-    cases: list[Ilog2Case] = []
-    seen: set[int] = set()
-
-    def add(label: str, value: int) -> None:
-        value_masked = value & mask(width)
-        if value_masked in seen:
-            return
-        seen.add(value_masked)
-        expected_zero, expected_y = ilog2_floor_reference(width, value_masked)
-        cases.append(Ilog2Case(label, value_masked, expected_zero, expected_y))
-
-    if width <= 12:
-        for value in range(1 << width):
-            add("exhaustive", value)
-        return cases
-
-    add("zero", 0)
-    for bit in range(width):
-        add("power_of_two", 1 << bit)
-        add("below_power_of_two", (1 << bit) - 1)
-        add("above_power_of_two", (1 << bit) | 1)
-    add("all_ones", mask(width))
-
-    rng = np.random.default_rng(seed)
-    while len(cases) < count:
-        if width <= 62:
-            value = int(rng.integers(0, 1 << width))
-        else:
-            lo = int(rng.integers(0, 1 << 62))
-            hi = int(rng.integers(0, 1 << (width - 62)))
-            value = (hi << 62) | lo
-        add("random", value)
-    return cases

@@ -338,12 +338,6 @@ def add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int:
     return round_fraction_to_zkf(fmt, 1 if result < 0 else 0, abs(result))
 
 
-def ilog2_floor_reference(width: int, value: int) -> tuple[int, int]:
-    if value == 0:
-        return 1, 0
-    return 0, value.bit_length() - 1
-
-
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
     item = decode(fmt, bits)
     if item.exp == 0:

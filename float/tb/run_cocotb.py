@@ -19,17 +19,13 @@ FLOAT = Path(__file__).resolve().parents[1]
 TB = Path(__file__).resolve().parent
 RTL = FLOAT / "hdl"
 
-RTL_ILOG2 = [RTL / "_zkf_ilog2_floor.v"]
 RTL_PACK = [RTL / "_zkf_pack.v"]
 RTL_MUL = [RTL / "_zkf_pack.v", RTL / "zkf_mul.v"]
 RTL_ADD = [RTL / "_zkf_pack.v", RTL / "zkf_add.v"]
 RTL_DIV = [RTL / "_zkf_pack.v", RTL / "_zkf_div_core.v", RTL / "zkf_div.v"]
 
 SIMS = ("icarus", "verilator")
-SUITES = ("ilog2", "pack", "mul", "add", "div")
-SKIP_REASON = {
-    ("verilator", "ilog2"): "Verilator mis-elaborates the recursive _zkf_ilog2_floor implementation",
-}
+SUITES = ("pack", "mul", "add", "div")
 
 
 @dataclass(frozen=True)
@@ -41,24 +37,6 @@ class RunConfig:
     sources: tuple[Path, ...]
     parameters: dict[str, int]
     env: dict[str, str]
-
-
-def ilog2_configs() -> list[RunConfig]:
-    configs = []
-    for width, count in ((1, 0), (2, 0), (3, 0), (4, 0), (7, 0), (12, 0), (17, 512), (32, 512), (64, 512)):
-        windex = 1 if width <= 2 else (width - 1).bit_length()
-        configs.append(
-            RunConfig(
-                suite="ilog2",
-                name=f"w{width}",
-                top="_zkf_ilog2_floor",
-                test_module="test_ilog2",
-                sources=tuple(RTL_ILOG2),
-                parameters={"W": width, "WINDEX": windex},
-                env={"ZKF_WIDTH": str(width), "ZKF_RANDOM_COUNT": str(count)},
-            )
-        )
-    return configs
 
 
 def pack_configs() -> list[RunConfig]:
@@ -138,8 +116,6 @@ def arithmetic_configs(suite: str) -> list[RunConfig]:
 
 
 def configs_for_suite(suite: str) -> list[RunConfig]:
-    if suite == "ilog2":
-        return ilog2_configs()
     if suite == "pack":
         return pack_configs()
     if suite in ("mul", "add", "div"):
@@ -233,10 +209,6 @@ def run_one(sim: str, config: RunConfig, build_root: Path, seed: int) -> None:
             os.environ["COCOTB_REWRITE_ASSERTION_FILES"] = old_cocotb_rewrite
 
 
-def skip_reason(sim: str, config: RunConfig) -> str | None:
-    return SKIP_REASON.get((sim, config.suite))
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sim", choices=("all", *SIMS), default="all")
@@ -254,21 +226,12 @@ def main() -> None:
 
     print(f"[float-cocotb] base seed=0x{seed:016x}", flush=True)
     run_count = 0
-    skip_count = 0
     for sim in sims:
         for suite in suites:
             for config in configs_for_suite(suite):
-                reason = skip_reason(sim, config)
-                if reason is not None:
-                    print(
-                        f"[float-cocotb] skip sim={sim} suite={config.suite} config={config.name}: {reason}",
-                        flush=True,
-                    )
-                    skip_count += 1
-                    continue
                 run_one(sim, config, args.build_dir, seed)
                 run_count += 1
-    print(f"[float-cocotb] all selected runnable suites passed ({run_count} run, {skip_count} skipped)", flush=True)
+    print(f"[float-cocotb] all selected suites passed ({run_count} run)", flush=True)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ description: Simple deterministic floating-point helpers
 filesets:
   rtl:
     files:
-      - hdl/_zkf_ilog2_floor.v
       - hdl/_zkf_pack.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
@@ -27,8 +26,6 @@ filesets:
       - tb/casegen.py:
           file_type: user
       - tb/cocotb_utils.py:
-          file_type: user
-      - tb/test_ilog2.py:
           file_type: user
       - tb/test_pack.py:
           file_type: user
@@ -59,13 +56,6 @@ scripts:
       - sh
       - -c
       - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim verilator --suite all'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_ilog2:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite ilog2'
     filesets: [rtl, tb_cocotb_runner]
 
   run_cocotb_pack:
@@ -127,17 +117,6 @@ targets:
     hooks:
       pre_build:
         - run_cocotb_verilator
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
-
-  sim_ilog2:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_ilog2
     toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:
