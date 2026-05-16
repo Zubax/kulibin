@@ -208,7 +208,7 @@ def latency_cycles(spec: ModuleSpec) -> int:
     if spec.kind == "mul":
         return 2
     if spec.kind == "add":
-        return 4
+        return 5
     if spec.kind == "div_core":
         return div_core_latency
     if spec.kind == "div":
@@ -741,7 +741,7 @@ def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: P
                 f"hierarchy -check -top {spec.top}",
                 "proc",
                 "opt",
-                f"synth_ecp5 -top {spec.top} -noabc9 -retime -abc2 -dff -json {netlist}",
+                f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -dff -json {netlist}",
                 "stat",
                 "",
             ]
@@ -1106,7 +1106,7 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <h1>Kulibin Float Yosys Synthesis Report</h1>
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
-        + "<p>Flow: Yosys synth_ecp5 with -noabc9 -retime -abc2 -dff, "
+        + "<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 -dff, "
         + "nextpnr-ecp5 for LFE5U-85F CABGA381 speed grade "
         + f"{DEVICE_SPEED_GRADE} at {format_mhz(YOSYS_TARGET_FREQ_MHZ)}.</p>"
         + """
@@ -1204,7 +1204,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_LST_MaxFanout": "1000",
         "PROP_LST_MuxStyle": "Auto",
         "PROP_LST_NumCriticalPaths": "10",
-        "PROP_LST_OptimizeGoal": "Timing",
+        "PROP_LST_OptimizeGoal": "Balanced",
         "PROP_LST_PropagatConst": "True",
         "PROP_LST_RAMStyle": "Auto",
         "PROP_LST_ROMStyle": "Auto",
@@ -1557,7 +1557,7 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
         + f"<p>Flow: Lattice Diamond LSE for {escape(DIAMOND_DEVICE)} at "
-        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Timing, "
+        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Balanced, "
         + "MAP register retiming is enabled, PAR placement effort is 5, and routing passes are "
         + f"{DIAMOND_ROUTE_PASSES}.</p>"
         + """
