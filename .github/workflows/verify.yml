@@ -3,33 +3,13 @@ on:
   push:
   pull_request:
 
-env:
-  VERIBLE_VERSION: v0.0-4007-g98bdb38a
-
 jobs:
   verify:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-15
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install HDL simulators
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y iverilog verilator
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-
-      - name: Install Python dependencies
-        run: pip install cocotb fusesoc numpy scipy sympy matplotlib
-
-      - name: Install Verible
-        run: |
-          mkdir -p "$HOME/verible"
-          curl -sL "https://github.com/chipsalliance/verible/releases/download/${VERIBLE_VERSION}/verible-${VERIBLE_VERSION}-linux-static-x86_64.tar.gz" \
-            | tar -xz --strip-components=1 -C "$HOME/verible"
-          echo "$HOME/verible/bin" >> "$GITHUB_PATH"
 
       - name: Lint
         run: make lint
