@@ -39,3 +39,4 @@ hdr_log
 *.tmp
 *.vcd
 *.history
+*.lock
