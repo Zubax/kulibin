@@ -71,10 +71,10 @@ module zkf_add #(
     _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(a_key_sig), .b(b_key_sig), .ge(a_sig_ge_b_sig));
 
     wire ordered_exp_sign = a_exp_ge_b_exp ? a_sign : b_sign;
-    wire inf_sign = (a_inf && a_sign) || (!a_inf && b_inf && b_sign);
+    wire inf_sign         = (a_inf && a_sign) || (!a_inf && b_inf && b_sign);
 
-    wire [WEXP-1:0] large_exp = a_exp_ge_b_exp ? a_key_exp : b_key_exp;
-    wire [WEXP-1:0] small_exp = a_exp_ge_b_exp ? b_key_exp : a_key_exp;
+    wire [WEXP-1:0] large_exp     = a_exp_ge_b_exp ? a_key_exp : b_key_exp;
+    wire [WEXP-1:0] small_exp     = a_exp_ge_b_exp ? b_key_exp : a_key_exp;
     wire [WMAN-1:0] large_sig_exp = a_exp_ge_b_exp ? a_key_sig : b_key_sig;
     wire [WMAN-1:0] small_sig_exp = a_exp_ge_b_exp ? b_key_sig : a_key_sig;
 
@@ -119,14 +119,14 @@ module zkf_add #(
     reg                 [WEXT-1:0] s1_large_ext_exp;
     reg                 [WEXT-1:0] s1_small_aligned;
 
-    wire s1_swap_equal = s1_exp_eq && !s1_a_mag_ge_b_mag;
-    wire [WRAW-1:0] s1_adder_a     = {1'b0, s1_swap_equal ? s1_small_aligned : s1_large_ext_exp};
-    wire [WRAW-1:0] s1_adder_b_abs = {1'b0, s1_swap_equal ? s1_large_ext_exp : s1_small_aligned};
-    wire [WRAW-1:0] s1_adder_b     = s1_same_sign ? s1_adder_b_abs : ~s1_adder_b_abs;
-    wire [WRAW-1:0] s1_raw_result  = s1_adder_a + s1_adder_b + {{(WRAW-1){1'b0}}, !s1_same_sign};
-    wire             s1_equal_finite_sign = s1_same_sign ? s1_a_sign : (s1_a_mag_ge_b_mag ? s1_a_sign : s1_b_sign);
-    wire             s1_finite_sign       = s1_exp_eq    ? s1_equal_finite_sign : s1_ordered_exp_sign;
-    wire             s1_result_sign       = s1_force_inf ? s1_inf_sign          : s1_finite_sign;
+    wire            s1_swap_equal        = s1_exp_eq && !s1_a_mag_ge_b_mag;
+    wire [WRAW-1:0] s1_adder_a           = {1'b0, s1_swap_equal ? s1_small_aligned : s1_large_ext_exp};
+    wire [WRAW-1:0] s1_adder_b_abs       = {1'b0, s1_swap_equal ? s1_large_ext_exp : s1_small_aligned};
+    wire [WRAW-1:0] s1_adder_b           = s1_same_sign ? s1_adder_b_abs : ~s1_adder_b_abs;
+    wire [WRAW-1:0] s1_raw_result        = s1_adder_a + s1_adder_b + {{(WRAW-1){1'b0}}, !s1_same_sign};
+    wire            s1_equal_finite_sign = s1_same_sign ? s1_a_sign : (s1_a_mag_ge_b_mag ? s1_a_sign : s1_b_sign);
+    wire            s1_finite_sign       = s1_exp_eq    ? s1_equal_finite_sign : s1_ordered_exp_sign;
+    wire            s1_result_sign       = s1_force_inf ? s1_inf_sign          : s1_finite_sign;
 
     // Stage 2: registered raw add/sub result.
     reg                            s2_valid;
@@ -142,10 +142,10 @@ module zkf_add #(
     // Same-sign addition never left-normalizes, so a jammed LSB remains sticky. For subtraction, close
     // cancellation only occurs with small exact alignment shifts; far cancellation cannot require a full-width
     // discarded tail, and the compact GRS representation supplies the packer with sufficient rounding state.
-    wire s2_add_carry = s2_raw_result_q[WRAW-1];
+    wire                            s2_add_carry        = s2_raw_result_q[WRAW-1];
     wire signed [WEXP_UNBIASED-1:0] s2_add_exp_unbiased = s2_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
-    wire [WMAN-1:0] s2_add_significand = s2_add_carry ? s2_raw_result_q[WRAW-1 -: WMAN]
-                                                      : s2_raw_result_q[NORM_TOP -: WMAN];
+    wire                 [WMAN-1:0] s2_add_significand  = s2_add_carry ? s2_raw_result_q[WRAW-1 -: WMAN]
+                                                                       : s2_raw_result_q[NORM_TOP -: WMAN];
     wire s2_add_guard  = s2_add_carry ?   s2_raw_result_q[WRAW-WMAN-1]    :   s2_raw_result_q[NORM_TOP-WMAN];
     wire s2_add_round  = s2_add_carry ?   s2_raw_result_q[WRAW-WMAN-2]    :   s2_raw_result_q[NORM_TOP-WMAN-1];
     wire s2_add_sticky = s2_add_carry ? (|s2_raw_result_q[WRAW-WMAN-3:0]) : (|s2_raw_result_q[NORM_TOP-WMAN-2:0]);
@@ -177,11 +177,11 @@ module zkf_add #(
     reg               [WINDEX-1:0] s3_sub_shift;
     reg signed [WEXP_UNBIASED-1:0] s3_sub_exp_unbiased;
 
-    wire                            s3_sub_zero_finite = s3_sub_zero;
-    wire                 [WMAN-1:0] s3_sub_significand;
-    wire                            s3_sub_guard;
-    wire                            s3_sub_round;
-    wire                            s3_sub_sticky;
+    wire            s3_sub_zero_finite = s3_sub_zero;
+    wire [WMAN-1:0] s3_sub_significand;
+    wire            s3_sub_guard;
+    wire            s3_sub_round;
+    wire            s3_sub_sticky;
 
     _zkf_add_sub_shift_apply #(.WMAN(WMAN), .WRAW(WRAW), .WINDEX(WINDEX)) u_sub_shift (
         .x(s3_raw_result),
@@ -262,18 +262,18 @@ module zkf_add #(
         // Stage 2 capture: the single carry-chain computes add or subtract by conditionally inverting the small
         // aligned operand and adding the carry-in.
         s2_sign              <= s1_result_sign;
-        s2_same_sign          <= s1_same_sign;
-        s2_force_zero         <= s1_force_zero;
-        s2_force_inf          <= s1_force_inf;
-        s2_exp_unbiased       <= s1_exp_unbiased;
-        s2_raw_result         <= s1_raw_result;
+        s2_same_sign         <= s1_same_sign;
+        s2_force_zero        <= s1_force_zero;
+        s2_force_inf         <= s1_force_inf;
+        s2_exp_unbiased      <= s1_exp_unbiased;
+        s2_raw_result        <= s1_raw_result;
 
         // Stage 3 capture: add-path normalization and subtract-path shift metadata.
-        s3_sign         <= s2_sign;
-        s3_same_sign    <= s2_same_sign;
-        s3_force_zero   <= s2_force_zero;
-        s3_force_inf    <= s2_force_inf;
-        s3_raw_result   <= s2_raw_result_q;
+        s3_sign             <= s2_sign;
+        s3_same_sign        <= s2_same_sign;
+        s3_force_zero       <= s2_force_zero;
+        s3_force_inf        <= s2_force_inf;
+        s3_raw_result       <= s2_raw_result_q;
         s3_add_exp_unbiased <= s2_add_exp_unbiased;
         s3_add_significand  <= s2_add_significand;
         s3_add_guard        <= s2_add_guard;
@@ -296,11 +296,7 @@ endmodule
 
 
 // Find the left shift needed to normalize a non-negative subtraction result.
-module _zkf_add_sub_shift_count #(
-    parameter WMAN   = 18,
-    parameter WRAW   = WMAN + 4,
-    parameter WINDEX = $clog2(WRAW)
-) (
+module _zkf_add_sub_shift_count #(parameter WMAN = 18, parameter WRAW = WMAN + 4, parameter WINDEX = $clog2(WRAW)) (
     input  wire   [WRAW-1:0] x,
     output wire              zero,
     output wire [WINDEX-1:0] shamt
@@ -352,11 +348,7 @@ endmodule
 
 
 // Apply the registered subtraction-normalization shift and exponent correction.
-module _zkf_add_sub_shift_apply #(
-    parameter WMAN          = 18,
-    parameter WRAW          = WMAN + 4,
-    parameter WINDEX        = $clog2(WRAW)
-) (
+module _zkf_add_sub_shift_apply #(parameter WMAN = 18, parameter WRAW = WMAN + 4, parameter WINDEX = $clog2(WRAW)) (
     input wire   [WRAW-1:0] x,
     input wire [WINDEX-1:0] shamt,
 
