@@ -31,8 +31,9 @@ module zkf_add #(
     localparam WRAW          = WEXT + 1;
     localparam WINDEX        = $clog2(WRAW);
     localparam WSHIFT        = (WEXP > (WINDEX + 1)) ? WEXP : (WINDEX + 1);
-    localparam WEXP_WIDE     = (WEXP > WINDEX) ? WEXP : WINDEX;
-    localparam WEXP_UNBIASED = WEXP_WIDE + ((WEXP == WINDEX) ? 2 : 1);
+    localparam WEXP_SIGNED   = WEXP + 1;
+    localparam WSHIFT_SIGNED = WINDEX + 2;
+    localparam WEXP_UNBIASED = (WEXP_SIGNED > WSHIFT_SIGNED) ? WEXP_SIGNED : WSHIFT_SIGNED;
 
     localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
     localparam [WEXP-1:0]   EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
@@ -154,12 +155,18 @@ module zkf_add #(
 
     wire             s2_sub_zero;
     wire [WINDEX-1:0] s2_sub_shift;
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_shift_ext = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_shift};
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased = s2_exp_unbiased - s2_sub_shift_ext;
+    wire [WINDEX-1:0] s2_sub_lead_index;
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_lead_index_ext =
+        {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_lead_index};
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_norm_top_ext =
+        {{(WEXP_UNBIASED-WINDEX){1'b0}}, NORM_TOP};
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased =
+        s2_exp_unbiased + s2_sub_lead_index_ext - s2_sub_norm_top_ext;
 
     _zkf_add_sub_shift_count #(.WMAN(WMAN), .WRAW(WRAW), .WINDEX(WINDEX)) u_sub_shift_count (
         .x(s2_raw_result_q),
         .zero(s2_sub_zero),
+        .lead_index(s2_sub_lead_index),
         .shamt(s2_sub_shift)
     );
 
@@ -310,30 +317,52 @@ module _zkf_add_sub_shift_count #(
 ) (
     input  wire   [WRAW-1:0] x,
     output wire              zero,
+    output wire [WINDEX-1:0] lead_index,
     output wire [WINDEX-1:0] shamt
 );
     localparam NORM_TOP_INT = WMAN + 2;
-    wire                    [NORM_TOP_INT:0] lead_at;
-    wire [((NORM_TOP_INT + 1) * WINDEX)-1:0] shamt_candidate;
-    wire [((NORM_TOP_INT + 2) * WINDEX)-1:0] shamt_stage;
-    assign shamt_stage[0 +: WINDEX] = {WINDEX{1'b0}};
-    genvar i_norm;
+    localparam NINPUT       = NORM_TOP_INT + 1;
+    localparam WPRIORITY    = 1 << WINDEX;
+
+    wire [((WINDEX + 1) * WPRIORITY)-1:0]          valid_stage;
+    wire [((WINDEX + 1) * WPRIORITY * WINDEX)-1:0] index_stage;
+
+    genvar i_leaf;
+    genvar i_level;
+    genvar i_node;
     generate
-        for (i_norm = 0; i_norm <= NORM_TOP_INT; i_norm = i_norm + 1) begin : g_norm
-            localparam integer SHIFT = NORM_TOP_INT - i_norm;
-            if (i_norm == NORM_TOP_INT) begin : g_top
-                assign lead_at[i_norm] = x[i_norm];
-            end else begin : g_lower
-                assign lead_at[i_norm] = x[i_norm] && !(|x[NORM_TOP_INT:i_norm+1]);
+        for (i_leaf = 0; i_leaf < WPRIORITY; i_leaf = i_leaf + 1) begin : g_leaf
+            if (i_leaf < NINPUT) begin : g_used
+                assign valid_stage[i_leaf] = x[i_leaf];
+            end else begin : g_padded
+                assign valid_stage[i_leaf] = 1'b0;
             end
-            assign shamt_candidate[i_norm * WINDEX +: WINDEX] =
-                SHIFT[WINDEX-1:0] & {WINDEX{lead_at[i_norm]}};
-            assign shamt_stage[(i_norm + 1) * WINDEX +: WINDEX] =
-                shamt_stage[i_norm * WINDEX +: WINDEX] | shamt_candidate[i_norm * WINDEX +: WINDEX];
+            assign index_stage[i_leaf * WINDEX +: WINDEX] = {WINDEX{1'b0}};
+        end
+
+        for (i_level = 0; i_level < WINDEX; i_level = i_level + 1) begin : g_level
+            localparam integer COUNT = WPRIORITY >> (i_level + 1);
+            localparam integer DIST  = 1 << i_level;
+            for (i_node = 0; i_node < COUNT; i_node = i_node + 1) begin : g_node
+                localparam integer OUT       = (i_level + 1) * WPRIORITY + i_node;
+                localparam integer LO        = i_level * WPRIORITY + (2 * i_node);
+                localparam integer HI        = LO + 1;
+                localparam integer OUT_INDEX = OUT * WINDEX;
+                localparam integer LO_INDEX  = LO * WINDEX;
+                localparam integer HI_INDEX  = HI * WINDEX;
+
+                wire [WINDEX-1:0] index_lo = index_stage[LO_INDEX +: WINDEX];
+                wire [WINDEX-1:0] index_hi = index_stage[HI_INDEX +: WINDEX] | DIST[WINDEX-1:0];
+
+                assign valid_stage[OUT] = valid_stage[LO] | valid_stage[HI];
+                assign index_stage[OUT_INDEX +: WINDEX] = valid_stage[HI] ? index_hi : index_lo;
+            end
         end
     endgenerate
-    assign zero  = ~|lead_at;
-    assign shamt = shamt_stage[(NORM_TOP_INT + 1) * WINDEX +: WINDEX];
+
+    assign zero       = ~valid_stage[WINDEX * WPRIORITY];
+    assign lead_index = index_stage[(WINDEX * WPRIORITY * WINDEX) +: WINDEX];
+    assign shamt = NORM_TOP_INT[WINDEX-1:0] - lead_index;
 endmodule
 
 

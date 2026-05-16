@@ -115,6 +115,8 @@ def arithmetic_configs(suite: str) -> list[RunConfig]:
         ("w8_m24_random", 8, 24, "random", 1024),
         ("w11_m53_random", 11, 53, "random", 384),
     ]
+    if suite == "add":
+        specs.append(("w6_m100_directed", 6, 100, "random", 0))
 
     return [
         RunConfig(
