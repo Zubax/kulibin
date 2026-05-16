@@ -71,6 +71,17 @@ module zkf_add #(
     wire  [WMAN-1:0] large_sig = a_mag_ge_b_mag ? a_key_sig : b_key_sig;
     wire  [WMAN-1:0] small_sig = a_mag_ge_b_mag ? b_key_sig : a_key_sig;
 
+    // Keep the stage-0 register inputs below as named nets instead of inlining them into the nonblocking assignments.
+    // This looks like a style-only distinction, but it is not for Yosys/nextpnr flow: inlining the finite/result
+    // sign expression into s0_sign caused Yosys/ABC/nextpnr to choose a much slower implementation
+    // (measured drop from 113.65 MHz to 101.08 MHz at WEXP=6, WMAN=18 on ECP5).
+    // The separate finite_sign/result_sign cone gives the optimizer a stable boundary and prevents it from folding
+    // the special-case sign logic back through the magnitude-order tie-breaker in a way that dominates the stage-0
+    // capture path. The exponent helpers are kept in the same style so the stage-0 capture list remains a set of
+    // simple, already-sized signals.
+    wire finite_sign = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
+    wire result_sign = (a_inf && a_sign) || (!a_inf && b_inf && b_sign) || (!a_inf && !b_inf && finite_sign);
+
     // Stage 0: decoded/classified operands and controls.
     reg                            s0_valid;
     reg                            s0_sign;
@@ -178,8 +189,7 @@ module zkf_add #(
         end
 
         // Stage 0 capture: finite operand order, exponent delta, and special-case controls.
-        s0_sign <= (a_inf && a_sign) || (!a_inf && b_inf && b_sign) ||
-                   (!a_inf && !b_inf && (a_mag_ge_b_mag ? a_sign : b_sign));
+        s0_sign         <= result_sign;
         s0_same_sign    <= same_sign;
         s0_finite_only  <= !a_inf && !b_inf;
         s0_force_zero   <= a_inf && b_inf && !same_sign;
@@ -216,6 +226,7 @@ endmodule
 module _zkf_add_ge #(parameter W = 18) (input wire [W-1:0] a, input wire [W-1:0] b, output wire ge);
     wire [W-1:0] diff = a ^ b;
     wire [W-1:0] a_gt_at;
+
     genvar i_bit;
     generate
         for (i_bit = 0; i_bit < W; i_bit = i_bit + 1) begin : g_bit
