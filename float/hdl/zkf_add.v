@@ -24,6 +24,8 @@ module zkf_add #(
         end
     endgenerate
 
+    // Note of caution: merely replacing a named net with its expression at place-of-use may drastically affect
+    // the synthesis outcome even though the circuit topology remains unchanged. All synthesis tools are unreliable.
     localparam WFRAC         = WMAN - 1;
     localparam WFULL         = WEXP + WMAN;
     localparam WGRS          = 3;
@@ -71,13 +73,10 @@ module zkf_add #(
     wire ordered_exp_sign = a_exp_ge_b_exp ? a_sign : b_sign;
     wire inf_sign = (a_inf && a_sign) || (!a_inf && b_inf && b_sign);
 
-    wire  [WEXP-1:0] large_exp = a_exp_ge_b_exp ? a_key_exp : b_key_exp;
-    wire  [WEXP-1:0] small_exp = a_exp_ge_b_exp ? b_key_exp : a_key_exp;
-    wire  [WMAN-1:0] large_sig_exp = a_exp_ge_b_exp ? a_key_sig : b_key_sig;
-    wire  [WMAN-1:0] small_sig_exp = a_exp_ge_b_exp ? b_key_sig : a_key_sig;
-    // Keep the stage-0 register inputs below as named nets instead of inlining them into the nonblocking assignments.
-    // This looks like a style-only distinction, but it is not for Yosys/nextpnr flow. The exponent helpers are kept
-    // in the same style so the stage-0 capture list remains a set of simple, already-sized signals.
+    wire [WEXP-1:0] large_exp = a_exp_ge_b_exp ? a_key_exp : b_key_exp;
+    wire [WEXP-1:0] small_exp = a_exp_ge_b_exp ? b_key_exp : a_key_exp;
+    wire [WMAN-1:0] large_sig_exp = a_exp_ge_b_exp ? a_key_sig : b_key_sig;
+    wire [WMAN-1:0] small_sig_exp = a_exp_ge_b_exp ? b_key_sig : a_key_sig;
 
     // Stage 0: decoded/classified operands, exponent order, and full-magnitude order.
     reg                            s0_valid;
@@ -125,10 +124,9 @@ module zkf_add #(
     wire [WRAW-1:0] s1_adder_b_abs = {1'b0, s1_swap_equal ? s1_large_ext_exp : s1_small_aligned};
     wire [WRAW-1:0] s1_adder_b     = s1_same_sign ? s1_adder_b_abs : ~s1_adder_b_abs;
     wire [WRAW-1:0] s1_raw_result  = s1_adder_a + s1_adder_b + {{(WRAW-1){1'b0}}, !s1_same_sign};
-    wire             s1_equal_finite_sign = s1_same_sign ? s1_a_sign :
-                                            (s1_a_mag_ge_b_mag ? s1_a_sign : s1_b_sign);
-    wire             s1_finite_sign       = s1_exp_eq ? s1_equal_finite_sign : s1_ordered_exp_sign;
-    wire             s1_result_sign       = s1_force_inf ? s1_inf_sign : s1_finite_sign;
+    wire             s1_equal_finite_sign = s1_same_sign ? s1_a_sign : (s1_a_mag_ge_b_mag ? s1_a_sign : s1_b_sign);
+    wire             s1_finite_sign       = s1_exp_eq    ? s1_equal_finite_sign : s1_ordered_exp_sign;
+    wire             s1_result_sign       = s1_force_inf ? s1_inf_sign          : s1_finite_sign;
 
     // Stage 2: registered raw add/sub result.
     reg                            s2_valid;
@@ -145,17 +143,16 @@ module zkf_add #(
     // cancellation only occurs with small exact alignment shifts; far cancellation cannot require a full-width
     // discarded tail, and the compact GRS representation supplies the packer with sufficient rounding state.
     wire s2_add_carry = s2_raw_result_q[WRAW-1];
-    wire signed [WEXP_UNBIASED-1:0] s2_add_exp_unbiased =
-        s2_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
-    wire [WMAN-1:0] s2_add_significand =
-        s2_add_carry ? s2_raw_result_q[WRAW-1 -: WMAN] : s2_raw_result_q[NORM_TOP -: WMAN];
-    wire s2_add_guard  = s2_add_carry ? s2_raw_result_q[WRAW-WMAN-1] : s2_raw_result_q[NORM_TOP-WMAN];
-    wire s2_add_round  = s2_add_carry ? s2_raw_result_q[WRAW-WMAN-2] : s2_raw_result_q[NORM_TOP-WMAN-1];
+    wire signed [WEXP_UNBIASED-1:0] s2_add_exp_unbiased = s2_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
+    wire [WMAN-1:0] s2_add_significand = s2_add_carry ? s2_raw_result_q[WRAW-1 -: WMAN]
+                                                      : s2_raw_result_q[NORM_TOP -: WMAN];
+    wire s2_add_guard  = s2_add_carry ?   s2_raw_result_q[WRAW-WMAN-1]    :   s2_raw_result_q[NORM_TOP-WMAN];
+    wire s2_add_round  = s2_add_carry ?   s2_raw_result_q[WRAW-WMAN-2]    :   s2_raw_result_q[NORM_TOP-WMAN-1];
     wire s2_add_sticky = s2_add_carry ? (|s2_raw_result_q[WRAW-WMAN-3:0]) : (|s2_raw_result_q[NORM_TOP-WMAN-2:0]);
 
-    wire             s2_sub_zero;
-    wire [WINDEX-1:0] s2_sub_shift;
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_shift_ext = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_shift};
+    wire                            s2_sub_zero;
+    wire               [WINDEX-1:0] s2_sub_shift;
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_shift};
     wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased = s2_exp_unbiased - s2_sub_shift_ext;
 
     _zkf_add_sub_shift_count #(.WMAN(WMAN), .WRAW(WRAW), .WINDEX(WINDEX)) u_sub_shift_count (
@@ -196,15 +193,13 @@ module zkf_add #(
         .sticky(s3_sub_sticky)
     );
 
-    wire s3_finite_zero = s3_same_sign ? (~|s3_raw_result) : s3_sub_zero_finite;
-    wire s3_pack_force_zero = s3_force_zero || (!s3_force_inf && s3_finite_zero);
-    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_unbiased =
-        s3_same_sign ? s3_add_exp_unbiased : s3_sub_exp_unbiased;
-    wire [WMAN-1:0] s3_pack_significand =
-        s3_same_sign ? s3_add_significand : s3_sub_significand;
-    wire s3_pack_guard  = s3_same_sign ? s3_add_guard  : s3_sub_guard;
-    wire s3_pack_round  = s3_same_sign ? s3_add_round  : s3_sub_round;
-    wire s3_pack_sticky = s3_same_sign ? s3_add_sticky : s3_sub_sticky;
+    wire                            s3_finite_zero       = s3_same_sign ? (~|s3_raw_result)   : s3_sub_zero_finite;
+    wire                            s3_pack_force_zero   = s3_force_zero || (!s3_force_inf && s3_finite_zero);
+    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_unbiased = s3_same_sign ? s3_add_exp_unbiased : s3_sub_exp_unbiased;
+    wire                 [WMAN-1:0] s3_pack_significand  = s3_same_sign ? s3_add_significand  : s3_sub_significand;
+    wire                            s3_pack_guard        = s3_same_sign ? s3_add_guard        : s3_sub_guard;
+    wire                            s3_pack_round        = s3_same_sign ? s3_add_round        : s3_sub_round;
+    wire                            s3_pack_sticky       = s3_same_sign ? s3_add_sticky       : s3_sub_sticky;
 
     _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED)) u_pack (
         .clk(clk),
@@ -246,8 +241,7 @@ module zkf_add #(
         s0_force_inf        <= a_inf || b_inf;
         s0_exp_eq           <= a_exp_eq_b_exp;
         s0_a_mag_ge_b_mag   <= a_mag_ge_b_mag;
-        s0_exp_unbiased     <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp} -
-                               {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
+        s0_exp_unbiased     <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp} - {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
         s0_exp_diff         <= large_exp - small_exp;
         s0_large_sig_exp    <= large_sig_exp;
         s0_small_sig_exp    <= small_sig_exp;
