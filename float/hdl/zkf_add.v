@@ -167,7 +167,6 @@ module zkf_add #(
     reg                            s3_same_sign;
     reg                            s3_force_zero;
     reg                            s3_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s3_exp_unbiased;
     reg                 [WRAW-1:0] s3_raw_result;
     reg signed [WEXP_UNBIASED-1:0] s3_add_exp_unbiased;
     reg                 [WMAN-1:0] s3_add_significand;
@@ -274,7 +273,6 @@ module zkf_add #(
         s3_same_sign    <= s2_same_sign;
         s3_force_zero   <= s2_force_zero;
         s3_force_inf    <= s2_force_inf;
-        s3_exp_unbiased <= s2_exp_unbiased;
         s3_raw_result   <= s2_raw_result_q;
         s3_add_exp_unbiased <= s2_add_exp_unbiased;
         s3_add_significand  <= s2_add_significand;
