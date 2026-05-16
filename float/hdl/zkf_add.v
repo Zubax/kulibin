@@ -155,18 +155,12 @@ module zkf_add #(
 
     wire             s2_sub_zero;
     wire [WINDEX-1:0] s2_sub_shift;
-    wire [WINDEX-1:0] s2_sub_lead_index;
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_lead_index_ext =
-        {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_lead_index};
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_norm_top_ext =
-        {{(WEXP_UNBIASED-WINDEX){1'b0}}, NORM_TOP};
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased =
-        s2_exp_unbiased + s2_sub_lead_index_ext - s2_sub_norm_top_ext;
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_shift_ext = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_shift};
+    wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased = s2_exp_unbiased - s2_sub_shift_ext;
 
     _zkf_add_sub_shift_count #(.WMAN(WMAN), .WRAW(WRAW), .WINDEX(WINDEX)) u_sub_shift_count (
         .x(s2_raw_result_q),
         .zero(s2_sub_zero),
-        .lead_index(s2_sub_lead_index),
         .shamt(s2_sub_shift)
     );
 
@@ -317,7 +311,6 @@ module _zkf_add_sub_shift_count #(
 ) (
     input  wire   [WRAW-1:0] x,
     output wire              zero,
-    output wire [WINDEX-1:0] lead_index,
     output wire [WINDEX-1:0] shamt
 );
     localparam NORM_TOP_INT = WMAN + 2;
@@ -360,8 +353,8 @@ module _zkf_add_sub_shift_count #(
         end
     endgenerate
 
-    assign zero       = ~valid_stage[WINDEX * WPRIORITY];
-    assign lead_index = index_stage[(WINDEX * WPRIORITY * WINDEX) +: WINDEX];
+    assign zero  = ~valid_stage[WINDEX * WPRIORITY];
+    wire [WINDEX-1:0] lead_index = index_stage[(WINDEX * WPRIORITY * WINDEX) +: WINDEX];
     assign shamt = NORM_TOP_INT[WINDEX-1:0] - lead_index;
 endmodule
 
