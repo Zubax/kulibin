@@ -312,7 +312,7 @@ module _zkf_add_sub_shift_count #(
     localparam WPRIORITY    = 1 << WINDEX;
 
     wire [((WINDEX + 1) * WPRIORITY)-1:0]          valid_stage;
-    wire [((WINDEX + 1) * WPRIORITY * WINDEX)-1:0] index_stage;
+    wire [((WINDEX + 1) * WPRIORITY * WINDEX)-1:0] shamt_stage;
 
     genvar i_leaf;
     genvar i_level;
@@ -320,16 +320,17 @@ module _zkf_add_sub_shift_count #(
     generate
         for (i_leaf = 0; i_leaf < WPRIORITY; i_leaf = i_leaf + 1) begin : g_leaf
             if (i_leaf < NINPUT) begin : g_used
+                localparam integer SHIFT = NORM_TOP_INT - i_leaf;
                 assign valid_stage[i_leaf] = x[i_leaf];
+                assign shamt_stage[i_leaf * WINDEX +: WINDEX] = SHIFT[WINDEX-1:0];
             end else begin : g_padded
                 assign valid_stage[i_leaf] = 1'b0;
+                assign shamt_stage[i_leaf * WINDEX +: WINDEX] = {WINDEX{1'b0}};
             end
-            assign index_stage[i_leaf * WINDEX +: WINDEX] = {WINDEX{1'b0}};
         end
 
         for (i_level = 0; i_level < WINDEX; i_level = i_level + 1) begin : g_level
             localparam integer COUNT = WPRIORITY >> (i_level + 1);
-            localparam integer DIST  = 1 << i_level;
             for (i_node = 0; i_node < COUNT; i_node = i_node + 1) begin : g_node
                 localparam integer OUT       = (i_level + 1) * WPRIORITY + i_node;
                 localparam integer LO        = i_level * WPRIORITY + (2 * i_node);
@@ -338,18 +339,17 @@ module _zkf_add_sub_shift_count #(
                 localparam integer LO_INDEX  = LO * WINDEX;
                 localparam integer HI_INDEX  = HI * WINDEX;
 
-                wire [WINDEX-1:0] index_lo = index_stage[LO_INDEX +: WINDEX];
-                wire [WINDEX-1:0] index_hi = index_stage[HI_INDEX +: WINDEX] | DIST[WINDEX-1:0];
+                wire [WINDEX-1:0] shamt_lo = shamt_stage[LO_INDEX +: WINDEX];
+                wire [WINDEX-1:0] shamt_hi = shamt_stage[HI_INDEX +: WINDEX];
 
                 assign valid_stage[OUT] = valid_stage[LO] | valid_stage[HI];
-                assign index_stage[OUT_INDEX +: WINDEX] = valid_stage[HI] ? index_hi : index_lo;
+                assign shamt_stage[OUT_INDEX +: WINDEX] = valid_stage[HI] ? shamt_hi : shamt_lo;
             end
         end
     endgenerate
 
     assign zero  = ~valid_stage[WINDEX * WPRIORITY];
-    wire [WINDEX-1:0] lead_index = index_stage[(WINDEX * WPRIORITY * WINDEX) +: WINDEX];
-    assign shamt = NORM_TOP_INT[WINDEX-1:0] - lead_index;
+    assign shamt = shamt_stage[(WINDEX * WPRIORITY * WINDEX) +: WINDEX];
 endmodule
 
 
