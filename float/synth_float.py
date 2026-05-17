@@ -1152,13 +1152,29 @@ def synthesize_with_progress(flow_name: str, modules: list[ModuleSpec], synthesi
     return results
 
 
+def require_passing_results(flow_name: str, results: list[dict[str, str]], report_path: Path) -> None:
+    failed = [result for result in results if result["status"] != "PASS"]
+    if not failed:
+        return
+
+    print(f"{flow_name} synthesis failed; see {report_path}")
+    for result in failed:
+        print(
+            f"  {result['name']}: status={result['status']} "
+            f"target={result.get('target', 'not reported')} fmax={result.get('fmax', 'not reported')}"
+        )
+    raise SystemExit(1)
+
+
 def run_yosys_flow(modules: list[ModuleSpec]) -> None:
     yosys = require_executable("YOSYS", "yosys")
     nextpnr = require_executable("NEXTPNR_ECP5", "nextpnr-ecp5")
     YOSYS_BUILD.mkdir(parents=True, exist_ok=True)
     results = synthesize_with_progress("yosys", modules, lambda spec: synthesize_yosys(spec, yosys, nextpnr))
     write_yosys_html(results)
-    print(f"wrote {YOSYS_BUILD / 'index.html'}")
+    report_path = YOSYS_BUILD / "index.html"
+    print(f"wrote {report_path}")
+    require_passing_results("Yosys", results, report_path)
 
 
 def project_name(spec: ModuleSpec) -> str:
@@ -1595,7 +1611,9 @@ def run_diamond_flow(modules: list[ModuleSpec]) -> bool:
     DIAMOND_BUILD.mkdir(parents=True, exist_ok=True)
     results = synthesize_with_progress("diamond", modules, lambda spec: synthesize_diamond(spec, tools))
     write_diamond_html(results)
-    print(f"wrote {DIAMOND_BUILD / 'index.html'}")
+    report_path = DIAMOND_BUILD / "index.html"
+    print(f"wrote {report_path}")
+    require_passing_results("Diamond/LSE", results, report_path)
     return True
 
 

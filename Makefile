@@ -1,5 +1,5 @@
-## Run every FuseSoC sim target in the library. Fails on the first target whose
-## testbench hits `$fatal` (or any other nonzero exit from the simulator).
+## Run every FuseSoC sim target in the library and the synthesis checks. Fails
+## on the first nonzero exit from a simulator or synthesis flow.
 
 FUSESOC ?= fusesoc
 VERIBLE_VERILOG_LINT ?= verible-verilog-lint
@@ -63,7 +63,7 @@ FLOAT_PIPE_MATRIX = \
 	w24_n2:24:2:96
 
 .PHONY: \
-	verify verify-float verify-float-model verify-float-icarus verify-float-verilator \
+	verify verify-float verify-float-model verify-float-icarus verify-float-verilator verify-synth \
 	coverage-float-report coverage-float-gate lint library synth-float synth-float-yosys \
 	synth-float-diamond clean
 
@@ -75,7 +75,8 @@ verify: library
 	  $(FUSESOC) run --target=$$target $$core; \
 	done
 	@$(MAKE) verify-float
-	@echo "All testbenches passed."
+	@$(MAKE) verify-synth
+	@echo "All verification checks passed."
 
 verify-float: library
 	@$(MAKE) verify-float-model
@@ -196,6 +197,9 @@ coverage-float-report:
 
 coverage-float-gate:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator --output-dir build/float/coverage --gate
+
+verify-synth: library
+	@$(MAKE) synth-float-yosys
 
 lint:
 	@find . -name '*.v' -not -path './build/*' -print0 | \

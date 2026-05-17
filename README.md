@@ -21,11 +21,13 @@ Higher-level modules serve as usage examples for the lower-level ones.
 
 ## Verification
 
-Each module is wrapped in a FuseSoC `.core` file. All testbenches are run locally with:
+Each module is wrapped in a FuseSoC `.core` file.
+All testbenches and validation synthesis targets are run locally with:
 
     make verify
 
-which invokes `fusesoc run --target=sim[_<name>] zubax:kulibin:<module>` for every registered target.
+A failed simulation, uncovered gated RTL line (where required), synthesis failure, or timing miss fails `make verify`.
+
 To simulate one specific target instead of the full library, run e.g.
 `fusesoc run --target=sim_cic_decimator zubax:kulibin:cic_decimator` from the repository root.
 
@@ -33,10 +35,20 @@ See CI files in `.github/`.
 
 ### Synthesis evaluation
 
+The default verification path runs only the required Yosys/nextpnr synthesis flow:
+
+    make synth-float-yosys
+
+This writes `build/float_synth_yosys/index.html` and exits nonzero if any configured float module fails synthesis or
+misses timing. The target frequency defaults to 100 MHz and can be overridden with `YOSYS_TARGET_FREQ_MHZ`.
+
+To run all available synthesis flows manually:
+
     make synth-float
 
-This runs the Yosys/nextpnr flow and optionally Diamond/LSE if available.
-The reports are written to `build/*synth*/index.html`.
+This runs the required Yosys/nextpnr flow and also runs Diamond/LSE if the Diamond tools are available. Diamond can be
+run explicitly with `make synth-float-diamond`; its report is written to `build/float_synth_diamond/index.html` and it
+is intentionally not part of default verification because Diamond may be unavailable.
 
 <!-- hierarchy-start -->
 ## Module dependency graph
