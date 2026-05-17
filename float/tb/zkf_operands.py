@@ -82,6 +82,16 @@ def random_operand(fmt: ZkfFormat, rng: np.random.Generator) -> int:
     return random_normal(fmt, rng)
 
 
+def random_bits(width: int, rng: np.random.Generator) -> int:
+    value = 0
+    offset = 0
+    while offset < width:
+        chunk = min(31, width - offset)
+        value |= int(rng.integers(0, 1 << chunk)) << offset
+        offset += chunk
+    return value
+
+
 def random_pack_mag_scale(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int]:
     wmag = 2 * fmt.wman
     sign = int(rng.integers(0, 2))

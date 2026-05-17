@@ -11,6 +11,14 @@ filesets:
       - hdl/zkf_mul.v
       - hdl/zkf_add.v
       - hdl/zkf_div.v
+      - hdl/zkf_abs.v
+      - hdl/zkf_neg.v
+      - hdl/zkf_is_finite.v
+      - hdl/zkf_saturate.v
+      - hdl/zkf_cmp_comb.v
+      - hdl/zkf_cmp.v
+      - hdl/zkf_sort.v
+      - hdl/zkf_addsub.v
     file_type: verilogSource
 
   rtl_pack:
@@ -42,6 +50,47 @@ filesets:
       - hdl/_zkf_pipe.v
     file_type: verilogSource
 
+  rtl_abs:
+    files:
+      - hdl/zkf_abs.v
+    file_type: verilogSource
+
+  rtl_neg:
+    files:
+      - hdl/zkf_neg.v
+    file_type: verilogSource
+
+  rtl_is_finite:
+    files:
+      - hdl/zkf_is_finite.v
+    file_type: verilogSource
+
+  rtl_saturate:
+    files:
+      - hdl/zkf_saturate.v
+    file_type: verilogSource
+
+  # zkf_cmp_comb is intentionally tested through registered public wrappers below:
+  # zkf_cmp covers its flags directly and zkf_sort covers consumers of the ordering decision.
+  rtl_cmp:
+    files:
+      - hdl/zkf_cmp_comb.v
+      - hdl/zkf_cmp.v
+    file_type: verilogSource
+
+  rtl_sort:
+    files:
+      - hdl/zkf_cmp_comb.v
+      - hdl/zkf_sort.v
+    file_type: verilogSource
+
+  rtl_addsub:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_add.v
+      - hdl/zkf_addsub.v
+    file_type: verilogSource
+
   tb_cocotb:
     files:
       - tb/zkf_model.py:
@@ -63,6 +112,20 @@ filesets:
       - tb/test_div.py:
           file_type: user
       - tb/test_pipe.py:
+          file_type: user
+      - tb/test_abs.py:
+          file_type: user
+      - tb/test_neg.py:
+          file_type: user
+      - tb/test_is_finite.py:
+          file_type: user
+      - tb/test_saturate.py:
+          file_type: user
+      - tb/test_addsub.py:
+          file_type: user
+      - tb/test_cmp.py:
+          file_type: user
+      - tb/test_sort.py:
           file_type: user
 
 parameters:
@@ -253,6 +316,146 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_div
+    parameters: *float_binary_params
+
+  sim_addsub_icarus:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_addsub
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_addsub_verilator:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_addsub
+    parameters: *float_binary_params
+
+  sim_abs_icarus:
+    filesets: [rtl_abs, tb_cocotb]
+    toplevel: zkf_abs
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_abs
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_abs_verilator:
+    filesets: [rtl_abs, tb_cocotb]
+    toplevel: zkf_abs
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_abs
+    parameters: *float_binary_params
+
+  sim_neg_icarus:
+    filesets: [rtl_neg, tb_cocotb]
+    toplevel: zkf_neg
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_neg
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_neg_verilator:
+    filesets: [rtl_neg, tb_cocotb]
+    toplevel: zkf_neg
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_neg
+    parameters: *float_binary_params
+
+  sim_is_finite_icarus:
+    filesets: [rtl_is_finite, tb_cocotb]
+    toplevel: zkf_is_finite
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_is_finite
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_is_finite_verilator:
+    filesets: [rtl_is_finite, tb_cocotb]
+    toplevel: zkf_is_finite
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_is_finite
+    parameters: *float_binary_params
+
+  sim_saturate_icarus:
+    filesets: [rtl_saturate, tb_cocotb]
+    toplevel: zkf_saturate
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_saturate
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_saturate_verilator:
+    filesets: [rtl_saturate, tb_cocotb]
+    toplevel: zkf_saturate
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_saturate
+    parameters: *float_binary_params
+
+  sim_cmp_icarus:
+    filesets: [rtl_cmp, tb_cocotb]
+    toplevel: zkf_cmp
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_cmp
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_cmp_verilator:
+    filesets: [rtl_cmp, tb_cocotb]
+    toplevel: zkf_cmp
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_cmp
+    parameters: *float_binary_params
+
+  sim_sort_icarus:
+    filesets: [rtl_sort, tb_cocotb]
+    toplevel: zkf_sort
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_sort
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_sort_verilator:
+    filesets: [rtl_sort, tb_cocotb]
+    toplevel: zkf_sort
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_sort
     parameters: *float_binary_params
 
   sim_pipe_icarus:

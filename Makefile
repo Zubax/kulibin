@@ -57,6 +57,13 @@ FLOAT_BINARY_MATRIX = \
 	w8_m24_random:8:24:random:1024 \
 	w11_m53_random:11:53:random:384
 
+FLOAT_UNARY_MATRIX = \
+	w2_m4_exhaustive:2:4:exhaustive:0 \
+	w3_m4_exhaustive:3:4:exhaustive:0 \
+	w5_m11_random:5:11:random:512 \
+	w8_m24_random:8:24:random:1024 \
+	w11_m53_random:11:53:random:384
+
 FLOAT_PIPE_MATRIX = \
 	w8_n0:8:0:64 \
 	w8_n4:8:4:96 \
@@ -113,6 +120,16 @@ verify-float-icarus: library
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_unary() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; \
+	  root="build/float/$${sim}/$${op}/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	run_pipe() { \
 	  sim="$$1"; config="$$2"; width="$$3"; stages="$$4"; count="$$5"; \
 	  root="build/float/$${sim}/pipe/$${config}"; \
@@ -127,10 +144,16 @@ verify-float-icarus: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack icarus "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
 	done; \
-	for op in mul add div; do \
+	for op in mul add div addsub cmp sort; do \
 	  for spec in $(FLOAT_BINARY_MATRIX); do \
 	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	    run_binary icarus "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  done; \
+	done; \
+	for op in abs neg is_finite saturate; do \
+	  for spec in $(FLOAT_UNARY_MATRIX); do \
+	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	    run_unary icarus "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
 	  done; \
 	done; \
 	run_binary icarus add w6_m100_directed 6 100 directed 0; \
@@ -166,6 +189,16 @@ verify-float-verilator: library
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_unary() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; \
+	  root="build/float/$${sim}/$${op}/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	run_pipe() { \
 	  sim="$$1"; config="$$2"; width="$$3"; stages="$$4"; count="$$5"; \
 	  root="build/float/$${sim}/pipe/$${config}"; \
@@ -180,10 +213,16 @@ verify-float-verilator: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack verilator "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
 	done; \
-	for op in mul add div; do \
+	for op in mul add div addsub cmp sort; do \
 	  for spec in $(FLOAT_BINARY_MATRIX); do \
 	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	    run_binary verilator "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  done; \
+	done; \
+	for op in abs neg is_finite saturate; do \
+	  for spec in $(FLOAT_UNARY_MATRIX); do \
+	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	    run_unary verilator "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
 	  done; \
 	done; \
 	run_binary verilator add w6_m100_directed 6 100 directed 0; \

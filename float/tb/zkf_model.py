@@ -338,6 +338,51 @@ def add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int:
     return round_fraction_to_zkf(fmt, 1 if result < 0 else 0, abs(result))
 
 
+def canonicalize_special(fmt: ZkfFormat, bits: int) -> int:
+    item = decode(fmt, bits)
+    if item.is_zero:
+        return zero(fmt)
+    if item.is_inf:
+        return canonical_inf(fmt, item.sign)
+    return item.bits
+
+
+def ordered_key(fmt: ZkfFormat, bits: int) -> int:
+    canonical = canonicalize_special(fmt, bits)
+    sign = (canonical >> fmt.sign_shift) & 1
+    return (~canonical & mask(fmt.wfull)) if sign else (canonical | (1 << fmt.sign_shift))
+
+
+def cmp_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, int, int]:
+    a_key = ordered_key(fmt, a_bits)
+    b_key = ordered_key(fmt, b_bits)
+    return int(a_key > b_key), int(a_key == b_key), int(a_key < b_key)
+
+
+def sort_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, int]:
+    _, _, a_lt_b = cmp_reference(fmt, a_bits, b_bits)
+    return (a_bits, b_bits) if a_lt_b else (b_bits, a_bits)
+
+
+def abs_reference(fmt: ZkfFormat, bits: int) -> int:
+    return bits & mask(fmt.sign_shift)
+
+
+def neg_reference(fmt: ZkfFormat, bits: int) -> int:
+    return (bits ^ (1 << fmt.sign_shift)) & mask(fmt.wfull)
+
+
+def is_finite_reference(fmt: ZkfFormat, bits: int) -> int:
+    return int(not decode(fmt, bits).is_inf)
+
+
+def saturate_reference(fmt: ZkfFormat, bits: int) -> int:
+    item = decode(fmt, bits)
+    if not item.is_inf:
+        return item.bits
+    return normal(fmt, item.sign, fmt.exp_max_finite, fmt.frac_mask)
+
+
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
     item = decode(fmt, bits)
     if item.exp == 0:

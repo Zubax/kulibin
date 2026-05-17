@@ -95,6 +95,15 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
+        name="zkf_addsub",
+        label="zkf_addsub",
+        top="zkf_addsub_synth_top",
+        kind="addsub",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
         name="_zkf_div_core",
         label="_zkf_div_core",
         top="_zkf_div_core_synth_top",
@@ -108,6 +117,24 @@ MODULES = [
         label="zkf_div",
         top="zkf_div_synth_top",
         kind="div",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_cmp",
+        label="zkf_cmp",
+        top="zkf_cmp_synth_top",
+        kind="cmp",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_sort",
+        label="zkf_sort",
+        top="zkf_sort_synth_top",
+        kind="sort",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
@@ -182,6 +209,12 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "zkf_add.v",
         ]
+    if spec.kind == "addsub":
+        return [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "zkf_add.v",
+            REPO / "float" / "hdl" / "zkf_addsub.v",
+        ]
     if spec.kind == "div_core":
         return [REPO / "float" / "hdl" / "_zkf_div_core.v"]
     if spec.kind == "div":
@@ -189,6 +222,16 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "_zkf_div_core.v",
             REPO / "float" / "hdl" / "zkf_div.v",
+        ]
+    if spec.kind == "cmp":
+        return [
+            REPO / "float" / "hdl" / "zkf_cmp_comb.v",
+            REPO / "float" / "hdl" / "zkf_cmp.v",
+        ]
+    if spec.kind == "sort":
+        return [
+            REPO / "float" / "hdl" / "zkf_cmp_comb.v",
+            REPO / "float" / "hdl" / "zkf_sort.v",
         ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -207,12 +250,14 @@ def register_stages(spec: ModuleSpec) -> int:
         return 2
     if spec.kind == "mul":
         return 3
-    if spec.kind == "add":
+    if spec.kind in {"add", "addsub"}:
         return 6
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
         return div_core_stages + 2
+    if spec.kind in {"cmp", "sort"}:
+        return 1
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -468,6 +513,78 @@ endmodule
     )
 
 
+def write_addsub_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    input  wire                 op_sub,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+    {SYNTH_REG_ATTR}
+    reg                 r_op_sub;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_addsub #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .op_sub(r_op_sub),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a      <= a;
+        r_b      <= b;
+        r_op_sub <= op_sub;
+        r_y      <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wexp_unbiased = spec.wexp + 2
@@ -673,6 +790,161 @@ endmodule
     )
 
 
+def write_cmp_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    output wire                 out_valid,
+    output wire                 a_gt_b,
+    output wire                 a_eq_b,
+    output wire                 a_lt_b
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire dut_out_valid;
+    wire dut_a_gt_b;
+    wire dut_a_eq_b;
+    wire dut_a_lt_b;
+
+    {SYNTH_REG_ATTR}
+    reg r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg r_a_gt_b;
+    {SYNTH_REG_ATTR}
+    reg r_a_eq_b;
+    {SYNTH_REG_ATTR}
+    reg r_a_lt_b;
+
+    assign out_valid = r_out_valid;
+    assign a_gt_b    = r_a_gt_b;
+    assign a_eq_b    = r_a_eq_b;
+    assign a_lt_b    = r_a_lt_b;
+
+    zkf_cmp #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .a_gt_b(dut_a_gt_b),
+        .a_eq_b(dut_a_eq_b),
+        .a_lt_b(dut_a_lt_b)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a      <= a;
+        r_b      <= b;
+        r_a_gt_b <= dut_a_gt_b;
+        r_a_eq_b <= dut_a_eq_b;
+        r_a_lt_b <= dut_a_lt_b;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_sort_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] min,
+    output wire [{wfull - 1}:0] max
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_min;
+    wire [{wfull - 1}:0] dut_max;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_min;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_max;
+
+    assign out_valid = r_out_valid;
+    assign min       = r_min;
+    assign max       = r_max;
+
+    zkf_sort #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .out_valid(dut_out_valid),
+        .min(dut_min),
+        .max(dut_max)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a   <= a;
+        r_b   <= b;
+        r_min <= dut_min;
+        r_max <= dut_max;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -680,10 +952,16 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_mul_wrapper(spec, path)
     elif spec.kind == "add":
         write_add_wrapper(spec, path)
+    elif spec.kind == "addsub":
+        write_addsub_wrapper(spec, path)
     elif spec.kind == "div_core":
         write_div_core_wrapper(spec, path)
     elif spec.kind == "div":
         write_div_wrapper(spec, path)
+    elif spec.kind == "cmp":
+        write_cmp_wrapper(spec, path)
+    elif spec.kind == "sort":
+        write_sort_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")
 
