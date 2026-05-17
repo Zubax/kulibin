@@ -600,24 +600,25 @@ module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18) (
 
 ---
 
-## Combinational helpers
+## 13. Compare and Sort
 
-These circuits are very simple and as such usually do not warrant a separate pipeline stage.
-They may be implemented as functions inside a parameterized module, or macros; better ideas welcome.
+Registered floating-point comparison and min/max sort. Comparison requires canonicalization
+(exponent-zero inputs are treated as +0, exponent-all-ones inputs as signed infinity, fraction ignored for both classes),
+a sign-magnitude to ordered-unsigned key transform, and a WFULL-wide compare;
+the combinational path is deep enough to warrant a single register stage at the output.
+
 Infinities of the same sign compare equal.
-
-- `zkf_is_finite(x) -> bool` -- true if x is finite
-- `zkf_saturate(x) -> X` -- if x is finite, returns it as-is; if infinite, returns the nearest representable finite.
-- `zkf_abs(x) -> X` -- zero the sign bit.
-- `zkf_neg(x) -> X` -- flip the sign bit.
-
-Comparison/sorting is cheap as it can be done using WFULL-wide integer arithmetic.
 
 ```verilog
 zkf_cmp #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire             in_valid,
     input wire [WFULL-1:0] a,
     input wire [WFULL-1:0] b,
 
+    output reg out_valid,
     output reg a_gt_b, // a > b
     output reg a_eq_b, // a = b
     output reg a_lt_b  // a < b
@@ -626,13 +627,30 @@ zkf_cmp #(parameter WEXP = 6, parameter WMAN = 18) (
 
 ```verilog
 zkf_sort #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire             in_valid,
     input wire [WFULL-1:0] a,
     input wire [WFULL-1:0] b,
 
-    output reg min, // min(a,b)
-    output reg max  // max(a,b)
+    output reg             out_valid,
+    output reg [WFULL-1:0] min, // min(a,b)
+    output reg [WFULL-1:0] max  // max(a,b)
 );
 ```
+
+---
+
+## Combinational helpers
+
+These circuits are very simple and as such usually do not warrant a separate pipeline stage.
+They may be implemented as functions inside a parameterized module, or macros; better ideas welcome.
+
+- `zkf_is_finite(x) -> bool` -- true if x is finite
+- `zkf_saturate(x) -> X` -- if x is finite, returns it as-is; if infinite, returns the nearest representable finite.
+- `zkf_abs(x) -> X` -- zero the sign bit.
+- `zkf_neg(x) -> X` -- flip the sign bit.
 
 ---
 
