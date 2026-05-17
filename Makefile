@@ -69,6 +69,14 @@ FLOAT_PIPE_MATRIX = \
 	w8_n4:8:4:96 \
 	w24_n2:24:2:96
 
+# The const wrap requires WEXP>=3 to fit 1/3 and a 4-bit mantissa is the minimum accepted by the format. Vectors
+# are hardcoded, so kind/count/seed are unused (passed for plusarg uniformity).
+FLOAT_CONST_MATRIX = \
+	w3_m4:3:4 \
+	w6_m18:6:18 \
+	w8_m24:8:24 \
+	w11_m53:11:53
+
 .PHONY: \
 	verify verify-float verify-float-model verify-float-icarus verify-float-verilator verify-synth \
 	coverage-float-report coverage-float-gate lint library synth-float synth-float-yosys \
@@ -156,6 +164,10 @@ verify-float-icarus: library
 	    run_unary icarus "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
 	  done; \
 	done; \
+	for spec in $(FLOAT_CONST_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_unary icarus const "$$1" "$$2" "$$3" directed 0; \
+	done; \
 	run_binary icarus add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
@@ -224,6 +236,10 @@ verify-float-verilator: library
 	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	    run_unary verilator "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
 	  done; \
+	done; \
+	for spec in $(FLOAT_CONST_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_unary verilator const "$$1" "$$2" "$$3" directed 0; \
 	done; \
 	run_binary verilator add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \

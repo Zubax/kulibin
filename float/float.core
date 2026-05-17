@@ -19,6 +19,7 @@ filesets:
       - hdl/zkf_cmp.v
       - hdl/zkf_sort.v
       - hdl/zkf_addsub.v
+      - hdl/zkf_const.v
     file_type: verilogSource
 
   rtl_pack:
@@ -91,6 +92,16 @@ filesets:
       - hdl/zkf_addsub.v
     file_type: verilogSource
 
+  rtl_const:
+    files:
+      - hdl/zkf_const.v
+    file_type: verilogSource
+
+  tb_const_wrap:
+    files:
+      - tb/zkf_const_wrap.v
+    file_type: verilogSource
+
   tb_cocotb:
     files:
       - tb/zkf_model.py:
@@ -126,6 +137,8 @@ filesets:
       - tb/test_cmp.py:
           file_type: user
       - tb/test_sort.py:
+          file_type: user
+      - tb/test_const.py:
           file_type: user
 
 parameters:
@@ -495,3 +508,23 @@ targets:
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
     parameters: *pipe_params
+
+  sim_const_icarus:
+    filesets: [rtl_const, tb_const_wrap, tb_cocotb]
+    toplevel: zkf_const_wrap
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_const
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_const_verilator:
+    filesets: [rtl_const, tb_const_wrap, tb_cocotb]
+    toplevel: zkf_const_wrap
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_const
+    parameters: *float_binary_params
