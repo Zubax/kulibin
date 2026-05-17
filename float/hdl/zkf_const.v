@@ -70,6 +70,12 @@ module zkf_const #(
     //     rounded significand when WMAN approaches 53. $realtobits would expose all 53 bits at once but Icarus
     //     refuses to fold it in constant context, so f_real_to_uint peels bits off the top via pow2(i) compares.
 
+    // Function bodies execute only at elaboration time; the simulator never reaches them at runtime,
+    // so Verilator would otherwise count every function line as uncovered. Mark the entire block off
+    // for line/toggle coverage. Correctness is checked via the test_const.py vectors that compare the
+    // packed output against IEEE references.
+    // verilator coverage_off
+
     // Exact integer power of two as a real.
     function automatic real f_pow2;
         input integer e;
@@ -200,6 +206,7 @@ module zkf_const #(
             f_classify_pack = {status, packed_bits};
         end
     endfunction
+    // verilator coverage_on
 
     // Result of evaluating VALUE; ignored when INF != 0.
     localparam [RESULT_W-1:0] R_VAL      = f_classify_pack(VALUE);
