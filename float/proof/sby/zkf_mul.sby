@@ -12,7 +12,7 @@ read -formal zkf_mul.v
 read -formal zkf_pack_ref.v
 read -formal zkf_mul_ref.v
 read -formal zkf_mul_eq.v
-chparam -set WEXP 5 -set WMAN 11 zkf_mul_eq
+chparam -set WEXP 5 -set WMAN 10 zkf_mul_eq
 prep -top zkf_mul_eq
 
 [files]

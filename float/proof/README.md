@@ -58,7 +58,7 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `make form
 | `_zkf_pipe`             | W=24, N=4                | yices     | < 1 s      | BMC depth 12 covers full propagation |
 | `_zkf_pack`             | WEXP=6, WMAN=18          | yices     | < 1 s      | at the production parameter set |
 | `_zkf_div_radix4_step`  | WMAN=18                  | yices     | < 1 s      | greedy digit selection invariant |
-| `zkf_mul`               | WEXP=5, WMAN=11          | yices     | (long)     | binary16-class widths; rounding heart covered by pack proof at full width |
+| `zkf_mul`               | WEXP=5, WMAN=10          | yices     | ~4 min     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
 | `zkf_add`               | WEXP=4, WMAN=6           | yices     | ~6.5 min   | 8-stage BMC; reference uses wide-integer summation |
 | `zkf_div`               | WEXP=4, WMAN=6           | yices     | < 1 s      | wraps core+pack; reference uses wide unsigned division |
 
@@ -95,7 +95,7 @@ on failure it embeds links to the SBY counter-example VCDs.
   1. The full-width `_zkf_pack` proof (rounding logic shared by every arithmetic module).
   2. The full-width `_zkf_div_radix4_step` proof (digit primitive shared by every divider width).
   3. The simulation matrix in `../tb/`, which spans default widths up to binary64.
-  4. The `zkf_mul` proof at binary16-class widths `(WEXP=5, WMAN=11)`, exercising the full
+  4. The `zkf_mul` proof at near-binary16 widths `(WEXP=5, WMAN=10)`, exercising the full
      hidden-bit-product-high vs. product-low normalisation split that the reduced widths exercise
      only narrowly.
 
