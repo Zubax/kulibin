@@ -35,10 +35,6 @@ There are private helper modules named `_zkf_*`; they are not supposed to be ins
 
 Register-stage counts are documented in the doc comments separately for each module.
 
-## TODO
-
-- Insert the `_zkf_pipe` at the inputs of the public modules, controlled via the new `REGISTER_INPUT` parameter, disabled by default. This may be useful in certain circuits where arithmetic inputs are fed by long combinational paths or where they are connected to a register file etc.
-
 ## Notable sizes
 
 ### WEXP=? WMAN=18
@@ -68,3 +64,9 @@ ZKF offers limited compatibility with IEEE 754 so while it can match the bit lay
 - WEXP=5  WMAN=11: IEEE 754 binary16-like
 - WEXP=8  WMAN=24: IEEE 754 binary32-like
 - WEXP=11 WMAN=53: IEEE 754 binary64-like
+
+## TODO
+
+- Insert the `_zkf_pipe` at the inputs of the public modules, controlled via the new `REGISTER_INPUT` parameter, disabled by default. This may be useful in certain circuits where arithmetic inputs are fed by long combinational paths or where they are connected to a register file etc.
+
+- Provide options for deeper pipelining, presumably by inserting dummy retiming stages via `_zkf_pipe`.
