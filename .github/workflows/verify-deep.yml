@@ -25,19 +25,21 @@ jobs:
 
       - name: Install SymbiYosys and Yices SMT solver
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           if ! command -v sby >/dev/null; then
             git clone --depth 1 https://github.com/YosysHQ/sby.git /tmp/sby
             make -C /tmp/sby PREFIX=/usr/local install
+          else
+            echo "sby already on PATH at $(command -v sby)"
           fi
           if ! command -v yices-smt2 >/dev/null; then
-            apt-get update
-            apt-get install -y --no-install-recommends yices2 || {
-              curl -sSL -o /tmp/yices.tar.gz \
-                https://yices.csl.sri.com/releases/2.7.0/yices-2.7.0-x86_64-pc-linux-gnu-static-gmp.tar.gz
-              tar -C /tmp -xf /tmp/yices.tar.gz
-              install -Dm755 /tmp/yices-2.7.0/bin/yices-smt2 /usr/local/bin/yices-smt2
-            }
+            # The Yices project hosts releases on GitHub now; the SRI vendor URL no longer serves them.
+            curl -fLsS -o /tmp/yices.tar.gz \
+              https://github.com/SRI-CSL/yices2/releases/download/yices-2.7.0/yices-2.7.0-x86_64-pc-linux-gnu-static-gmp.tar.gz
+            tar -C /tmp -xf /tmp/yices.tar.gz
+            install -Dm755 /tmp/yices-2.7.0/bin/yices-smt2 /usr/local/bin/yices-smt2
+          else
+            echo "yices-smt2 already on PATH at $(command -v yices-smt2)"
           fi
           sby --help | head -1
           yices-smt2 --version | head -1
