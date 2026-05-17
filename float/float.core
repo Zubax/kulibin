@@ -108,6 +108,8 @@ filesets:
           file_type: user
       - tb/zkf_params.py:
           file_type: user
+      - tb/zkf_const_cases.py:
+          file_type: user
       - tb/zkf_stream.py:
           file_type: user
       - tb/zkf_operands.py:
