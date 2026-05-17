@@ -32,11 +32,13 @@ module _zkf_pack #(
     output reg                 out_valid,
     output reg [WEXP+WMAN-1:0] y
 );
+    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
     endgenerate
+    // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -85,7 +87,9 @@ module _zkf_pack #(
     wire             s1_underflow_after_round = s1_underflow && !(s1_one_below_min && s1_round_carry);
     wire             s1_result_zero           = s1_force_zero || (!s1_force_inf && s1_underflow_after_round);
     wire             s1_result_infinity       = !s1_result_zero && s1_infinity;
+    // verilator coverage_off
     wire [WFULL-1:0] s1_zero_y                = {WFULL{1'b0}};
+    // verilator coverage_on
     wire [WFULL-1:0] s1_infinity_y            = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
     wire [WFULL-1:0] s1_normal_y              = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
 
@@ -123,9 +127,11 @@ endmodule
 module _zkf_pack_delay#(parameter W = 1)(input wire clk, input wire rst, input wire [W-1:0] x, output reg [W-1:0] y);
     reg [W-1:0] s1;
     always @(posedge clk) begin
+        // verilator coverage_off
         if (rst) begin
             s1 <= {W{1'b0}};
             y  <= {W{1'b0}};
+        // verilator coverage_on
         end else begin
             s1 <= x;
             y  <= s1;

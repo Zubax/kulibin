@@ -70,3 +70,5 @@ ZKF offers limited compatibility with IEEE 754 so while it can match the bit lay
 - Insert the `_zkf_pipe` at the inputs of the public modules, controlled via the new `REGISTER_INPUT` parameter, disabled by default. This may be useful in certain circuits where arithmetic inputs are fed by long combinational paths or where they are connected to a register file etc.
 
 - Provide options for deeper pipelining, presumably by inserting dummy retiming stages via `_zkf_pipe`.
+
+- The test suite is a sloppy mess and needs to be rearchitected from scratch cleanly.

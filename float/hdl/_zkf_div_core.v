@@ -36,11 +36,13 @@ module _zkf_div_core #(
     output reg                            div0,
     output reg                 [WMAN-1:0] partial_rem
 );
+    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
     endgenerate
+    // verilator coverage_on
 
     localparam WFRAC         = WMAN - 1;
     localparam WFULL         = WEXP + WMAN;
@@ -188,11 +190,13 @@ module _zkf_div_core #(
     generate
         if (TAIL_HI_WIDTH > 0) begin : g_final_tail_hi
             assign final_tail_hi = |final_raw[TAIL_HI_WIDTH-1:0];
+        // verilator coverage_off
         end else begin : g_no_final_tail_hi
             // Unreachable for any valid WMAN >= 4: QFRAC >= WMAN + 2 by construction, so
             // TAIL_HI_WIDTH = QFRAC - WMAN - 1 >= 1 always. This branch exists for generate-completeness.
             assign final_tail_hi = 1'b0;
         end
+        // verilator coverage_on
 
         if (TAIL_LO_WIDTH > 0) begin : g_final_tail_lo
             assign final_tail_lo = |final_raw[TAIL_LO_WIDTH-1:0];

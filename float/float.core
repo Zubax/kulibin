@@ -38,10 +38,6 @@ filesets:
           file_type: user
       - tb/test_pipe.py:
           file_type: user
-      - tb/coverage_waivers.py:
-          file_type: user
-      - tb/aggregate_coverage.py:
-          file_type: user
 
 scripts:
   run_cocotb_all:

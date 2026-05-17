@@ -18,11 +18,13 @@ module zkf_mul #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
+    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
     endgenerate
+    // verilator coverage_on
 
     localparam WFRAC         = WMAN - 1;
     localparam WFULL         = WEXP + WMAN;

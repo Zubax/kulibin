@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
@@ -275,21 +276,54 @@ def main() -> None:
     print(f"[float-cocotb] all selected suites passed ({run_count} run)", flush=True)
 
     if "verilator" in sims:
-        if shutil.which("verilator_coverage") is None:
-            print(
-                "[float-cocotb] verilator_coverage not on PATH; skipping coverage gate",
-                file=sys.stderr,
-                flush=True,
-            )
-            return
-
-        from aggregate_coverage import aggregate
-
-        report_path = args.build_dir / "coverage_report.md"
-        info_path = args.build_dir / "merged.info"
-        rc = aggregate(args.build_dir, report_path, info_path)
+        rc = coverage_gate(args.build_dir)
         if rc != 0:
             raise SystemExit(rc)
+
+
+def _is_zkf_source(path_str: str) -> bool:
+    p = Path(path_str)
+    if p.parent.name != "hdl" or not p.name.endswith(".v"):
+        return False
+    return p.name.startswith("zkf_") or p.name.startswith("_zkf_")
+
+
+def coverage_gate(build_dir: Path) -> int:
+    if shutil.which("verilator_coverage") is None:
+        print("[float-cocotb] verilator_coverage not on PATH; skipping coverage gate", file=sys.stderr, flush=True)
+        return 0
+    dat_files = sorted(build_dir.rglob("coverage.dat"))
+    if not dat_files:
+        print(f"[float-cocotb] no coverage.dat under {build_dir}", file=sys.stderr, flush=True)
+        return 2
+    info_path = build_dir / "merged.info"
+    subprocess.run(
+        ["verilator_coverage", "--write-info", str(info_path), *(str(p) for p in dat_files)],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+    missing: dict[str, list[int]] = {}
+    current: str | None = None
+    with info_path.open() as fp:
+        for raw in fp:
+            line = raw.strip()
+            if line.startswith("SF:"):
+                current = line[3:] if _is_zkf_source(line[3:]) else None
+            elif current and line.startswith("DA:"):
+                lineno_str, hits_str = line[3:].split(",", 1)
+                if int(hits_str) == 0:
+                    missing.setdefault(Path(current).name, []).append(int(lineno_str))
+            elif line == "end_of_record":
+                current = None
+
+    if missing:
+        print("[float-cocotb] FAIL: uncovered RTL lines:", file=sys.stderr)
+        for name, lines in sorted(missing.items()):
+            print(f"  {name}: {sorted(lines)}", file=sys.stderr)
+        return 1
+    print("[float-cocotb] coverage gate: PASS", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
