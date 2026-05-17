@@ -170,25 +170,27 @@ module _zkf_div_core #(
     endgenerate
 
     // This is initial_bit delayed through raw_tri: radix-4 stages append LSBs only, so it cannot be demoted.
-    wire                            final_high          = final_raw[QFRAC];
-    wire                            final_rem_sticky    = |r_rem[QSTAGES];
-    wire                 [WMAN-1:0] final_significand_hi = final_raw[QFRAC -: WMAN];
-    wire                 [WMAN-1:0] final_significand_lo = final_raw[QFRAC-1 -: WMAN];
-    wire                            final_guard_hi       = final_raw[QFRAC-WMAN];
-    wire                            final_guard_lo       = final_raw[QFRAC-WMAN-1];
-    wire                            final_round_hi       = final_raw[QFRAC-WMAN-1];
-    wire                            final_round_lo       = final_raw[QFRAC-WMAN-2];
-    wire                            final_tail_hi;
-    wire                            final_tail_lo;
-    wire                            final_sticky_hi      = final_tail_hi || final_rem_sticky;
-    wire                            final_sticky_lo      = final_tail_lo || final_rem_sticky;
+    wire            final_high           = final_raw[QFRAC];
+    wire            final_rem_sticky     = |r_rem[QSTAGES];
+    wire [WMAN-1:0] final_significand_hi = final_raw[QFRAC -: WMAN];
+    wire [WMAN-1:0] final_significand_lo = final_raw[QFRAC-1 -: WMAN];
+    wire            final_guard_hi       = final_raw[QFRAC-WMAN];
+    wire            final_guard_lo       = final_raw[QFRAC-WMAN-1];
+    wire            final_round_hi       = final_raw[QFRAC-WMAN-1];
+    wire            final_round_lo       = final_raw[QFRAC-WMAN-2];
+    wire            final_tail_hi;
+    wire            final_tail_lo;
+    wire            final_sticky_hi = final_tail_hi || final_rem_sticky;
+    wire            final_sticky_lo = final_tail_lo || final_rem_sticky;
     // Moving this into stage zero makes initial_bit's significand compare feed the exponent sideband path.
-    wire signed [WEXP_UNBIASED-1:0] final_exp_adjust     = final_high ? ZERO_EXT : ONE_EXT;
+    wire signed [WEXP_UNBIASED-1:0] final_exp_adjust = final_high ? ZERO_EXT : ONE_EXT;
 
     generate
         if (TAIL_HI_WIDTH > 0) begin : g_final_tail_hi
             assign final_tail_hi = |final_raw[TAIL_HI_WIDTH-1:0];
         end else begin : g_no_final_tail_hi
+            // Unreachable for any valid WMAN >= 4: QFRAC >= WMAN + 2 by construction, so
+            // TAIL_HI_WIDTH = QFRAC - WMAN - 1 >= 1 always. This branch exists for generate-completeness.
             assign final_tail_hi = 1'b0;
         end
 

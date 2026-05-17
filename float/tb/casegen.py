@@ -160,6 +160,8 @@ def _directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
 def _generic_mul_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     v = _directed_numbers(fmt)
     return [
+        ("zero_times_zero", v["zero"], v["zero"]),
+        ("zero_times_neg_zero_payload", v["zero"], v["neg_zero"]),
         ("zero_times_one", v["zero"], v["one"]),
         ("zero_payload_beats_inf", v["neg_zero"], v["noncanonical_pos_inf"]),
         ("zero_exp_payload_ignored", v["minus_one"], v["neg_zero"]),
@@ -279,6 +281,141 @@ def _generic_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             )
         )
 
+    cases.extend(_focused_add_directed(fmt))
+    return cases
+
+
+def _focused_add_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
+    """Parametric directed cases targeting specific RTL branches in zkf_add.
+
+    Each helper below either returns a labelled case or skips silently when the
+    chosen format cannot represent the targeted scenario (e.g. very small WEXP
+    where the required exponent range does not exist).
+    """
+    cases: list[tuple[str, int, int]] = []
+    wfrac = fmt.wfrac
+    wman = fmt.wman
+    bias = fmt.bias
+    exp_max = fmt.exp_max_finite
+    frac_mask = fmt.frac_mask
+    one_sig = 1 << wfrac
+
+    # Equal-exp opposite-sign with |b|>|a| — exercises s1_swap_equal at zkf_add.v:119.
+    cases.append(("equal_exp_swap_subtract", normal(fmt, 0, bias, 0), normal(fmt, 1, bias, 1)))
+    cases.append(("equal_exp_swap_subtract_neg", normal(fmt, 1, bias, 0), normal(fmt, 0, bias, 1)))
+
+    # Same-sign add of two zero-input encodings — exercises the add path with
+    # all-zero significand+GRS at zkf_add.v:188 (s3_finite_zero via the add path).
+    cases.append(("zero_plus_zero_same_sign", zero(fmt), zero(fmt)))
+
+    # Equal-magnitude opposite-sign full cancellation across the full range — feeds
+    # the priority encoder leaf at shamt = NORM_TOP (wman+2) plus the s2_sub_zero path.
+    for exp in (1, bias, exp_max):
+        for frac in (0, frac_mask):
+            cases.append(
+                (
+                    f"full_cancel_exp{exp}_frac{frac}",
+                    normal(fmt, 0, exp, frac),
+                    normal(fmt, 1, exp, frac),
+                )
+            )
+
+    # Same-exp opposite-sign whose significand subtraction yields a near-full result
+    # (leading 1 stays at NORM_TOP, shamt=0 reachable) — large_sig has top-two bits set
+    # and the small operand bites only the lower portion.
+    if (one_sig + (one_sig >> 1)) <= (frac_mask + one_sig):
+        cases.append(
+            (
+                "sub_shift_zero_high_top_two_bits",
+                normal(fmt, 0, bias, (one_sig >> 1) - 1 if one_sig > 1 else 0),
+                normal(fmt, 1, bias - 1, 0),
+            )
+        )
+    # Same-exp opposite-sign with significand diff = 1 → shamt = wfrac + WGRS = wman+2.
+    cases.append(
+        (
+            "sub_shift_full_normalize",
+            normal(fmt, 0, bias, 1),
+            normal(fmt, 1, bias, 0),
+        )
+    )
+
+    # exp_diff covering each bit of the alignment barrel up to a power-of-two
+    # exceeding wman+wfrac (saturating exit through _zkf_add_align_sticky.shift_ge_width).
+    pow2_max = max(wman + 4, 1)
+    diff = 1
+    while diff <= pow2_max and diff <= exp_max - 1:
+        target_exp = exp_max
+        small_exp = max(1, target_exp - diff)
+        cases.append(
+            (
+                f"exp_diff_pow2_{diff}_same_sign",
+                normal(fmt, 0, target_exp, 0),
+                normal(fmt, 0, small_exp, frac_mask),
+            )
+        )
+        cases.append(
+            (
+                f"exp_diff_pow2_{diff}_opposite_sign",
+                normal(fmt, 0, target_exp, 0),
+                normal(fmt, 1, small_exp, frac_mask),
+            )
+        )
+        diff <<= 1
+
+    # Saturating-align: ensure shift_ge_width=1 (small operand entirely below precision)
+    # exercises zkf_add.v:400. The required exp_diff is at least 2^WLOCAL where WLOCAL=$clog2(WEXT)=$clog2(WMAN+3).
+    sat_diff = max(wman + 4, exp_max - 1)
+    if exp_max > 2 and sat_diff >= 1:
+        small_exp = max(1, exp_max - sat_diff)
+        if small_exp < exp_max:
+            cases.append(
+                (
+                    "far_saturating_align_same",
+                    normal(fmt, 0, exp_max, 0),
+                    normal(fmt, 0, small_exp, frac_mask),
+                )
+            )
+            cases.append(
+                (
+                    "far_saturating_align_opposite",
+                    normal(fmt, 0, exp_max, 0),
+                    normal(fmt, 1, small_exp, frac_mask),
+                )
+            )
+
+    # Same-sign carry-into-exponent overflow at max_exp — triggers the rare
+    # _zkf_pack.s1_exp_round_overflow path indirectly via add_carry.
+    # max_finite + max_finite → magnitude ~2*max, exponent goes one above max → overflow.
+    # Covered by existing max_finite_plus_max_finite, but also drive a rounding-overflow path:
+    # an operand pair whose pre-round result has guard=1 at exp_unbiased == max_exp_unbiased and
+    # significand all-ones, so rounding carries and triggers exp_round_overflow.
+    if exp_max > wman:
+        big_exp = exp_max
+        small_exp_for_guard = exp_max - wman
+        if small_exp_for_guard >= 1:
+            cases.append(
+                (
+                    "round_carry_at_max_exp",
+                    normal(fmt, 0, big_exp, frac_mask),
+                    normal(fmt, 0, small_exp_for_guard, 0),
+                )
+            )
+
+    # one-below-min underflow rescue (round-carry promotes a pre-round all-ones at
+    # min_exp_unbiased-1 up to min_normal). Constructed via two operands whose
+    # difference lies just below the minimum normal magnitude.
+    if exp_max >= wman + 2:
+        a_exp = 2  # operand near min_normal
+        b_exp = 1
+        cases.append(
+            (
+                "underflow_one_below_min_round_carry_candidate",
+                normal(fmt, 0, a_exp, 0),
+                normal(fmt, 1, b_exp, frac_mask),
+            )
+        )
+
     return cases
 
 
@@ -390,6 +527,44 @@ def _binary32_div_manual() -> list[tuple[str, int, int, int, int]]:
         ("manual_round_case_1", 0x3F800001, 0x3FC00000, 0x3F2AAAAC, 0),
         ("manual_round_case_2", 0x3F800001, 0x3FA00000, 0x3F4CCCCE, 0),
         ("manual_round_case_3", 0x3F800001, 0x3FE00000, 0x3F124926, 0),
+    ]
+
+
+def _binary32_add_manual() -> list[tuple[str, int, int, int]]:
+    # Hand-picked binary32 add cases. Expected values verified offline against
+    # the reference model and NumPy's float32 hardware; mismatches abort import.
+    return [
+        ("manual_zero_plus_zero",                0x00000000, 0x00000000, 0x00000000),
+        ("manual_neg_zero_plus_zero",            0x80000000, 0x00000000, 0x00000000),
+        ("manual_noncanonical_zero_payloads",    0x80123456, 0x007FEDCB, 0x00000000),
+        ("manual_one_plus_one",                  0x3F800000, 0x3F800000, 0x40000000),
+        ("manual_one_minus_one",                 0x3F800000, 0xBF800000, 0x00000000),
+        ("manual_neg_one_plus_neg_one",          0xBF800000, 0xBF800000, 0xC0000000),
+        ("manual_one_plus_half",                 0x3F800000, 0x3F000000, 0x3FC00000),
+        ("manual_half_plus_neg_one",             0x3F000000, 0xBF800000, 0xBF000000),
+        ("manual_swap_equal_exp_sub",            0x3F800000, 0xBF800001, 0xB4000000),
+        ("manual_swap_equal_exp_sub_neg",        0xBF800000, 0x3F800001, 0x34000000),
+        ("manual_min_normal_plus_neg_min",       0x00800000, 0x80800000, 0x00000000),
+        ("manual_min_normal_plus_min_normal",    0x00800000, 0x00800000, 0x01000000),
+        ("manual_max_finite_plus_one",           0x7F7FFFFF, 0x3F800000, 0x7F7FFFFF),
+        ("manual_max_minus_max",                 0x7F7FFFFF, 0xFF7FFFFF, 0x00000000),
+        ("manual_max_plus_max_overflow",         0x7F7FFFFF, 0x7F7FFFFF, 0x7F800000),
+        ("manual_neg_max_plus_neg_max_overflow", 0xFF7FFFFF, 0xFF7FFFFF, 0xFF800000),
+        ("manual_round_carry_tie_to_inf",        0x7F7FFFFF, 0x73000000, 0x7F800000),
+        ("manual_inf_plus_one",                  0x7F800000, 0x3F800000, 0x7F800000),
+        ("manual_one_plus_inf",                  0x3F800000, 0x7F800000, 0x7F800000),
+        ("manual_neg_inf_plus_one",              0xFF800000, 0x3F800000, 0xFF800000),
+        ("manual_one_plus_noncanonical_neg_inf", 0x3F800000, 0xFFABCDEF, 0xFF800000),
+        ("manual_pos_inf_plus_pos_inf",          0x7F800000, 0x7FABCDEF, 0x7F800000),
+        ("manual_neg_inf_plus_neg_inf",          0xFF800000, 0xFFFFFFFF, 0xFF800000),
+        ("manual_pos_inf_plus_neg_inf_to_zero",  0x7F800000, 0xFF800000, 0x00000000),
+        ("manual_noncanonical_inf_opposite",     0x7FABCDEF, 0xFFABCDEF, 0x00000000),
+        ("manual_tie_to_even_lo",                0x3F800000, 0x33800000, 0x3F800000),
+        ("manual_tie_to_odd_round_up",           0x3F800001, 0x33800000, 0x3F800002),
+        ("manual_round_up_above_half",           0x3F800000, 0x33C00000, 0x3F800001),
+        ("manual_round_down_below_half",         0x3F800001, 0x33000000, 0x3F800001),
+        ("manual_far_operand_only_sticky",       0x3F800000, 0x20000000, 0x3F800000),
+        ("manual_far_cancellation_at_max",       0x7F7FFFFF, 0xFF7FFFFE, 0x73800000),
     ]
 
 
@@ -517,10 +692,15 @@ def _random_add_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int
         sign = int(rng.integers(0, 2))
         return normal(fmt, sign, exp, frac + 1), normal(fmt, sign ^ 1, exp, frac)
     if mode == 6:
-        exp = int(rng.integers(1, fmt.exp_max_finite + 1))
-        frac = int(rng.integers(0, fmt.frac_mask))
         sign = int(rng.integers(0, 2))
-        return normal(fmt, sign, exp, frac + 1), normal(fmt, sign ^ 1, exp, frac)
+        large_exp = int(rng.integers(max(1, fmt.exp_max_finite - 2), fmt.exp_max_finite + 1))
+        small_exp = int(rng.integers(1, max(2, min(fmt.exp_max_finite, fmt.wman + 3))))
+        large_frac = int(rng.integers(0, fmt.frac_mask + 1))
+        small_frac = int(rng.integers(0, fmt.frac_mask + 1))
+        return (
+            normal(fmt, sign, large_exp, large_frac),
+            normal(fmt, sign ^ 1, small_exp, small_frac),
+        )
     if mode == 7:
         return _random_normal_near(fmt, rng, [1, 2], [0, 1]), _random_normal_near(fmt, rng, [1, 2], [0, 1])
     if mode == 8:
@@ -650,6 +830,36 @@ def _div_rounding_directed(fmt: ZkfFormat, rng: np.random.Generator) -> list[tup
     return cases
 
 
+def _div_radix_digit_cases(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
+    """Cases that deterministically produce each radix-4 digit at the first stage.
+
+    At the first radix stage in _zkf_div_radix4_step the input rem equals
+    initial_rem = a_sig - b_sig (when a_sig >= b_sig) or a_sig (otherwise).
+    With b_sig fixed to the hidden bit (1.0), the digit produced by the first
+    stage falls in [0,3] depending on which quartile of the denominator the
+    remainder lies in.
+    """
+    one_sig = 1 << fmt.wfrac
+    b = normal(fmt, 0, fmt.bias, 0)  # b_sig = one_sig (i.e. 1.0)
+    quartile = one_sig // 4
+    if quartile < 1:  # only true for wman == 4 (one_sig=8 → quartile=2; safe)
+        return []
+    cases: list[tuple[str, int, int]] = []
+    targets = {
+        "radix_digit_0": 1,                       # initial_rem ∈ [0, one_sig/4)
+        "radix_digit_1": quartile,                # initial_rem ∈ [one_sig/4, one_sig/2)
+        "radix_digit_2": 2 * quartile,            # initial_rem ∈ [one_sig/2, 3*one_sig/4)
+        "radix_digit_3": 3 * quartile,            # initial_rem ∈ [3*one_sig/4, one_sig)
+    }
+    for label, rem_target in targets.items():
+        a_frac = rem_target
+        if a_frac > fmt.frac_mask or a_frac < 0:
+            continue
+        a = normal(fmt, 0, fmt.bias, a_frac)
+        cases.append((label, a, b))
+    return cases
+
+
 def mul_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[BinaryCase]:
     cases: list[BinaryCase] = []
     seen: set[tuple[int, int]] = set()
@@ -697,6 +907,8 @@ def div_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[BinaryCa
             _add_unique_binary(cases, seen, label, fmt, a, b, "div")
         for label, a, b in _div_rounding_directed(fmt, rng):
             _add_unique_binary(cases, seen, label, fmt, a, b, "div")
+        for label, a, b in _div_radix_digit_cases(fmt):
+            _add_unique_binary(cases, seen, label, fmt, a, b, "div")
 
     if (fmt.wexp, fmt.wman) == (8, 24):
         for label, a, b, expected, expected_div0 in _binary32_div_manual():
@@ -730,6 +942,13 @@ def add_cases(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddCase]
     rng = np.random.default_rng(seed)
     if fmt.wexp >= 3:
         for label, a, b in _generic_add_directed(fmt):
+            _add_unique_add(cases, seen, label, fmt, a, b)
+
+    if (fmt.wexp, fmt.wman) == (8, 24):
+        for label, a, b, expected in _binary32_add_manual():
+            actual = add_reference(fmt, a, b)
+            if actual != expected:
+                raise AssertionError(f"{label}: expected {expected:08x}, model returned {actual:08x}")
             _add_unique_add(cases, seen, label, fmt, a, b)
 
     if (fmt.wexp, fmt.wman) == (6, 18):

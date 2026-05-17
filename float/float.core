@@ -6,6 +6,7 @@ filesets:
   rtl:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
       - hdl/zkf_add.v
@@ -34,6 +35,12 @@ filesets:
       - tb/test_add.py:
           file_type: user
       - tb/test_div.py:
+          file_type: user
+      - tb/test_pipe.py:
+          file_type: user
+      - tb/coverage_waivers.py:
+          file_type: user
+      - tb/aggregate_coverage.py:
           file_type: user
 
 scripts:
@@ -84,6 +91,13 @@ scripts:
       - sh
       - -c
       - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite div'
+    filesets: [rtl, tb_cocotb_runner]
+
+  run_cocotb_pipe:
+    cmd:
+      - sh
+      - -c
+      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite pipe'
     filesets: [rtl, tb_cocotb_runner]
 
 targets:
@@ -161,6 +175,17 @@ targets:
     hooks:
       pre_build:
         - run_cocotb_div
+    toplevel: zkf_cocotb_alias_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_pipe:
+    filesets: [tb_cocotb_alias]
+    hooks:
+      pre_build:
+        - run_cocotb_pipe
     toplevel: zkf_cocotb_alias_tb
     default_tool: icarus
     tools:

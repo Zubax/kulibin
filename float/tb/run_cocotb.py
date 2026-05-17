@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import secrets
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 
@@ -23,9 +24,10 @@ RTL_PACK = [RTL / "_zkf_pack.v"]
 RTL_MUL = [RTL / "_zkf_pack.v", RTL / "zkf_mul.v"]
 RTL_ADD = [RTL / "_zkf_pack.v", RTL / "zkf_add.v"]
 RTL_DIV = [RTL / "_zkf_pack.v", RTL / "_zkf_div_core.v", RTL / "zkf_div.v"]
+RTL_PIPE = [RTL / "_zkf_pipe.v"]
 
 SIMS = ("icarus", "verilator")
-SUITES = ("pack", "mul", "add", "div")
+SUITES = ("pack", "mul", "add", "div", "pipe")
 
 
 @dataclass(frozen=True)
@@ -115,11 +117,37 @@ def arithmetic_configs(suite: str) -> list[RunConfig]:
     ]
 
 
+def pipe_configs() -> list[RunConfig]:
+    specs = (
+        ("w8_n0_passthrough", 8, 0, 64),
+        ("w8_n4_registered", 8, 4, 96),
+        ("w24_n2_registered", 24, 2, 96),
+    )
+    return [
+        RunConfig(
+            suite="pipe",
+            name=name,
+            top="_zkf_pipe",
+            test_module="test_pipe",
+            sources=tuple(RTL_PIPE),
+            parameters={"W": width, "N": stages},
+            env={
+                "ZKF_PIPE_W": str(width),
+                "ZKF_PIPE_N": str(stages),
+                "ZKF_PIPE_COUNT": str(count),
+            },
+        )
+        for name, width, stages, count in specs
+    ]
+
+
 def configs_for_suite(suite: str) -> list[RunConfig]:
     if suite == "pack":
         return pack_configs()
     if suite in ("mul", "add", "div"):
         return arithmetic_configs(suite)
+    if suite == "pipe":
+        return pipe_configs()
     raise ValueError(suite)
 
 
@@ -134,8 +162,20 @@ def build_args(sim: str) -> list[str]:
             "-Wno-WIDTHTRUNC",
             "-Wno-DECLFILENAME",
             "-Wno-UNOPTFLAT",
+            "--coverage-line",
+            "--coverage-toggle",
         ]
     raise ValueError(sim)
+
+
+def coverage_dat_path(work: Path) -> Path:
+    return work / "coverage.dat"
+
+
+def plusargs_for(sim: str, work: Path) -> list[str]:
+    if sim == "verilator":
+        return [f"+verilator+coverage+file+{coverage_dat_path(work).resolve()}"]
+    return []
 
 
 def run_one(sim: str, config: RunConfig, build_root: Path, seed: int) -> None:
@@ -184,6 +224,7 @@ def run_one(sim: str, config: RunConfig, build_root: Path, seed: int) -> None:
             test_dir=TB,
             results_xml=str(work / "results.xml"),
             timescale=("1ns", "1ps"),
+            plusargs=plusargs_for(sim, work),
         )
         tree = ET.parse(result_xml)
         failures = tree.findall(".//failure") + tree.findall(".//error")
@@ -232,6 +273,23 @@ def main() -> None:
                 run_one(sim, config, args.build_dir, seed)
                 run_count += 1
     print(f"[float-cocotb] all selected suites passed ({run_count} run)", flush=True)
+
+    if "verilator" in sims:
+        if shutil.which("verilator_coverage") is None:
+            print(
+                "[float-cocotb] verilator_coverage not on PATH; skipping coverage gate",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        from aggregate_coverage import aggregate
+
+        report_path = args.build_dir / "coverage_report.md"
+        info_path = args.build_dir / "merged.info"
+        rc = aggregate(args.build_dir, report_path, info_path)
+        if rc != 0:
+            raise SystemExit(rc)
 
 
 if __name__ == "__main__":
