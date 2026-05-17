@@ -54,3 +54,5 @@ The following constructs are banned in synthesizable Verilog (fine in testbenche
 ## Verification
 
 Add or update a testbench for behavioral changes to RTL. Keep focused unit benches near the module under `tb/`, and register new filesets/targets in the module `.core` file. Before submitting changes, run `make lint` and `make verify`; for narrow edits, also run the affected `fusesoc run --target=...` command directly during development.
+
+Generated reports must be written in rich and colorful HTML format, not Markdown.
