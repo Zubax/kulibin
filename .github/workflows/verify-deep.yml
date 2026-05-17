@@ -1,0 +1,68 @@
+## Maximum-verification CI: every simulation testbench, every algebraic property test, and every
+## formal-equivalence proof under float/proof/. Slow (~45 minutes wall-clock on the Zubax toolchain
+## container), so it runs only on commits pushed to `main` or commits whose message includes the
+## "#ci-float" marker. The cheap `verify.yml` workflow continues to gate every PR.
+
+name: verify-deep
+
+on:
+  push:
+
+jobs:
+  verify-deep:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-15
+      # See verify.yml for why root is needed.
+      options: --user root
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install SymbiYosys and Yices SMT solver
+        run: |
+          set -euo pipefail
+          if ! command -v sby >/dev/null; then
+            git clone --depth 1 https://github.com/YosysHQ/sby.git /tmp/sby
+            make -C /tmp/sby PREFIX=/usr/local install
+          fi
+          if ! command -v yices-smt2 >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends yices2 || {
+              curl -sSL -o /tmp/yices.tar.gz \
+                https://yices.csl.sri.com/releases/2.7.0/yices-2.7.0-x86_64-pc-linux-gnu-static-gmp.tar.gz
+              tar -C /tmp -xf /tmp/yices.tar.gz
+              install -Dm755 /tmp/yices-2.7.0/bin/yices-smt2 /usr/local/bin/yices-smt2
+            }
+          fi
+          sby --help | head -1
+          yices-smt2 --version | head -1
+
+      - name: Lint
+        run: make lint
+
+      - name: Run maximum verification
+        run: make verify-deep
+
+      - name: Upload formal verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-formal-report
+          path: |
+            build/float/formal/report.html
+            build/float/formal/summary.json
+            build/float/formal/**/trace.vcd
+          retention-days: 30
+
+      - name: Upload Verilator coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-coverage-report
+          path: build/float/coverage/
+          retention-days: 30

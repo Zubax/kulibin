@@ -140,6 +140,8 @@ filesets:
           file_type: user
       - tb/test_const.py:
           file_type: user
+      - tb/test_properties.py:
+          file_type: user
 
 parameters:
   WEXP:
@@ -349,6 +351,39 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_addsub
+    parameters: *float_binary_params
+
+  sim_properties_mul_icarus:
+    filesets: [rtl_mul, tb_cocotb]
+    toplevel: zkf_mul
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_properties_add_icarus:
+    filesets: [rtl_add, tb_cocotb]
+    toplevel: zkf_add
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_properties_addsub_icarus:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
     parameters: *float_binary_params
 
   sim_abs_icarus:

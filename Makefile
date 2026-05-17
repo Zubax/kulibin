@@ -78,9 +78,10 @@ FLOAT_CONST_MATRIX = \
 	w11_m53:11:53
 
 .PHONY: \
-	verify verify-float verify-float-model verify-float-icarus verify-float-verilator verify-synth \
-	coverage-float-report coverage-float-gate lint library synth-float synth-float-yosys \
-	synth-float-diamond clean
+	verify verify-deep verify-float verify-float-fast verify-float-deep verify-float-extended \
+	verify-float-model verify-float-icarus verify-float-verilator verify-float-properties \
+	verify-synth coverage-float-report coverage-float-gate formal-float formal-float-clean \
+	lint library synth-float synth-float-yosys synth-float-diamond clean
 
 verify: library
 	@set -e; \
@@ -252,6 +253,52 @@ coverage-float-report:
 
 coverage-float-gate:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator --output-dir build/float/coverage --gate
+
+verify-float-fast: verify-float
+
+verify-float-deep: library
+	@$(MAKE) verify-float
+	@$(MAKE) verify-float-properties
+	@$(MAKE) formal-float
+
+## Maximum verification: every module simulation, every float algebraic property, and every formal proof.
+## This is what runs in CI on the main branch and on commits whose message contains "#ci-float".
+verify-deep: library
+	@$(MAKE) verify
+	@$(MAKE) verify-float-properties
+	@$(MAKE) formal-float
+	@echo "Maximum-verification suite (project + float-properties + float-formal) passed."
+
+verify-float-properties: library
+	@set -e; \
+	export PYTHONPATH="$(FLOAT_PYTHONPATH)"; \
+	export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1; \
+	export COCOTB_REWRITE_ASSERTION_FILES=; \
+	run_props() { \
+	  op="$$1"; config="$$2"; wexp="$$3"; wman="$$4"; kind="$$5"; count="$$6"; \
+	  root="build/float/properties/$${op}/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_properties_$${op}_icarus :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_properties_$${op}_icarus \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	for op in mul add addsub; do \
+	  for spec in $(FLOAT_BINARY_MATRIX); do \
+	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	    run_props "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  done; \
+	done
+
+formal-float: library
+	@$(PYTHON) float/proof/run_proofs.py \
+	    --sby-dir float/proof/sby \
+	    --build-dir build/float/formal \
+	    --report build/float/formal/report.html
+
+formal-float-clean:
+	rm -rf build/float/formal
 
 verify-synth: library
 	@$(MAKE) synth-float-yosys

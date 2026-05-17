@@ -31,7 +31,12 @@ A failed simulation, uncovered gated RTL line (where required), synthesis failur
 To simulate one specific target instead of the full library, run e.g.
 `fusesoc run --target=sim_cic_decimator zubax:kulibin:cic_decimator` from the repository root.
 
-See CI files in `.github/`.
+### Tiered CI
+
+The CI is composed of two tiers: ordinary fast verification for frequent use and deep verification.
+Deep verification may take a very long time, potentially hours; it is not enabled for every commit.
+
+To manually trigger deep verification of the float module, add `#ci-float` to the commit message.
 
 ### Synthesis evaluation
 
