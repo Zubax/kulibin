@@ -13,20 +13,46 @@ filesets:
       - hdl/zkf_div.v
     file_type: verilogSource
 
-  tb_cocotb_alias:
+  rtl_pack:
     files:
-      - tb/zkf_cocotb_alias_tb.v
+      - hdl/_zkf_pack.v
     file_type: verilogSource
 
-  tb_cocotb_runner:
+  rtl_mul:
     files:
-      - tb/run_cocotb.py:
-          file_type: user
+      - hdl/_zkf_pack.v
+      - hdl/zkf_mul.v
+    file_type: verilogSource
+
+  rtl_add:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_add.v
+    file_type: verilogSource
+
+  rtl_div:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/_zkf_div_core.v
+      - hdl/zkf_div.v
+    file_type: verilogSource
+
+  rtl_pipe:
+    files:
+      - hdl/_zkf_pipe.v
+    file_type: verilogSource
+
+  tb_cocotb:
+    files:
       - tb/zkf_model.py:
           file_type: user
-      - tb/casegen.py:
+      - tb/zkf_params.py:
           file_type: user
-      - tb/cocotb_utils.py:
+      - tb/zkf_stream.py:
+          file_type: user
+      - tb/zkf_operands.py:
+          file_type: user
+      - tb/zkf_results.py:
           file_type: user
       - tb/test_pack.py:
           file_type: user
@@ -39,151 +65,230 @@ filesets:
       - tb/test_pipe.py:
           file_type: user
 
-scripts:
-  run_cocotb_all:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite all'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_icarus:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim icarus --suite all'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_verilator:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim verilator --suite all'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_pack:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite pack'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_mul:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite mul'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_add:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite add'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_div:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite div'
-    filesets: [rtl, tb_cocotb_runner]
-
-  run_cocotb_pipe:
-    cmd:
-      - sh
-      - -c
-      - 'python3 "$FILES_ROOT"/tb/run_cocotb.py --sim all --suite pipe'
-    filesets: [rtl, tb_cocotb_runner]
+parameters:
+  WEXP:
+    datatype: int
+    default: 6
+    paramtype: vlogparam
+  WMAN:
+    datatype: int
+    default: 18
+    paramtype: vlogparam
+  WEXP_UNBIASED:
+    datatype: int
+    default: 8
+    paramtype: vlogparam
+  W:
+    datatype: int
+    default: 1
+    paramtype: vlogparam
+  N:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_WEXP:
+    datatype: int
+    default: 6
+    paramtype: plusarg
+  ZKF_WMAN:
+    datatype: int
+    default: 18
+    paramtype: plusarg
+  ZKF_WEXP_UNBIASED:
+    datatype: int
+    default: 8
+    paramtype: plusarg
+  ZKF_KIND:
+    datatype: str
+    default: directed
+    paramtype: plusarg
+  ZKF_COUNT:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  ZKF_SEED:
+    datatype: str
+    default: "0"
+    paramtype: plusarg
+  ZKF_CONFIG:
+    datatype: str
+    default: default
+    paramtype: plusarg
+  ZKF_PIPE_W:
+    datatype: int
+    default: 1
+    paramtype: plusarg
+  ZKF_PIPE_N:
+    datatype: int
+    default: 0
+    paramtype: plusarg
 
 targets:
   default:
     filesets: [rtl]
 
-  sim:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_all
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_pack_icarus:
+    filesets: [rtl_pack, tb_cocotb]
+    toplevel: _zkf_pack
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_pack
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters:
+      - WEXP
+      - WMAN
+      - WEXP_UNBIASED
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_WEXP_UNBIASED
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
 
-  sim_icarus:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_icarus
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_pack_verilator:
+    filesets: [rtl_pack, tb_cocotb]
+    toplevel: _zkf_pack
+    flow: sim
+    flow_options:
+      tool: verilator
+      cocotb_module: test_pack
+      verilator_options:
+        - --timing
+        - -Wno-TIMESCALEMOD
+        - -Wno-WIDTHEXPAND
+        - -Wno-WIDTHTRUNC
+        - -Wno-DECLFILENAME
+        - -Wno-UNOPTFLAT
+        - --coverage-line
+        - --coverage-toggle
+      run_options: [+verilator+coverage+file+coverage.dat]
+    parameters:
+      - WEXP
+      - WMAN
+      - WEXP_UNBIASED
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_WEXP_UNBIASED
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
 
-  sim_verilator:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_verilator
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_mul_icarus:
+    filesets: [rtl_mul, tb_cocotb]
+    toplevel: zkf_mul
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_mul
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_binary_params
+      - WEXP
+      - WMAN
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
 
-  sim_pack:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_pack
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_mul_verilator:
+    filesets: [rtl_mul, tb_cocotb]
+    toplevel: zkf_mul
+    flow: sim
+    flow_options: &verilator_binary_flow
+      tool: verilator
+      cocotb_module: test_mul
+      verilator_options:
+        - --timing
+        - -Wno-TIMESCALEMOD
+        - -Wno-WIDTHEXPAND
+        - -Wno-WIDTHTRUNC
+        - -Wno-DECLFILENAME
+        - -Wno-UNOPTFLAT
+        - --coverage-line
+        - --coverage-toggle
+      run_options: [+verilator+coverage+file+coverage.dat]
+    parameters: *float_binary_params
 
-  sim_mul:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_mul
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_add_icarus:
+    filesets: [rtl_add, tb_cocotb]
+    toplevel: zkf_add
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_add
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
 
-  sim_add:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_add
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_add_verilator:
+    filesets: [rtl_add, tb_cocotb]
+    toplevel: zkf_add
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_add
+    parameters: *float_binary_params
 
-  sim_div:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_div
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_div_icarus:
+    filesets: [rtl_div, tb_cocotb]
+    toplevel: zkf_div
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_div
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
 
-  sim_pipe:
-    filesets: [tb_cocotb_alias]
-    hooks:
-      pre_build:
-        - run_cocotb_pipe
-    toplevel: zkf_cocotb_alias_tb
-    default_tool: icarus
-    tools:
-      icarus:
-        iverilog_options: [-Wall, -Wno-timescale]
+  sim_div_verilator:
+    filesets: [rtl_div, tb_cocotb]
+    toplevel: zkf_div
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_div
+    parameters: *float_binary_params
+
+  sim_pipe_icarus:
+    filesets: [rtl_pipe, tb_cocotb]
+    toplevel: _zkf_pipe
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_pipe
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &pipe_params
+      - W
+      - N
+      - ZKF_PIPE_W
+      - ZKF_PIPE_N
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_pipe_verilator:
+    filesets: [rtl_pipe, tb_cocotb]
+    toplevel: _zkf_pipe
+    flow: sim
+    flow_options:
+      tool: verilator
+      cocotb_module: test_pipe
+      verilator_options:
+        - --timing
+        - -Wno-TIMESCALEMOD
+        - -Wno-WIDTHEXPAND
+        - -Wno-WIDTHTRUNC
+        - -Wno-DECLFILENAME
+        - -Wno-UNOPTFLAT
+        - --coverage-line
+        - --coverage-toggle
+      run_options: [+verilator+coverage+file+coverage.dat]
+    parameters: *pipe_params

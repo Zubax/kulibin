@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Shared Cocotb helpers for the ZKF tests."""
+"""Shared Cocotb clocking, reset, drive, and stream scoreboard helpers."""
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
-import os
 from typing import Callable
 
 import cocotb
@@ -13,47 +11,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
 from zkf_model import hex_bits, mask, signed_to_bits
-
-
-@dataclass(frozen=True)
-class TestContext:
-    suite: str
-    sim: str
-    config: str
-    seed: int
-    wexp: int | None = None
-    wman: int | None = None
-
-    @property
-    def params(self) -> str:
-        if self.wexp is None:
-            return self.config
-        return f"{self.config} WEXP={self.wexp} WMAN={self.wman}"
-
-    def prefix(self) -> str:
-        return f"suite={self.suite} sim={self.sim} params={self.params} seed=0x{self.seed:016x}"
-
-
-def env_str(name: str, default: str = "") -> str:
-    return os.environ.get(name, default)
-
-
-def env_int(name: str, default: int = 0) -> int:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return int(value, 0)
-
-
-def context_from_env(suite: str) -> TestContext:
-    return TestContext(
-        suite=suite,
-        sim=env_str("ZKF_SIM", "unknown"),
-        config=env_str("ZKF_CONFIG", "default"),
-        seed=env_int("ZKF_SEED", 0),
-        wexp=env_int("ZKF_WEXP") if "ZKF_WEXP" in os.environ else None,
-        wman=env_int("ZKF_WMAN") if "ZKF_WMAN" in os.environ else None,
-    )
+from zkf_params import TestContext
 
 
 def start_clock(dut, period_ns: int = 10) -> None:
@@ -89,7 +47,6 @@ class RegisterStageScoreboard:
         if register_stages < 1:
             raise ValueError(f"register_stages must be at least 1, got {register_stages}")
         self._dut = dut
-        self._register_stages = register_stages
         self._queue_delay = register_stages - 1
         self._context = context
         self._outputs = outputs
@@ -113,9 +70,8 @@ class RegisterStageScoreboard:
 
         current = (expected, case_description) if expected is not None else None
         due = current if self._queue_delay == 0 else self._queue.popleft()
-        out_valid = self._dut.out_valid
-        assert is_resolvable(out_valid), self._message("out_valid is unresolved", case_description)
-        observed_valid = int(out_valid.value)
+        assert is_resolvable(self._dut.out_valid), self._message("out_valid is unresolved", case_description)
+        observed_valid = int(self._dut.out_valid.value)
 
         if due is None:
             assert observed_valid == 0, self._message(
@@ -142,11 +98,7 @@ class RegisterStageScoreboard:
         if self._queue_delay > 0:
             self._queue.append(current)
 
-    async def reset(
-        self,
-        cycles: int,
-        drive_during_reset: Callable[[], None] | None = None,
-    ) -> None:
+    async def reset(self, cycles: int, drive_during_reset: Callable[[], None] | None = None) -> None:
         self._dut.rst.value = 1
         self.clear()
         for _ in range(cycles):
