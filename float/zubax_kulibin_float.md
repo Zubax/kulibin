@@ -299,6 +299,28 @@ flush underflow to zero after rounding
 map overflow to signed infinity
 ```
 
+### 6.1 Multiplier by a constant power of 2
+
+Computes `y = a * (2**K)`, where K is a signed integer, which may be negative.
+Fails synthesis if `y` can be statically proven to be always zero or always infinity regardless of `a`.
+
+```
+zkf_mul_ilog2_const #(parameter WEXP = 6, parameter WMAN = 18, parameter K = 0)(
+    input  wire clk,
+    input  wire rst,
+
+    input  wire             in_valid,
+    input  wire [WFULL-1:0] a,
+
+    output wire             out_valid,
+    output wire [WFULL-1:0] y
+);
+```
+
+This form is much more efficient than full multiplication and especially division,
+requires much lower area and fewer pipeline stages; presumably a single stage is sufficient.
+With K<0 the module acts as a divider by a constant.
+
 ---
 
 ## 7. Divider
