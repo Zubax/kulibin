@@ -88,11 +88,14 @@ module _zkf_div_core #(
     // Each later pipeline stage resolves one radix-4 quotient digit. The quotient prefix is stored in a
     // triangular chain: stage i holds only the 1+2*i bits known by that point, not a full QRAW-wide word.
     reg                            r_valid        [0:QSTAGES];
+    // Sideband delay lines aligned with the radix pipeline; keeping them scalar lets tools optimize bits freely.
     reg                            r_sign         [0:QSTAGES];
     reg signed [WEXP_UNBIASED-1:0] r_exp_unbiased [0:QSTAGES];
     reg                            r_force_zero   [0:QSTAGES];
     reg                            r_force_inf    [0:QSTAGES];
     reg                            r_div0         [0:QSTAGES];
+    // Carry den and 3*den through the stages to keep each digit resolver free of repeated WMAN-wide adders.
+    // This costs FFs, but it preserves the short per-stage subtract/compare structure that sets divider timing.
     reg                 [WMAN-1:0] r_den          [0:QSTAGES];
     reg                [WREM4-1:0] r_den3         [0:QSTAGES];
     reg                 [WMAN-1:0] r_rem          [0:QSTAGES];
@@ -164,6 +167,7 @@ module _zkf_div_core #(
         end
     endgenerate
 
+    // This is initial_bit delayed through raw_tri: radix-4 stages append LSBs only, so it cannot be demoted.
     wire                            final_high          = final_raw[QFRAC];
     wire                            final_rem_sticky    = |r_rem[QSTAGES];
     wire                 [WMAN-1:0] final_significand_hi = final_raw[QFRAC -: WMAN];
@@ -176,6 +180,7 @@ module _zkf_div_core #(
     wire                            final_tail_lo;
     wire                            final_sticky_hi      = final_tail_hi || final_rem_sticky;
     wire                            final_sticky_lo      = final_tail_lo || final_rem_sticky;
+    // Moving this into stage zero makes initial_bit's significand compare feed the exponent sideband path.
     wire signed [WEXP_UNBIASED-1:0] final_exp_adjust     = final_high ? ZERO_EXT : ONE_EXT;
 
     generate
@@ -192,6 +197,7 @@ module _zkf_div_core #(
         end
     endgenerate
 
+    // The GRS muxes normalize according to the delayed initial_bit above; no radix-4 stage can change that bit.
     // Final output stage closes the quotient-prefix/sticky/exponent combinational paths at the module boundary.
     always @(posedge clk) begin
         if (rst) begin
