@@ -58,6 +58,8 @@ module zkf_mul #(
     wire signed [WEXP_UNBIASED-1:0] exp_unbiased_in = a_exp_ext + b_exp_ext - (bias_ext <<< 1);
 
     // Stage 1: registered product.
+    // Keep the full product registered: trimming the sticky-only tail saves FFs, but moves the tail OR-reduction onto
+    // the multiplier output path and measurably hurts fmax in synthesis, presumably because it weakens retiming.
     reg                            s1_valid;
     reg                            s1_sign;
     reg                 [WMAG-1:0] s1_mag;
@@ -66,6 +68,7 @@ module zkf_mul #(
     reg                            s1_force_inf;
 
     // A nonzero hidden-bit product has its leading one in one of the two most-significant product bits.
+    // Keep the two overlapping sticky reductions separate: sharing s1_sticky_lo saved no resources and hurt fmax.
     wire                            s1_product_high   = s1_mag[WMAG-1];
     wire signed [WEXP_UNBIASED-1:0] s1_exp_adjust     = s1_product_high ? ONE_EXT : ZERO_EXT;
     wire signed [WEXP_UNBIASED-1:0] s1_exp_unbiased   = s1_exp_unbiased_base + s1_exp_adjust;
