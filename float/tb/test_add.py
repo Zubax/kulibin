@@ -6,7 +6,7 @@ import cocotb
 
 from casegen import AddCase, add_cases
 from cocotb_utils import (
-    FixedLatencyScoreboard,
+    RegisterStageScoreboard,
     context_from_env,
     drive_unsigned,
     env_int,
@@ -33,7 +33,8 @@ async def add_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    scoreboard = FixedLatencyScoreboard(dut, 5, context, {"y": (dut.y, fmt.wfull)})
+    register_stages = 6
+    scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)

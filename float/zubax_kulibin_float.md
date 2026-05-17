@@ -184,7 +184,7 @@ Subtraction is defined as addition with the sign of the second operand inverted.
 
 ## 4. Common Module Interface
 
-Variable-latency pipelines are acceptable if simplifies the design.
+Configurable or module-specific register-stage depths are acceptable if they simplify the design.
 All modules are streamed zero-bubble without backpressure.
 
 ```verilog

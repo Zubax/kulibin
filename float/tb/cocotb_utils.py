@@ -78,23 +78,30 @@ def drive_unsigned(handle, value: int) -> None:
     handle.value = value & mask(len(handle))
 
 
-class FixedLatencyScoreboard:
+class RegisterStageScoreboard:
     def __init__(
         self,
         dut,
-        latency: int,
+        register_stages: int,
         context: TestContext,
         outputs: dict[str, tuple[object, int]],
     ) -> None:
+        if register_stages < 1:
+            raise ValueError(f"register_stages must be at least 1, got {register_stages}")
         self._dut = dut
-        self._latency = latency
+        self._register_stages = register_stages
+        self._queue_delay = register_stages - 1
         self._context = context
         self._outputs = outputs
-        self._queue: deque[tuple[dict[str, int], str] | None] = deque([None] * latency)
+        self._queue: deque[tuple[dict[str, int], str] | None] = deque([None] * self._queue_delay)
         self.checked = 0
 
+    @property
+    def queue_delay(self) -> int:
+        return self._queue_delay
+
     def clear(self) -> None:
-        self._queue = deque([None] * self._latency)
+        self._queue = deque([None] * self._queue_delay)
 
     def _message(self, detail: str, case_description: str = "") -> str:
         suffix = f" {case_description}" if case_description else ""
@@ -104,7 +111,8 @@ class FixedLatencyScoreboard:
         await RisingEdge(self._dut.clk)
         await Timer(1, unit="ns")
 
-        due = self._queue.popleft()
+        current = (expected, case_description) if expected is not None else None
+        due = current if self._queue_delay == 0 else self._queue.popleft()
         out_valid = self._dut.out_valid
         assert is_resolvable(out_valid), self._message("out_valid is unresolved", case_description)
         observed_valid = int(out_valid.value)
@@ -131,7 +139,8 @@ class FixedLatencyScoreboard:
                 )
             self.checked += 1
 
-        self._queue.append((expected, case_description) if expected is not None else None)
+        if self._queue_delay > 0:
+            self._queue.append(current)
 
     async def reset(
         self,
@@ -154,14 +163,14 @@ class FixedLatencyScoreboard:
 
 async def run_stream_cases(
     dut,
-    scoreboard: FixedLatencyScoreboard,
+    scoreboard: RegisterStageScoreboard,
     cases: list[object],
     drive_case: Callable[[object], dict[str, int]],
     invalid_drive: Callable[[], None],
     describe_case: Callable[[int, object], str],
 ) -> None:
     if cases:
-        stress_count = min(len(cases), scoreboard._latency + 3)
+        stress_count = min(len(cases), scoreboard.queue_delay + 3)
         for index, case in enumerate(cases[:stress_count]):
             dut.in_valid.value = 1
             expected = drive_case(case)
@@ -188,5 +197,5 @@ async def run_stream_cases(
             await scoreboard.tick(None, f"gap_after_case={index}")
 
     invalid_drive()
-    for flush_index in range(scoreboard._latency + 2):
+    for flush_index in range(scoreboard.queue_delay + 2):
         await scoreboard.tick(None, f"flush={flush_index}")

@@ -33,7 +33,7 @@ The `zkf_*` modules implement various operators. Unless specified otherwise, all
 
 There are private helper modules named `_zkf_*`; they are not supposed to be instantiated by the user but the public modules depend on them. They do not offer any of the guarantees that are valid for the public modules.
 
-The latency is documented in the doc comments separately for each module.
+Register-stage counts are documented in the doc comments separately for each module.
 
 ## TODO
 

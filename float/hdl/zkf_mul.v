@@ -1,6 +1,6 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Pipeline depth: two stages from in_valid to out_valid.
+/// Register stages: 3 end-to-end.
 
 `default_nettype none
 

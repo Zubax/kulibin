@@ -6,7 +6,7 @@ import cocotb
 
 from casegen import BinaryCase, div_cases
 from cocotb_utils import (
-    FixedLatencyScoreboard,
+    RegisterStageScoreboard,
     context_from_env,
     drive_unsigned,
     env_int,
@@ -17,10 +17,10 @@ from cocotb_utils import (
 from zkf_model import ZkfFormat
 
 
-def div_latency(wman: int) -> int:
+def div_register_stages(wman: int) -> int:
     qfrac_base = wman + 2
     qfrac = qfrac_base + (qfrac_base % 2)
-    return (qfrac // 2) + 3
+    return (qfrac // 2) + 4
 
 
 @cocotb.test()
@@ -39,9 +39,10 @@ async def div_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    scoreboard = FixedLatencyScoreboard(
+    register_stages = div_register_stages(wman)
+    scoreboard = RegisterStageScoreboard(
         dut,
-        div_latency(wman),
+        register_stages,
         context,
         {"q": (dut.q, fmt.wfull), "div0": (dut.div0, 1)},
     )
@@ -63,7 +64,7 @@ async def div_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         drive_case(cases[0])
 
-    await scoreboard.reset(div_latency(wman) + 2, drive_during_reset=drive_reset_sample)
+    await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(cases), (
         f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

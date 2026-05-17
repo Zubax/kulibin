@@ -6,7 +6,7 @@ import cocotb
 
 from casegen import BinaryCase, mul_cases
 from cocotb_utils import (
-    FixedLatencyScoreboard,
+    RegisterStageScoreboard,
     context_from_env,
     drive_unsigned,
     env_int,
@@ -33,7 +33,8 @@ async def mul_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    scoreboard = FixedLatencyScoreboard(dut, 2, context, {"y": (dut.y, fmt.wfull)})
+    register_stages = 3
+    scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: BinaryCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
@@ -52,7 +53,7 @@ async def mul_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         drive_case(cases[0])
 
-    await scoreboard.reset(4, drive_during_reset=drive_reset_sample)
+    await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(cases), (
         f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

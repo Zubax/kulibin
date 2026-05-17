@@ -3,7 +3,7 @@
 /// The quotient bits are produced by an unrolled radix-4 restoring divider.
 /// The final partial remainder is exposed as well since it is a byproduct that is occasionally useful.
 ///
-/// Pipeline depth: 1+((WMAN+2+((WMAN+2)%2))/2) stages from in_valid to out_valid.
+/// Register stages: 2+((WMAN+2+((WMAN+2)%2))/2).
 /// The inputs are not latched but the outputs are. Throughput is one sample per cycle.
 
 `default_nettype none

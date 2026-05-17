@@ -198,27 +198,27 @@ def div_qfrac(spec: ModuleSpec) -> int:
     return qfrac_base + (qfrac_base % 2)
 
 
-def latency_cycles(spec: ModuleSpec) -> int:
+def register_stages(spec: ModuleSpec) -> int:
     qfrac_base = spec.wman + 2
     qfrac = qfrac_base + (qfrac_base % 2)
-    div_core_latency = 1 + (qfrac // 2)
+    div_core_stages = 2 + (qfrac // 2)
 
     if spec.kind == "pack":
-        return 1
-    if spec.kind == "mul":
         return 2
+    if spec.kind == "mul":
+        return 3
     if spec.kind == "add":
-        return 5
+        return 6
     if spec.kind == "div_core":
-        return div_core_latency
+        return div_core_stages
     if spec.kind == "div":
-        return div_core_latency + 2
+        return div_core_stages + 2
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
-def format_latency(cycles: int) -> str:
-    suffix = "cycle" if cycles == 1 else "cycles"
-    return f"{cycles} {suffix}"
+def format_register_stages(stages: int) -> str:
+    suffix = "stage" if stages == 1 else "stages"
+    return f"{stages} {suffix}"
 
 
 def params(spec: ModuleSpec) -> str:
@@ -1005,7 +1005,7 @@ def synthesize_yosys(spec: ModuleSpec, yosys: Path, nextpnr: Path) -> dict[str, 
         "name": spec.name,
         "label": spec.label,
         "params": params(spec),
-        "latency": format_latency(latency_cycles(spec)),
+        "register_stages": format_register_stages(register_stages(spec)),
         "fmax": parse_yosys_fmax(nextpnr_text, report_data),
         "target": format_mhz(YOSYS_TARGET_FREQ_MHZ),
         "status": "PASS" if yosys_timing_met(report_data) else "FAIL",
@@ -1040,7 +1040,7 @@ def write_yosys_html(results: list[dict[str, str]]) -> None:
             "<tr>"
             f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
-            f"<td>{escape(result['latency'])}</td>"
+            f"<td>{escape(result['register_stages'])}</td>"
             f"<td>{escape(result['target'])}</td>"
             f"<td>{escape(result['fmax'])}</td>"
             f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
@@ -1117,7 +1117,7 @@ of ignoring primary-input or primary-output paths. The harness registers are inc
 helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Latency</th><th>Target</th><th>Fmax</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>Fmax</th><th>Status</th>
 <th>Yosys LUT4</th><th>Placed LUT4</th><th>FF</th><th>TRELLIS_COMB</th>
 <th>CCU2C</th><th>PFUMX</th><th>L6MUX21</th><th>DSP MULT18X18D</th>
 <th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Logs</th>
@@ -1458,7 +1458,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "name": spec.name,
         "label": spec.label,
         "params": params(spec),
-        "latency": format_latency(latency_cycles(spec)),
+        "register_stages": format_register_stages(register_stages(spec)),
         "target": format_mhz(DIAMOND_TARGET_FREQ_MHZ),
         "fmax": format_optional_fmax(fmax),
         "slack": format_diamond_slack_from_fmax(fmax),
@@ -1492,7 +1492,7 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
             "<tr>"
             f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
-            f"<td>{escape(result['latency'])}</td>"
+            f"<td>{escape(result['register_stages'])}</td>"
             f"<td>{escape(result['target'])}</td>"
             f"<td>{escape(result['fmax'])}</td>"
             f"<td>{escape(result['slack'])}</td>"
@@ -1568,7 +1568,7 @@ of ignoring primary-input or primary-output paths. The harness registers are inc
 helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Latency</th><th>Target</th><th>Fmax</th><th>Slack</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>Fmax</th><th>Slack</th><th>Status</th>
 <th>LUT4</th><th>Registers</th><th>Slice</th><th>PIO</th><th>Logs</th>
 </tr></thead>
 <tbody>

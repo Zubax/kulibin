@@ -7,7 +7,7 @@
 /// The output is canonical zero for zero or post-round underflow, round-to-nearest ties-to-even for normal values,
 /// and canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
-/// Inputs are not latched, but the outputs are. Pipeline depth: one stage from in_valid to out_valid.
+/// Two register stages. Inputs are not latched directly, but the outputs are.
 
 `default_nettype none
 
@@ -117,7 +117,7 @@ module _zkf_pack #(
     end
 endmodule
 
-/// Delay a sideband payload by the same number of cycles as _zkf_pack.
+/// Delay a sideband payload through the same two register stages as _zkf_pack.
 /// When changing the packer pipeline, update this one as well.
 /// The reset can be tied off to zero if the delay is not used for carrying control signals.
 module _zkf_pack_delay#(parameter W = 1)(input wire clk, input wire rst, input wire [W-1:0] x, output reg [W-1:0] y);
