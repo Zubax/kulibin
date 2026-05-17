@@ -1,5 +1,7 @@
 /// Streamed Zubax Kulibin float divider.
 /// The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
+/// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
+/// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
 /// The outputs are latched and are only valid when out_valid is asserted.
 /// Register stages: 4+((WMAN+2+((WMAN+2)%2))/2) end-to-end.
 

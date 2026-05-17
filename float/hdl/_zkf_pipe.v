@@ -19,15 +19,20 @@ module _zkf_pipe #(parameter W = 1, parameter N = 0) (
 
             integer i;
             always @(posedge clk) begin
-                if (rst) begin  // Reset only stream validity. Payload registers intentionally free-run.
+                // Reset only stream validity.
+                if (rst) begin
                     valid_pipe <= {N{1'b0}};
                 end else begin
                     valid_pipe[0] <= in_valid;
-                    data_pipe[0]  <= in;
                     for (i = 1; i < N; i = i + 1) begin
                         valid_pipe[i] <= valid_pipe[i-1];
-                        data_pipe[i]  <= data_pipe[i-1];
                     end
+                end
+
+                // Payload registers intentionally free-run so reset is not on the datapath.
+                data_pipe[0] <= in;
+                for (i = 1; i < N; i = i + 1) begin
+                    data_pipe[i] <= data_pipe[i-1];
                 end
             end
             assign out_valid = valid_pipe[N-1];
