@@ -46,7 +46,7 @@ module zkf_from_int #(
 
     wire            zero_in;
     wire [WIDX-1:0] shamt_in;
-    _zkf_from_int_lod #(.W(WX)) u_lod (.x(mag_ext_in), .zero(zero_in), .shamt(shamt_in));
+    _zkf_lod #(.W(WX)) u_lod (.x(mag_ext_in), .zero(zero_in), .shamt(shamt_in));
 
     // Stage 1: register sign, magnitude, and the pre-computed LOD outputs. Reset only validity; payload free-runs.
     reg            s1_valid;
@@ -104,64 +104,6 @@ module zkf_from_int #(
         .out_valid(out_valid),
         .y(y)
     );
-endmodule
-
-
-// Leading-one detector. Returns `shamt = (W-1) - leading_one_position` so the consuming
-// barrel shifter can apply it directly, and a `zero` flag for all-zero inputs (shamt is
-// don't-care in that case). Tree-structured to keep the depth at log2(W); the convention
-// matches `_zkf_add_sub_shift_count` so a future reviewer recognises the pattern.
-module _zkf_from_int_lod #(parameter W = 32) (
-    input  wire         [W-1:0] x,
-    output wire                 zero,
-    output wire [$clog2(W)-1:0] shamt
-);
-    localparam WIDX = $clog2(W);
-
-    wire [((WIDX + 1) * W)-1:0]        valid_stage;
-    wire [((WIDX + 1) * W * WIDX)-1:0] shamt_stage;
-
-    genvar i_leaf;
-    genvar i_level;
-    genvar i_node;
-    generate
-        for (i_leaf = 0; i_leaf < W; i_leaf = i_leaf + 1) begin : g_leaf
-            localparam integer LEAF_SHIFT = W - 1 - i_leaf;
-            assign valid_stage[i_leaf] = x[i_leaf];
-            assign shamt_stage[i_leaf * WIDX +: WIDX] = LEAF_SHIFT[WIDX-1:0];
-        end
-
-        for (i_level = 0; i_level < WIDX; i_level = i_level + 1) begin : g_level
-            localparam integer IN_COUNT  = (W + (1 << i_level) - 1) >> i_level;
-            localparam integer OUT_COUNT = (IN_COUNT + 1) >> 1;
-            for (i_node = 0; i_node < OUT_COUNT; i_node = i_node + 1) begin : g_node
-                localparam integer OUT       = (i_level + 1) * W + i_node;
-                localparam integer LO        = i_level * W + (2 * i_node);
-                localparam integer HI        = LO + 1;
-                localparam integer OUT_INDEX = OUT * WIDX;
-                localparam integer LO_INDEX  = LO * WIDX;
-                localparam integer HI_INDEX  = HI * WIDX;
-
-                wire [WIDX-1:0] shamt_lo = shamt_stage[LO_INDEX +: WIDX];
-
-                // Within a pair, HI corresponds to the higher (more significant) leaf and wins.
-                if ((2 * i_node + 1) < IN_COUNT) begin : g_pair
-                    wire [WIDX-1:0] shamt_hi = shamt_stage[HI_INDEX +: WIDX];
-                    assign valid_stage[OUT] = valid_stage[LO] | valid_stage[HI];
-                    assign shamt_stage[OUT_INDEX +: WIDX] = valid_stage[HI] ? shamt_hi : shamt_lo;
-                end else begin : g_odd
-                    assign valid_stage[OUT] = valid_stage[LO];
-                    assign shamt_stage[OUT_INDEX +: WIDX] = shamt_lo;
-                end
-            end
-        end
-    endgenerate
-
-    // The tree's `valid_stage` at the root would also equal |x, but riding the tree costs WIDX LUT levels
-    // (one OR per level). A direct |x synthesises to a balanced LUT4-OR tree at ceil(log4(W)) depth —
-    // same logical result, shorter path, and it frees the tree's root OR from a second consumer.
-    assign zero  = ~|x;
-    assign shamt = shamt_stage[(WIDX * W * WIDX) +: WIDX];
 endmodule
 
 

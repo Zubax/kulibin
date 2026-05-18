@@ -270,11 +270,13 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "add":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_add.v",
         ]
     if spec.kind == "addsub":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_add.v",
             REPO / "float" / "hdl" / "zkf_addsub.v",
         ]
@@ -301,6 +303,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "from_int":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_from_int.v",
         ]
     if spec.kind == "to_int":

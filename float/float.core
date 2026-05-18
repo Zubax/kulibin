@@ -7,6 +7,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
+      - hdl/_zkf_lod.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
       - hdl/zkf_add.v
@@ -37,6 +38,7 @@ filesets:
   rtl_add:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_lod.v
       - hdl/zkf_add.v
     file_type: verilogSource
 
@@ -89,6 +91,7 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_lod.v
       - hdl/zkf_add.v
       - hdl/zkf_addsub.v
     file_type: verilogSource
@@ -106,6 +109,7 @@ filesets:
   rtl_from_int:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_lod.v
       - hdl/zkf_from_int.v
     file_type: verilogSource
 
