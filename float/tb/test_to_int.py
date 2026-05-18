@@ -96,6 +96,34 @@ def random_case(fmt: ZkfFormat, rng: np.random.Generator) -> int:
     return random_operand(fmt, rng)
 
 
+def rcarry_overflow_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:
+    """Construct floats that force the rounding carry to flip bit WINT of the rounded magnitude.
+    This drives mag_pre[WINT-1:0] = all-1s with guard=1, so mag_pre + 1 sets the rcarry bit in
+    zkf_to_int. Only reachable when WMAN > WINT (otherwise mag_pre cannot fill all low WINT bits)
+    and the corresponding exp_unbiased fits inside the format's normal range.
+    """
+    cases: list[tuple[str, int]] = []
+    if fmt.wman <= wint:
+        return cases
+    shamt = fmt.wman - wint  # right-shift amount that aligns the all-1s pattern at bit 0
+    if shamt < 1:
+        return cases
+    exp_unbiased = fmt.wfrac - shamt
+    if not (fmt.min_exp_unbiased <= exp_unbiased <= fmt.max_exp_unbiased):
+        return cases
+    # sig = (2^WINT - 1) << shamt + 2^(shamt-1)
+    #     = 2^WMAN - 2^(shamt-1)
+    # This makes mag_pre = 2^WINT - 1, guard = sig[shamt-1] = 1, sticky = 0.
+    sig = (1 << fmt.wman) - (1 << (shamt - 1))
+    frac = sig - (1 << fmt.wfrac)
+    exp_biased = exp_unbiased + fmt.bias
+    bits_pos = (exp_biased << fmt.wfrac) | frac
+    bits_neg = bits_pos | (1 << fmt.sign_shift)
+    cases.append(("rcarry_overflow_pos", bits_pos))
+    cases.append(("rcarry_overflow_neg", bits_neg))
+    return cases
+
+
 def cases_for(fmt: ZkfFormat, wint: int, kind: str, seed: int, count: int) -> list[ToIntCase]:
     cases: list[ToIntCase] = []
     seen: set[int] = set()
@@ -111,6 +139,9 @@ def cases_for(fmt: ZkfFormat, wint: int, kind: str, seed: int, count: int) -> li
     else:
         for a in range(1 << fmt.wfull):
             add_unique(cases, seen, "small_format", fmt, wint, a)
+
+    for label, a in rcarry_overflow_inputs(fmt, wint):
+        add_unique(cases, seen, label, fmt, wint, a)
 
     if kind == "directed":
         return cases
