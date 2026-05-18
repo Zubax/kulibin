@@ -131,9 +131,8 @@ module zkf_to_int #(
     wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
     wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !left_too_big) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
 
-    // Apply the barrel shifters before stage 1 so the heavy mux trees ride the input cone instead
-    // of chaining behind a register; the rounding adder and saturation logic then have a shallow
-    // combinational cone after stage 1 and the design closes timing in three stages.
+    // Apply the barrel shifters before stage 1 so the heavy mux trees ride the input cone instead of chaining behind
+    // a register; the rounding adder and saturation logic then have a shallow combinational cone after stage 1.
     wire [WMAN+1:0] rsh_out_pre;
     _zkf_to_int_rshift #(.W(WMAN + 2)) u_rshift (
         .x({sig_in, 2'b00}),
@@ -189,17 +188,13 @@ module zkf_to_int #(
     end
 
     // -- Stage 1 -> Stage 2 combinational: round, then saturation detect via bit-range checks.
-    wire [WMAG-1:0] mag_pre         = s1_mag_pre;
-    wire            guard           = s1_guard;
-    wire            sticky_combined = s1_sticky;
-    wire            round_increment = guard & (sticky_combined | mag_pre[0]);
-
     // Round only the low WINT bits — those are all that ever leaves this module — and feed any
     // bit above WINT-1 into hi_pre in parallel. This caps the carry chain at WINT+1 bits even
     // when WMAN > WINT (where mag_pre is much wider) and keeps the rounding adder off the
     // critical path that wider configurations expose.
-    wire           hi_pre          = |mag_pre[WMAG-1:WINT];
-    wire [WINT:0]  mag_rounded_low = {1'b0, mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
+    wire           round_increment = s1_guard & (s1_sticky | s1_mag_pre[0]);
+    wire           hi_pre          = |s1_mag_pre[WMAG-1:WINT];
+    wire [WINT:0]  mag_rounded_low = {1'b0, s1_mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
     wire           rcarry          = mag_rounded_low[WINT];
 
     // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any
@@ -210,7 +205,7 @@ module zkf_to_int #(
     // or appeared as the rounding carry-out, including the case where the round ripple turns a
     // hi_pre-clear value into an overflowing one.
     wire hi_set  = hi_pre | rcarry;
-    wire top_bit = mag_rounded_low[WINT-1];
+    wire top_bit =  mag_rounded_low[WINT-1];
     wire low_set = |mag_rounded_low[WINT-2:0];
 
     wire overflow_pos = hi_set | top_bit;
