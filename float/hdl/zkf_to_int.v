@@ -138,18 +138,13 @@ module zkf_to_int #(
         .y(rsh_out_pre)
     );
 
-    wire [WMAN-1:0] rsh_mag_pre    = rsh_out_pre[WMAN+1:2];
-    wire            rsh_guard_pre  = rsh_out_pre[1];
-    wire            rsh_sticky_pre = rsh_out_pre[0];
-
+    wire  [WMAN-1:0] rsh_mag_pre    = rsh_out_pre[WMAN+1:2];
+    wire             rsh_guard_pre  = rsh_out_pre[1];
+    wire             rsh_sticky_pre = rsh_out_pre[0];
     wire [WLEFT-1:0] lsh_out_pre;
     generate
         if (LSH_MAX > 0) begin : g_lshift
-            _zkf_to_int_lshift #(.W(WLEFT), .WSHAMT(WLSH)) u_lshift (
-                .x({{LSH_MAX{1'b0}}, sig_in}),
-                .shamt(lshamt_clamped),
-                .y(lsh_out_pre)
-            );
+            assign lsh_out_pre = {{LSH_MAX{1'b0}}, sig_in} << lshamt_clamped;
         end else begin : g_no_lshift
             assign lsh_out_pre = sig_in;
         end
@@ -290,33 +285,6 @@ module _zkf_to_int_rshift #(parameter W = 20) (
 
     assign y = {data_stage[(WLOCAL * W) + W - 1 : (WLOCAL * W) + 1],
                 data_stage[WLOCAL * W] | sticky_stage[WLOCAL]};
-endmodule
-
-
-// Left-shift barrel with zero fill. WSHAMT may be less than $clog2(W) when the upstream clamp guarantees the shift can
-// never reach W; the high stages are then implicit pass-throughs and the loop only generates the live stages.
-module _zkf_to_int_lshift #(parameter W = 32, parameter WSHAMT = $clog2(W)) (
-    input  wire      [W-1:0] x,
-    input  wire [WSHAMT-1:0] shamt,
-    output wire      [W-1:0] y
-);
-    wire [((WSHAMT + 1) * W)-1:0] data_stage;
-    assign data_stage[0 +: W] = x;
-    genvar i_stage;
-    generate
-        for (i_stage = 0; i_stage < WSHAMT; i_stage = i_stage + 1) begin : g_stage
-            localparam integer DIST = 1 << i_stage;
-            wire [W-1:0] data_in = data_stage[i_stage * W +: W];
-            wire [W-1:0] shifted;
-            if (DIST < W) begin : g_in_range
-                assign shifted = {data_in[W-1-DIST:0], {DIST{1'b0}}};
-            end else begin : g_saturating
-                assign shifted = {W{1'b0}};
-            end
-            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
-        end
-    endgenerate
-    assign y = data_stage[WSHAMT * W +: W];
 endmodule
 
 `default_nettype wire

@@ -67,16 +67,13 @@ module zkf_from_int #(
         s1_shamt   <= shamt_in;
     end
 
-    // Stage 1 -> Stage 2 combinational: barrel shift only (LOD already done) plus GRS extraction and exponent
-    // derivation. The combinational depth here is just the barrel + a small constant amount of arithmetic.
-    wire [WX-1:0] s1_aligned;
-    _zkf_from_int_align #(.W(WX)) u_align (.x(s1_mag_ext), .shamt(s1_shamt), .y(s1_aligned));
-
-    // Significand carries the hidden leading 1 at the top; the next two bits feed guard/round,
-    // and any remaining bits below OR-reduce into sticky.
-    wire [WMAN-1:0] s1_significand = s1_aligned[WX-1 -: WMAN];
-    wire            s1_guard       = s1_aligned[WX-WMAN-1];
-    wire            s1_round       = s1_aligned[WX-WMAN-2];
+    // Stage 1 -> Stage 2 combinational: barrel shift (LOD already done) plus GRS extraction and exponent derivation.
+    // Significand carries the hidden leading 1 at the top; the next two bits feed guard/round, and any remaining bits
+    // below OR-reduce into sticky.
+    wire   [WX-1:0] s1_aligned     = s1_mag_ext << s1_shamt;
+    wire [WMAN-1:0] s1_significand =  s1_aligned[WX-1 -: WMAN];
+    wire            s1_guard       =  s1_aligned[WX-WMAN-1];
+    wire            s1_round       =  s1_aligned[WX-WMAN-2];
     wire            s1_sticky      = |s1_aligned[WX-WMAN-3:0];
 
     // exp_unbiased = position of the leading 1 = (WX-1) - shamt. The subtraction sits on the carry chain and is the
@@ -158,33 +155,5 @@ module _zkf_from_int_lod #(parameter W = 32) (
     assign shamt = shamt_stage[(WIDX * W * WIDX) +: WIDX];
 endmodule
 
-
-// Logarithmic left-shift barrel shifter. Each stage either shifts by 2^i or passes through.
-// Shifting past the width is fine: it produces zeros, which matches the behaviour expected
-// when the LOD asserts `zero` (shamt is don't-care, output magnitude is ignored).
-module _zkf_from_int_align #(parameter W = 32) (
-    input  wire         [W-1:0] x,
-    input  wire [$clog2(W)-1:0] shamt,
-    output wire         [W-1:0] y
-);
-    localparam WIDX = $clog2(W);
-    wire [((WIDX + 1) * W)-1:0] data_stage;
-    assign data_stage[0 +: W] = x;
-    genvar i_stage;
-    generate
-        for (i_stage = 0; i_stage < WIDX; i_stage = i_stage + 1) begin : g_stage
-            localparam integer DIST = 1 << i_stage;
-            wire [W-1:0] data_in = data_stage[i_stage * W +: W];
-            wire [W-1:0] shifted;
-            if (DIST < W) begin : g_in_range
-                assign shifted = {data_in[W-1-DIST:0], {DIST{1'b0}}};
-            end else begin : g_saturating
-                assign shifted = {W{1'b0}};
-            end
-            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
-        end
-    endgenerate
-    assign y = data_stage[WIDX * W +: W];
-endmodule
 
 `default_nettype wire
