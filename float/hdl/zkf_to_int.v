@@ -26,20 +26,25 @@ module zkf_to_int #(
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // BIAS_INT and MAX_EXP_IN below use unsized integer shifts on WEXP, so WEXP > 31 would overflow Verilog's
+        // 32-bit integer constant arithmetic and yield tool-dependent values.
+        if (WEXP > 31) begin : g_invalid_wexp_too_wide
+            _zkf_invalid_to_int_wexp_too_wide_unportable u_invalid();
+        end
     endgenerate
     // verilator coverage_on
 
-    localparam WFRAC = WMAN - 1;
-    localparam WFULL = WEXP + WMAN;
+    localparam WFRAC   = WMAN - 1;
+    localparam WFULL   = WEXP + WMAN;
     // Largest useful left shift before the result definitely overflows WINT signed bits.
-    localparam LSH_MAX  = (WINT > WMAN) ? (WINT - WMAN) : 0;
-    localparam WLSH     = (LSH_MAX > 0) ? $clog2(LSH_MAX + 1) : 1;
-    localparam WLEFT    = WMAN + LSH_MAX;
+    localparam LSH_MAX = (WINT > WMAN) ? (WINT - WMAN) : 0;
+    localparam WLSH    = (LSH_MAX > 0) ? $clog2(LSH_MAX + 1) : 1;
+    localparam WLEFT   = WMAN + LSH_MAX;
     // Largest useful right shift before everything becomes sticky.
-    localparam RSH_MAX  = WMAN + 2;
-    localparam WRSH     = $clog2(RSH_MAX + 1);
+    localparam RSH_MAX = WMAN + 2;
+    localparam WRSH    = $clog2(RSH_MAX + 1);
     // Working magnitude width: enough to detect overflow against INT_NEG_MAG (= 2^(WINT-1)).
-    localparam WMAG = ((WINT + 1) > (WLEFT + 1)) ? (WINT + 1) : (WLEFT + 1);
+    localparam WMAG    = ((WINT + 1) > (WLEFT + 1)) ? (WINT + 1) : (WLEFT + 1);
 
     // Folded shift-magnitude and predicate thresholds in integer arithmetic so widths can be sized from them rather
     // than from WEXP alone.
@@ -189,15 +194,24 @@ module zkf_to_int #(
     wire            sticky_combined = s1_sticky;
     wire            round_increment = guard & (sticky_combined | mag_pre[0]);
 
-    wire [WMAG-1:0] mag_rounded = mag_pre + {{(WMAG-1){1'b0}}, round_increment};
+    // Round only the low WINT bits — those are all that ever leaves this module — and feed any
+    // bit above WINT-1 into hi_pre in parallel. This caps the carry chain at WINT+1 bits even
+    // when WMAN > WINT (where mag_pre is much wider) and keeps the rounding adder off the
+    // critical path that wider configurations expose.
+    wire           hi_pre          = |mag_pre[WMAG-1:WINT];
+    wire [WINT:0]  mag_rounded_low = {1'b0, mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
+    wire           rcarry          = mag_rounded_low[WINT];
 
-    // Saturation detection: top bits of mag_rounded answer "above threshold?" directly, without a comparator.
-    // Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. when any bit at position WINT-1 or higher is set.
-    // Negative overflow fires when mag > 2^(WINT-1) (the magnitude 2^(WINT-1) itself is valid: it negates exactly
-    // to INT_MIN), i.e. when any bit above WINT-1 is set OR (bit WINT-1 is set AND some lower bit is set).
-    wire hi_set  = |mag_rounded[WMAG-1:WINT];
-    wire top_bit =  mag_rounded[WINT-1];
-    wire low_set = |mag_rounded[WINT-2:0];
+    // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any
+    // bit at position WINT-1 or above is set. Negative overflow fires when mag > 2^(WINT-1) (the
+    // magnitude 2^(WINT-1) itself is valid: it negates exactly to INT_MIN), i.e. any bit above
+    // WINT-1 is set OR (bit WINT-1 is set AND some lower bit is set). hi_pre OR rcarry covers
+    // every set bit at or above position WINT regardless of whether it pre-existed in mag_pre
+    // or appeared as the rounding carry-out, including the case where the round ripple turns a
+    // hi_pre-clear value into an overflowing one.
+    wire hi_set  = hi_pre | rcarry;
+    wire top_bit = mag_rounded_low[WINT-1];
+    wire low_set = |mag_rounded_low[WINT-2:0];
 
     wire overflow_pos = hi_set | top_bit;
     wire overflow_neg = hi_set | (top_bit & low_set);
@@ -208,7 +222,7 @@ module zkf_to_int #(
     localparam [WINT-1:0] INT_MAX     = {1'b0, {(WINT-1){1'b1}}};
 
     wire [WINT-1:0] mag_sat_overflow = s1_sign ? INT_NEG_MAG : INT_MAX;
-    wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded[WINT-1:0];
+    wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded_low[WINT-1:0];
 
     // -- Stage 2 register.
     reg            s2_valid;
