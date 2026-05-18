@@ -50,8 +50,11 @@ module zkf_to_int #(
     // than from WEXP alone.
     //   LEFT_SHIFT_BASE  : exp_in == this means value == 2^WFRAC, the boundary between right and left shift.
     //                      left_shift_full = exp_in - LEFT_SHIFT_BASE.
-    //   LEFT_OVER_BASE   : exp_in >= this guarantees the value overflows WINT signed bits even before rounding
-    //                      (saturation will fire downstream).
+    //   LEFT_OVER_BASE   : exp_in >= this guarantees the value overflows WINT signed bits even before rounding.
+    //                      In that branch lshamt_clamped is forced to 0, so lsh_out_pre keeps sig_in un-shifted and
+    //                      mag_pre_in is a small/wrong magnitude — that's fine because s1_left_too_big propagates into
+    //                      overflow_now downstream and replaces mag_rounded_low with the saturated magnitude, so the
+    //                      wrong intermediate is never observable.
     //   RIGHT_OVER_BASE  : exp_in < this means the right shift amount exceeds RSH_MAX, so the shifter would not
     //                      capture any useful bits and we clamp to RSH_MAX.
     localparam integer BIAS_INT         = (1 << (WEXP - 1)) - 1;
