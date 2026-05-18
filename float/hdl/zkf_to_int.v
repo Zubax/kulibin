@@ -70,7 +70,9 @@ module zkf_to_int #(
     // so this also guarantees WEU >= WEXP + 1, which the exp_in_ext zero-extension below needs.
     localparam integer WEU           = $clog2(MAX_ABS_DELTA + 1) + 1;
 
-    localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET = -LEFT_SHIFT_BASE;
+    // WEU was sized so LEFT_SHIFT_BASE fits in (WEU-1) unsigned bits.
+    localparam signed [WEU-1:0] LEFT_SHIFT_BASE_EXT = $signed({1'b0, LEFT_SHIFT_BASE[WEU-2:0]});
+    localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET   = -LEFT_SHIFT_BASE_EXT;
 
     // -- Combinational decode.
     wire             sign_in = a[WFULL-1];
@@ -85,12 +87,9 @@ module zkf_to_int #(
 
     wire signed [WEU-1:0] exp_in_ext = $signed({{(WEU-WEXP){1'b0}}, exp_in});
 
-    // Folded constant used to compute right_shift_full directly (instead of negating left_shift_full, which would
-    // put both shift amounts on the same serial carry chain).
-    localparam signed [WEU-1:0] LEFT_SHIFT_BASE_EXT = LEFT_SHIFT_BASE;
-
     // Two parallel folded-constant subtractions provide the shift magnitudes (only their low WLSH / WRSH bits are
-    // consumed downstream). They lay on independent carry chains.
+    // consumed downstream). right_shift_full uses the positive constant directly rather than negating left_shift_full,
+    // which would put both shift amounts on the same serial carry chain.
     wire signed [WEU-1:0] left_shift_full  = exp_in_ext + LEFT_SHIFT_OFFSET;
     wire signed [WEU-1:0] right_shift_full = LEFT_SHIFT_BASE_EXT - exp_in_ext;
 
