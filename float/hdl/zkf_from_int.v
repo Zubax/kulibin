@@ -78,6 +78,12 @@ module zkf_from_int #(
 
     // exp_unbiased = position of the leading 1 = (WX-1) - shamt. The subtraction sits on the carry chain and is the
     // same shape as the bias subtraction inside _zkf_pack, avoiding a separate comparator.
+    //
+    // Invariant: shamt is in [0, WX-1] for every input, including all-zero.
+    // The LOD's leaves store LEAF_SHIFT = WX-1-i in [0, WX-1] and the tree only propagates leaf values (no arithmetic),
+    // so the root shamt is always a leaf value. The subtraction below therefore never underflows; zero-extending into
+    // s1_exp_ub is safe and does not need sign extension. For all-zero magnitude in particular, shamt = WX-1 produces
+    // s1_exp_ub = 0, but _zkf_pack ignores exp_unbiased when force_zero (= s1_zero) is asserted.
     wire        [WIDX:0]  s1_top_ext   = WX - 1;
     wire        [WIDX:0]  s1_shamt_ext = {1'b0, s1_shamt};
     wire        [WIDX:0]  s1_pos_ext   = s1_top_ext - s1_shamt_ext;
