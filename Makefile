@@ -95,13 +95,24 @@ FLOAT_TO_INT_MATRIX = \
 	w8_m24_int32_random:8:24:32:random:1024 \
 	w11_m53_int32_random:11:53:32:random:384
 
-# Resize matrix shape: wexp_in:wman_in:wexp_out:wman_out:kind:count. The small entries are
-# exhaustive over the input bit space for full corner-case coverage.
+# Resize matrix shape: wexp_in:wman_in:wexp_out:wman_out:kind:count. The matrix covers all four
+# (WMAN, WEXP) relation quadrants so every elaboration-time branch in zkf_resize is exercised:
+#   * widen-only fast path: 3/4->3/4 (same), 3/4->4/4 (WEXP widens, WMAN same), 3/4->4/6 (both
+#     widen), 3/4->3/6 (WMAN widens, WEXP same), 5/11->6/18 (both widen, wide reference).
+#   * pack/g_widen slow path (WMAN_OUT >= WMAN_IN, WEXP_OUT < WEXP_IN): 5/4->3/4 (g_same_width),
+#     5/4->3/6 (g_zero_pad).
+#   * pack/g_narrow slow path (WMAN_OUT < WMAN_IN): 3/5->3/4 (DROP=1, g_round_zero,
+#     g_sticky_zero), 4/6->3/4 (DROP=2, g_round_real, g_sticky_zero), 6/18->5/11 (DROP=7, all
+#     real), 8/24->6/18 and 11/53->8/24 (deep narrowings under random).
 FLOAT_RESIZE_MATRIX = \
 	w3_m4_to_w3_m4_exhaustive:3:4:3:4:exhaustive:0 \
+	w3_m4_to_w4_m4_exhaustive:3:4:4:4:exhaustive:0 \
+	w3_m4_to_w3_m6_exhaustive:3:4:3:6:exhaustive:0 \
 	w3_m5_to_w3_m4_exhaustive:3:5:3:4:exhaustive:0 \
 	w3_m4_to_w4_m6_exhaustive:3:4:4:6:exhaustive:0 \
 	w4_m6_to_w3_m4_exhaustive:4:6:3:4:exhaustive:0 \
+	w5_m4_to_w3_m4_exhaustive:5:4:3:4:exhaustive:0 \
+	w5_m4_to_w3_m6_exhaustive:5:4:3:6:exhaustive:0 \
 	w6_m18_to_w5_m11_random:6:18:5:11:random:768 \
 	w5_m11_to_w6_m18_random:5:11:6:18:random:768 \
 	w8_m24_to_w6_m18_random:8:24:6:18:random:512 \

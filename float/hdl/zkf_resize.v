@@ -1,11 +1,15 @@
 /// Streamed cast between two Zubax Kulibin float formats.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: same as _zkf_pack.
+/// Register stages depend on the format relation:
+///   1 stage when WMAN_OUT >= WMAN_IN and WEXP_OUT >= WEXP_IN. The output format is a superset of the input.
+///   2 stages otherwise (using _zkf_pack like other arithmetic modules do).
 ///
-/// Widening is exact unless the output exponent range cannot represent the input value.
-/// Narrowing uses round-to-nearest, ties-to-even on the discarded fraction.
-/// Zero canonicalises to +0 in the output format; signed infinity stays signed infinity.
-/// Out-of-range exponents map to signed infinity (overflow) or +0 (underflow).
+/// Behaviour:
+///   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
+///   Narrowing WMAN (WMAN_OUT < WMAN_IN): round-to-nearest, ties-to-even on the discarded fraction bits.
+///   Narrowing WEXP (WEXP_OUT < WEXP_IN): output overflow maps to signed inf, output post-round underflow to +0.
+///   Zero (exp_in == 0): canonicalises to +0 in the output format.
+///   Infinity (exp_in == all-ones): canonicalises to signed infinity in the output format.
 
 `default_nettype none
 
@@ -32,14 +36,10 @@ module zkf_resize #(
     endgenerate
     // verilator coverage_on
 
-    localparam WFRAC_IN = WMAN_IN  - 1;
-    localparam WFULL_IN = WEXP_IN  + WMAN_IN;
-    // Output-side accumulator width for the unbiased exponent. Must hold the input format's full
-    // signed exp_unbiased range (WEXP_IN + 1 signed bits) and also _zkf_pack's internal range
-    // requirement of at least WEXP_OUT + 2 signed bits.
-    localparam WEU_PACK_MIN = WEXP_OUT + 2;
-    localparam WEU_IN_MIN   = WEXP_IN  + 1;
-    localparam WEU          = (WEU_PACK_MIN > WEU_IN_MIN) ? WEU_PACK_MIN : WEU_IN_MIN;
+    localparam WFRAC_IN  = WMAN_IN  - 1;
+    localparam WFRAC_OUT = WMAN_OUT - 1;
+    localparam WFULL_IN  = WEXP_IN  + WMAN_IN;
+    localparam WFULL_OUT = WEXP_OUT + WMAN_OUT;
 
     // Decode under the input format. Canonicalisation of zero (frac/sign ignored when exp == 0) and
     // signed infinity (frac ignored when exp == all_ones) happens here.
@@ -48,65 +48,120 @@ module zkf_resize #(
     wire [WFRAC_IN-1:0] frac_in = a[WFRAC_IN-1:0];
     wire                is_zero = ~|exp_in;
     wire                is_inf  =  &exp_in;
-    wire [WMAN_IN-1:0]  sig_in  = {1'b1, frac_in};
 
-    // exp_unbiased = exp_in - IN_BIAS, performed as a single signed add with a folded constant so the path lands on
-    // the carry chain rather than a comparator + adder. IN_BIAS is built from a sized vector (top bit 0, lower
-    // WEXP_IN-1 bits all 1 = 2^(WEXP_IN-1) - 1); this keeps the constant portable for any WEXP_IN >= 2.
-    localparam    [WEXP_IN-1:0] IN_BIAS      = {1'b0, {(WEXP_IN-1){1'b1}}};
-    localparam signed [WEU-1:0] IN_BIAS_EXT  = $signed({{(WEU-WEXP_IN){1'b0}}, IN_BIAS});
-    wire       signed [WEU-1:0] exp_unbiased = $signed({{(WEU-WEXP_IN){1'b0}}, exp_in}) - IN_BIAS_EXT;
-
-    // Significand mapping. Decided at elaboration time so only one branch exists in the netlist.
-    wire [WMAN_OUT-1:0] significand_out;
-    wire                guard_out;
-    wire                round_out;
-    wire                sticky_out;
+    // IN_BIAS as a sized vector (top bit 0, lower WEXP_IN-1 bits all 1 = 2^(WEXP_IN-1) - 1). Used by both paths.
+    localparam [WEXP_IN-1:0] IN_BIAS = {1'b0, {(WEXP_IN-1){1'b1}}};
 
     generate
-        if (WMAN_OUT >= WMAN_IN) begin : g_widen
-            // Exact: copy the input significand and pad the new low bits with zeros.
-            localparam integer PAD = WMAN_OUT - WMAN_IN;
-            if (PAD == 0) begin : g_same_width
-                assign significand_out = sig_in;
-            end else begin : g_zero_pad
-                assign significand_out = {sig_in, {PAD{1'b0}}};
+        if ((WMAN_OUT >= WMAN_IN) && (WEXP_OUT >= WEXP_IN)) begin : g_widen_only
+            // Fast path: output format strictly covers the input range. No rounding (significand is padded with zeros),
+            // no overflow (output exp range is at least as wide), no underflow
+            // (input exp_unbiased is always >= input min, which the output also covers).
+            localparam integer FRAC_PAD = WMAN_OUT - WMAN_IN;
+
+            // Bias offset = OUT_BIAS - IN_BIAS, non-negative because WEXP_OUT >= WEXP_IN.
+            // Constructed via sized vectors to stay portable for any WEXP values.
+            localparam [WEXP_OUT-1:0] OUT_BIAS         = {1'b0, {(WEXP_OUT-1){1'b1}}};
+            localparam [WEXP_OUT-1:0] IN_BIAS_WIDENED  = {{(WEXP_OUT-WEXP_IN+1){1'b0}}, {(WEXP_IN-1){1'b1}}};
+            localparam [WEXP_OUT-1:0] BIAS_OFFSET      = OUT_BIAS - IN_BIAS_WIDENED;
+
+            // Re-biased exponent for the normal case. exp_in fits in WEXP_IN unsigned bits and BIAS_OFFSET is at most
+            // 2^(WEXP_OUT-1), so the sum <= 2^WEXP_OUT-1 and never reaches the all-1 inf encoding for normal inputs.
+            wire [WEXP_OUT-1:0]  exp_in_widened = {{(WEXP_OUT-WEXP_IN){1'b0}}, exp_in};
+            wire [WEXP_OUT-1:0]  exp_widened    = exp_in_widened + BIAS_OFFSET;
+
+            // Fraction widening: same width is a passthrough; wider output zero-pads on the LSB side.
+            // Decided at elaboration so only one branch exists in the netlist.
+            wire [WFRAC_OUT-1:0] frac_widened;
+            if (FRAC_PAD == 0) begin : g_same_man
+                assign frac_widened = frac_in;
+            end else begin : g_pad_man
+                assign frac_widened = {frac_in, {FRAC_PAD{1'b0}}};
             end
-            assign guard_out  = 1'b0;
-            assign round_out  = 1'b0;
-            assign sticky_out = 1'b0;
-        end else begin : g_narrow
-            localparam integer DROP = WMAN_IN - WMAN_OUT;
-            assign significand_out = sig_in[WMAN_IN-1 -: WMAN_OUT];
-            assign guard_out       = sig_in[DROP - 1];
-            if (DROP >= 2) begin : g_round_real
-                assign round_out = sig_in[DROP - 2];
-            end else begin : g_round_zero
-                assign round_out = 1'b0;
+
+            // Final encoding: zero collapses to canonical +0; infinity becomes canonical signed infinity;
+            // normal values use the re-biased exponent and padded fraction.
+            // case is wrapped inside the clocked always block per the project's banned-construct list.
+            reg                 s_valid;
+            reg [WFULL_OUT-1:0] s_y;
+            always @(posedge clk) begin
+                if (rst) begin
+                    s_valid <= 1'b0;
+                end else begin
+                    s_valid <= in_valid;
+                end
+
+                case ({is_zero, is_inf})
+                    2'b10, 2'b11: s_y <= {WFULL_OUT{1'b0}};
+                    2'b01:        s_y <= {sign_in, {WEXP_OUT{1'b1}}, {WFRAC_OUT{1'b0}}};
+                    default:      s_y <= {sign_in, exp_widened, frac_widened};
+                endcase
             end
-            if (DROP >= 3) begin : g_sticky_real
-                assign sticky_out = |sig_in[DROP - 3 : 0];
-            end else begin : g_sticky_zero
+            assign out_valid = s_valid;
+            assign y         = s_y;
+        end else begin : g_pack
+            // Slow path: at least one dimension narrows, so rounding and/or overflow detection are needed and
+            // _zkf_pack handles them. Latency = 2 cycles (the two pack stages). Output-side accumulator width for the
+            // unbiased exponent. Must hold the input format's full signed exp_unbiased range (WEXP_IN + 1 signed bits)
+            // and also _zkf_pack's internal range requirement of at least WEXP_OUT + 2 signed bits.
+            localparam WEU_PACK_MIN = WEXP_OUT + 2;
+            localparam WEU_IN_MIN   = WEXP_IN  + 1;
+            localparam WEU          = (WEU_PACK_MIN > WEU_IN_MIN) ? WEU_PACK_MIN : WEU_IN_MIN;
+
+            localparam signed [WEU-1:0] IN_BIAS_EXT  = $signed({{(WEU-WEXP_IN){1'b0}}, IN_BIAS});
+            wire       signed [WEU-1:0] exp_unbiased = $signed({{(WEU-WEXP_IN){1'b0}}, exp_in}) - IN_BIAS_EXT;
+            wire [WMAN_IN-1:0]          sig_in       = {1'b1, frac_in};
+
+            wire [WMAN_OUT-1:0] significand_out;
+            wire                guard_out;
+            wire                round_out;
+            wire                sticky_out;
+
+            if (WMAN_OUT >= WMAN_IN) begin : g_widen
+                // Exact: copy the input significand and pad the new low bits with zeros.
+                // Reached when WEXP_OUT < WEXP_IN (otherwise the fast path would have taken over).
+                localparam integer PAD = WMAN_OUT - WMAN_IN;
+                if (PAD == 0) begin : g_same_width
+                    assign significand_out = sig_in;
+                end else begin : g_zero_pad
+                    assign significand_out = {sig_in, {PAD{1'b0}}};
+                end
+                assign guard_out  = 1'b0;
+                assign round_out  = 1'b0;
                 assign sticky_out = 1'b0;
+            end else begin : g_narrow
+                localparam integer DROP = WMAN_IN - WMAN_OUT;
+                assign significand_out = sig_in[WMAN_IN-1 -: WMAN_OUT];
+                assign guard_out       = sig_in[DROP - 1];
+                if (DROP >= 2) begin : g_round_real
+                    assign round_out = sig_in[DROP - 2];
+                end else begin : g_round_zero
+                    assign round_out = 1'b0;
+                end
+                if (DROP >= 3) begin : g_sticky_real
+                    assign sticky_out = |sig_in[DROP - 3 : 0];
+                end else begin : g_sticky_zero
+                    assign sticky_out = 1'b0;
+                end
             end
+
+            _zkf_pack #(.WEXP(WEXP_OUT), .WMAN(WMAN_OUT), .WEXP_UNBIASED(WEU)) u_pack (
+                .clk(clk),
+                .rst(rst),
+                .in_valid(in_valid),
+                .sign(sign_in),
+                .force_zero(is_zero),
+                .force_inf(is_inf),
+                .exp_unbiased(exp_unbiased),
+                .significand(significand_out),
+                .guard(guard_out),
+                .round(round_out),
+                .sticky(sticky_out),
+                .out_valid(out_valid),
+                .y(y)
+            );
         end
     endgenerate
-
-    _zkf_pack #(.WEXP(WEXP_OUT), .WMAN(WMAN_OUT), .WEXP_UNBIASED(WEU)) u_pack (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(in_valid),
-        .sign(sign_in),
-        .force_zero(is_zero),
-        .force_inf(is_inf),
-        .exp_unbiased(exp_unbiased),
-        .significand(significand_out),
-        .guard(guard_out),
-        .round(round_out),
-        .sticky(sticky_out),
-        .out_valid(out_valid),
-        .y(y)
-    );
 endmodule
 
 `default_nettype wire

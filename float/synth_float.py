@@ -340,6 +340,9 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind in {"from_int", "to_int"}:
         return 3
     if spec.kind == "resize":
+        # 1 stage on the widen-only fast path, 2 stages when _zkf_pack is involved.
+        if spec.wman_out >= spec.wman_in and spec.wexp_out >= spec.wexp_in:
+            return 1
         return 2
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
