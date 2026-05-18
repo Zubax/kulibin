@@ -79,7 +79,7 @@ module zkf_to_int #(
     wire [WEXP-1:0]  exp_in  = a[WFULL-2:WFRAC];
     wire [WFRAC-1:0] frac_in = a[WFRAC-1:0];
     wire             is_zero = ~|exp_in;
-    wire             is_inf  = &exp_in;
+    wire             is_inf  =  &exp_in;
     // The hidden bit is implicit for normal values. For zero inputs the right shifter cannot always saturate enough
     // to wipe the hidden bit (BIAS + WFRAC can be less than WMAN + 2 for small WEXP), so explicitly zero the
     // significand here; the downstream pipeline then yields mag_rounded = 0 without a separate is_zero late-stage mux.
@@ -98,9 +98,14 @@ module zkf_to_int #(
     // the comparison resolves at elaboration and emits no runtime logic. When it fits inside exp_in's width,
     // yosys/abc realises the compare as a shallow LUT tree on the carry chain rather than a wide signed subtract,
     // so the predicate does not chain a WEU-bit CCU2 stack onto the critical path feeding the shifter mux.
+    //
+    // right_too_big already implies ~is_left_shift: RIGHT_OVER_BASE = LEFT_SHIFT_BASE - RSH_MAX < LEFT_SHIFT_BASE
+    // (RSH_MAX=WMAN+2>0), so exp_in<RIGHT_OVER_BASE necessarily means exp_in<LEFT_SHIFT_BASE, i.e., is_left_shift=0.
     wire is_left_shift;
     wire left_too_big;
-    wire right_too_big_pred;
+    wire right_too_big;
+    wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
+    wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !left_too_big) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
 
     generate
         if (LEFT_SHIFT_BASE > MAX_EXP_IN) begin : g_lshift_never
@@ -116,18 +121,13 @@ module zkf_to_int #(
         end
 
         if (RIGHT_OVER_BASE <= 0) begin : g_rover_never
-            assign right_too_big_pred = 1'b0;
+            assign right_too_big = 1'b0;
         end else if (RIGHT_OVER_BASE > MAX_EXP_IN) begin : g_rover_always
-            assign right_too_big_pred = 1'b1;
+            assign right_too_big = 1'b1;
         end else begin : g_rover_cmp
-            assign right_too_big_pred = exp_in < RIGHT_OVER_BASE[WEXP-1:0];
+            assign right_too_big = exp_in < RIGHT_OVER_BASE[WEXP-1:0];
         end
     endgenerate
-
-    wire right_too_big = ~is_left_shift & right_too_big_pred;
-
-    wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
-    wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !left_too_big) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
 
     // Apply the barrel shifters before stage 1 so the heavy mux trees ride the input cone instead of chaining behind
     // a register; the rounding adder and saturation logic then have a shallow combinational cone after stage 1.
