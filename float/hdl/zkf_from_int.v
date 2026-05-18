@@ -30,16 +30,15 @@ module zkf_from_int #(
     // and at least WMAN+3 so a static slice of [WX-WMAN-3:0] always provides at least one sticky bit.
     localparam WX    = (WINT > (WMAN + 3)) ? WINT : (WMAN + 3);
     localparam WIDX  = $clog2(WX);
-    // Unbiased exponent must hold the maximum leading-one position (WX-1) and _zkf_pack's own
-    // internal range that needs at least WEXP+2 signed bits.
+    // Unbiased exponent must hold the maximum leading-one position (WX-1) and _zkf_pack's own internal range that
+    // needs at least WEXP+2 signed bits.
     localparam WEU_LOD = WIDX + 1;
     localparam WEU     = (WEU_LOD > (WEXP + 2)) ? WEU_LOD : (WEXP + 2);
 
-    // Absolute value via XOR-and-increment so the path uses the carry chain; this also handles
-    // INT_MIN correctly because the resulting unsigned magnitude 2^(WINT-1) fits in WINT bits.
-    // Compute the leading-one position pre-stage-1 so the heavy LOD tree sits on the input cone
-    // rather than chaining behind the magnitude register; that splits the long LOD->shift->pack
-    // path across two cycles without burning an extra pipeline stage.
+    // Absolute value via XOR-and-increment so the path uses the carry chain; this also handles INT_MIN correctly
+    // because the resulting unsigned magnitude 2^(WINT-1) fits in WINT bits. Compute the leading-one position
+    // pre-stage-1 so the heavy LOD tree sits on the input cone rather than chaining behind the magnitude register;
+    // that splits the long LOD->shift->pack path across two cycles without burning an extra pipeline stage.
     wire            sign_in    = a[WINT-1];
     wire [WINT-1:0] inv_in     = a ^ {WINT{sign_in}};
     wire [WINT-1:0] mag_in     = inv_in + {{(WINT-1){1'b0}}, sign_in};
@@ -71,11 +70,7 @@ module zkf_from_int #(
     // Stage 1 -> Stage 2 combinational: barrel shift only (LOD already done) plus GRS extraction and exponent
     // derivation. The combinational depth here is just the barrel + a small constant amount of arithmetic.
     wire [WX-1:0] s1_aligned;
-    _zkf_from_int_align #(.W(WX)) u_align (
-        .x(s1_mag_ext),
-        .shamt(s1_shamt),
-        .y(s1_aligned)
-    );
+    _zkf_from_int_align #(.W(WX)) u_align (.x(s1_mag_ext), .shamt(s1_shamt), .y(s1_aligned));
 
     // Significand carries the hidden leading 1 at the top; the next two bits feed guard/round,
     // and any remaining bits below OR-reduce into sticky.
@@ -86,10 +81,10 @@ module zkf_from_int #(
 
     // exp_unbiased = position of the leading 1 = (WX-1) - shamt. The subtraction sits on the carry chain and is the
     // same shape as the bias subtraction inside _zkf_pack, avoiding a separate comparator.
-    wire        [WIDX:0]  s1_top_ext    = WX - 1;
-    wire        [WIDX:0]  s1_shamt_ext  = {1'b0, s1_shamt};
-    wire        [WIDX:0]  s1_pos_ext    = s1_top_ext - s1_shamt_ext;
-    wire signed [WEU-1:0] s1_exp_ub     = {{(WEU-WIDX-1){1'b0}}, s1_pos_ext};
+    wire        [WIDX:0]  s1_top_ext   = WX - 1;
+    wire        [WIDX:0]  s1_shamt_ext = {1'b0, s1_shamt};
+    wire        [WIDX:0]  s1_pos_ext   = s1_top_ext - s1_shamt_ext;
+    wire signed [WEU-1:0] s1_exp_ub    = {{(WEU-WIDX-1){1'b0}}, s1_pos_ext};
 
     _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU)) u_pack (
         .clk(clk),

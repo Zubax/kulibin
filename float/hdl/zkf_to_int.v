@@ -58,17 +58,17 @@ module zkf_to_int #(
     localparam integer LEFT_SHIFT_BASE  = BIAS_INT + WFRAC;
     localparam integer LEFT_OVER_BASE   = LEFT_SHIFT_BASE + LSH_MAX + 1;
     localparam integer RIGHT_OVER_BASE  = LEFT_SHIFT_BASE - RSH_MAX;
-    // WEU sizes the two wide subtractions that produce the shift magnitudes. left_shift_full's
-    // range is [-LEFT_SHIFT_BASE, MAX_EXP_IN - LEFT_SHIFT_BASE]; right_shift_full's is its mirror.
-    // The largest absolute value across both is LEFT_OVER_BASE (= LEFT_SHIFT_BASE + LSH_MAX + 1).
-    // Deriving WEU from WEXP alone (e.g. WEXP+2) silently truncated the constants at wide WMAN —
-    // a regression test (WEXP=6, WMAN=100, WINT=32) caught it: zero was misclassified as overflow.
-    localparam integer MAX_EXP_IN     = (1 << WEXP) - 1;
-    localparam integer MAX_POS_RESULT = MAX_EXP_IN - RIGHT_OVER_BASE;
-    localparam integer MAX_ABS_RESULT = (LEFT_OVER_BASE > MAX_POS_RESULT) ? LEFT_OVER_BASE : MAX_POS_RESULT;
-    // $clog2(N+1)+1 is the minimum signed width that holds [-N, N-1]; the formula always yields
-    // WEU >= WEXP + 1, which the exp_in_ext zero-extension below also needs.
-    localparam integer WEU            = $clog2(MAX_ABS_RESULT + 1) + 1;
+    // WEU sizes the two wide subtractions left_shift_full and right_shift_full.
+    // left_shift_full = exp_in - LEFT_SHIFT_BASE spans [-LEFT_SHIFT_BASE, MAX_EXP_IN - LEFT_SHIFT_BASE], and
+    // right_shift_full = LEFT_SHIFT_BASE - exp_in is its negation, so the largest absolute value across both is
+    // max(LEFT_SHIFT_BASE, MAX_EXP_IN - LEFT_SHIFT_BASE). When MAX_EXP_IN < LEFT_SHIFT_BASE (typical wide-WMAN)
+    // the second term is negative and LEFT_SHIFT_BASE dominates.
+    localparam integer MAX_EXP_IN    = (1 << WEXP) - 1;
+    localparam integer MAX_POS_DELTA = MAX_EXP_IN - LEFT_SHIFT_BASE;
+    localparam integer MAX_ABS_DELTA = (LEFT_SHIFT_BASE > MAX_POS_DELTA) ? LEFT_SHIFT_BASE : MAX_POS_DELTA;
+    // clog2(N+1)+1 is the minimum signed width that holds [-N,N-1]. WMAN >= 4 forces LEFT_SHIFT_BASE >= 2^(WEXP-1)+2,
+    // so this also guarantees WEU >= WEXP + 1, which the exp_in_ext zero-extension below needs.
+    localparam integer WEU           = $clog2(MAX_ABS_DELTA + 1) + 1;
 
     localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET = -LEFT_SHIFT_BASE;
 
@@ -94,12 +94,11 @@ module zkf_to_int #(
     wire signed [WEU-1:0] left_shift_full  = exp_in_ext + LEFT_SHIFT_OFFSET;
     wire signed [WEU-1:0] right_shift_full = LEFT_SHIFT_BASE_EXT - exp_in_ext;
 
-    // The three predicates are unsigned comparisons of exp_in against compile-time non-negative
-    // constants. When a constant lies outside the unsigned exp_in range (e.g. very wide WMAN
-    // pushes LEFT_SHIFT_BASE above 2^WEXP-1), the comparison resolves at elaboration and emits
-    // no runtime logic. When it fits inside exp_in's width, yosys/abc realises the compare as a
-    // shallow LUT tree on the carry chain rather than a wide signed subtract, so the predicate
-    // does not chain a WEU-bit CCU2 stack onto the critical path feeding the shifter mux.
+    // The three predicates are unsigned comparisons of exp_in against compile-time non-negative constants. When a
+    // constant lies outside the unsigned exp_in range (e.g. very wide WMAN pushes LEFT_SHIFT_BASE above 2^WEXP-1),
+    // the comparison resolves at elaboration and emits no runtime logic. When it fits inside exp_in's width,
+    // yosys/abc realises the compare as a shallow LUT tree on the carry chain rather than a wide signed subtract,
+    // so the predicate does not chain a WEU-bit CCU2 stack onto the critical path feeding the shifter mux.
     wire is_left_shift;
     wire left_too_big;
     wire right_too_big_pred;
@@ -188,22 +187,20 @@ module zkf_to_int #(
     end
 
     // -- Stage 1 -> Stage 2 combinational: round, then saturation detect via bit-range checks.
-    // Round only the low WINT bits — those are all that ever leaves this module — and feed any
-    // bit above WINT-1 into hi_pre in parallel. This caps the carry chain at WINT+1 bits even
-    // when WMAN > WINT (where mag_pre is much wider) and keeps the rounding adder off the
-    // critical path that wider configurations expose.
+    // Round only the low WINT bits — those are all that ever leaves this module — and feed any bit above WINT-1 into
+    // hi_pre in parallel. This caps the carry chain at WINT+1 bits even when WMAN > WINT (where mag_pre is much wider)
+    // and keeps the rounding adder off the critical path that wider configurations expose.
     wire           round_increment = s1_guard & (s1_sticky | s1_mag_pre[0]);
     wire           hi_pre          = |s1_mag_pre[WMAG-1:WINT];
     wire [WINT:0]  mag_rounded_low = {1'b0, s1_mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
     wire           rcarry          = mag_rounded_low[WINT];
 
-    // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any
-    // bit at position WINT-1 or above is set. Negative overflow fires when mag > 2^(WINT-1) (the
-    // magnitude 2^(WINT-1) itself is valid: it negates exactly to INT_MIN), i.e. any bit above
-    // WINT-1 is set OR (bit WINT-1 is set AND some lower bit is set). hi_pre OR rcarry covers
-    // every set bit at or above position WINT regardless of whether it pre-existed in mag_pre
-    // or appeared as the rounding carry-out, including the case where the round ripple turns a
-    // hi_pre-clear value into an overflowing one.
+    // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any bit at position WINT-1
+    // or above is set. Negative overflow fires when mag > 2^(WINT-1) (the magnitude 2^(WINT-1) itself is valid: it
+    // negates exactly to INT_MIN), i.e. any bit above WINT-1 is set OR (bit WINT-1 is set AND some lower bit is set).
+    // hi_pre OR rcarry covers every set bit at or above position WINT regardless of whether it pre-existed in mag_pre
+    // or appeared as the rounding carry-out, including the case where the round ripple turns a hi_pre-clear value into
+    // an overflowing one.
     wire hi_set  = hi_pre | rcarry;
     wire top_bit =  mag_rounded_low[WINT-1];
     wire low_set = |mag_rounded_low[WINT-2:0];
@@ -297,9 +294,8 @@ module _zkf_to_int_rshift #(parameter W = 20) (
 endmodule
 
 
-// Left-shift barrel with zero fill. WSHAMT may be less than $clog2(W) when the upstream clamp
-// guarantees the shift can never reach W; the high stages are then implicit pass-throughs and
-// the loop only generates the live stages.
+// Left-shift barrel with zero fill. WSHAMT may be less than $clog2(W) when the upstream clamp guarantees the shift can
+// never reach W; the high stages are then implicit pass-throughs and the loop only generates the live stages.
 module _zkf_to_int_lshift #(parameter W = 32, parameter WSHAMT = $clog2(W)) (
     input  wire      [W-1:0] x,
     input  wire [WSHAMT-1:0] shamt,
