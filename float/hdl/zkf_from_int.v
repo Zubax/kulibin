@@ -151,7 +151,10 @@ module _zkf_from_int_lod #(parameter W = 32) (
         end
     endgenerate
 
-    assign zero  = ~valid_stage[WIDX * W];
+    // The tree's `valid_stage` at the root would also equal |x, but riding the tree costs WIDX LUT levels
+    // (one OR per level). A direct |x synthesises to a balanced LUT4-OR tree at ceil(log4(W)) depth —
+    // same logical result, shorter path, and it frees the tree's root OR from a second consumer.
+    assign zero  = ~|x;
     assign shamt = shamt_stage[(WIDX * W * WIDX) +: WIDX];
 endmodule
 
