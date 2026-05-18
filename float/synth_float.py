@@ -139,7 +139,19 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
     ),
+    ModuleSpec(
+        name="zkf_mul_ilog2_const",
+        label="zkf_mul_ilog2_const (K=+10)",
+        top="zkf_mul_ilog2_const_synth_top",
+        kind="mul_ilog2_const",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
 ]
+
+
+MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
 
 
 def format_mhz(value: float) -> str:
@@ -233,6 +245,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "zkf_cmp_comb.v",
             REPO / "float" / "hdl" / "zkf_sort.v",
         ]
+    if spec.kind == "mul_ilog2_const":
+        return [REPO / "float" / "hdl" / "zkf_mul_ilog2_const.v"]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -258,6 +272,8 @@ def register_stages(spec: ModuleSpec) -> int:
         return div_core_stages + 2
     if spec.kind in {"cmp", "sort"}:
         return 1
+    if spec.kind == "mul_ilog2_const":
+        return 1
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -277,6 +293,8 @@ def params(spec: ModuleSpec) -> str:
             f"WEXP={spec.wexp}, WMAN={spec.wman}, "
             f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
         )
+    if spec.kind == "mul_ilog2_const":
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}"
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
@@ -945,6 +963,69 @@ endmodule
     )
 
 
+def write_mul_ilog2_const_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_mul_ilog2_const #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .K({MUL_ILOG2_CONST_K})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -962,6 +1043,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_cmp_wrapper(spec, path)
     elif spec.kind == "sort":
         write_sort_wrapper(spec, path)
+    elif spec.kind == "mul_ilog2_const":
+        write_mul_ilog2_const_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")
 

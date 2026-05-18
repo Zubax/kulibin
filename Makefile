@@ -169,6 +169,10 @@ verify-float-icarus: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary icarus const "$$1" "$$2" "$$3" directed 0; \
 	done; \
+	for spec in $(FLOAT_UNARY_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_unary icarus mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	done; \
 	run_binary icarus add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
@@ -241,6 +245,10 @@ verify-float-verilator: library
 	for spec in $(FLOAT_CONST_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary verilator const "$$1" "$$2" "$$3" directed 0; \
+	done; \
+	for spec in $(FLOAT_UNARY_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_unary verilator mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
 	done; \
 	run_binary verilator add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \

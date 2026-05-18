@@ -297,6 +297,20 @@ def mul_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int:
     )
 
 
+def mul_ilog2_const_reference(fmt: ZkfFormat, a_bits: int, k: int) -> int:
+    a = decode(fmt, a_bits)
+    if a.is_zero:
+        return zero(fmt)
+    if a.is_inf:
+        return canonical_inf(fmt, a.sign)
+    new_exp = a.exp + k
+    if new_exp < 1:
+        return zero(fmt)
+    if new_exp > fmt.exp_max_finite:
+        return canonical_inf(fmt, a.sign)
+    return normal(fmt, a.sign, new_exp, a.frac)
+
+
 def div_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, int]:
     a = decode(fmt, a_bits)
     b = decode(fmt, b_bits)

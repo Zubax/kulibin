@@ -46,13 +46,15 @@ Keep line length at or below 120 columns. Comment block lines should utilize the
 Verilog testbenches should be named `<module>_tb.v`, include explicit assertions using `$fatal` or the local `` `REQUIRE `` macro pattern, and declare `` `timescale `` plus `` `default_nettype none `` when adding new benches.
 FuseSoC core names follow `zubax:kulibin:<module>:0`; target names use `sim` or `sim_<case>`.
 
-In complex modules, it is best to avoid a large number of named nets that are only used once; this does not help readability but rather the opposite.
-
 The following constructs are banned in synthesizable Verilog (fine in testbenches):
 
 - Any form of `always` except for `always @(posedge clk)`.
 - Blocking register assignment.
 - Functions.
+
+In synthesizable code, prefer `case` statements over nested ternary operators unless there are contraindications.
+
+In complex modules, it is best to avoid a large number of named nets that are only used once; this does not help readability but rather the opposite.
 
 
 ## Verification

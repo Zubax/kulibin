@@ -20,6 +20,7 @@ filesets:
       - hdl/zkf_sort.v
       - hdl/zkf_addsub.v
       - hdl/zkf_const.v
+      - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
   rtl_pack:
@@ -97,9 +98,19 @@ filesets:
       - hdl/zkf_const.v
     file_type: verilogSource
 
+  rtl_mul_ilog2_const:
+    files:
+      - hdl/zkf_mul_ilog2_const.v
+    file_type: verilogSource
+
   tb_const_wrap:
     files:
       - tb/zkf_const_wrap.v
+    file_type: verilogSource
+
+  tb_mul_ilog2_const_wrap:
+    files:
+      - tb/zkf_mul_ilog2_const_wrap.v
     file_type: verilogSource
 
   tb_cocotb:
@@ -141,6 +152,8 @@ filesets:
       - tb/test_sort.py:
           file_type: user
       - tb/test_const.py:
+          file_type: user
+      - tb/test_mul_ilog2_const.py:
           file_type: user
       - tb/test_properties.py:
           file_type: user
@@ -564,4 +577,24 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_const
+    parameters: *float_binary_params
+
+  sim_mul_ilog2_const_icarus:
+    filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
+    toplevel: zkf_mul_ilog2_const_wrap
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_mul_ilog2_const
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_mul_ilog2_const_verilator:
+    filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
+    toplevel: zkf_mul_ilog2_const_wrap
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_mul_ilog2_const
     parameters: *float_binary_params
