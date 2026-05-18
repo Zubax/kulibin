@@ -15,34 +15,15 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-15
+      # 2026-05-18 is the first toolchain image that bundles sby, yices2, and bitwuzla; nothing
+      # else needs to be installed in the job. Bump this date when the toolchain image is updated.
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-18
       # See verify.yml for why root is needed.
       options: --user root
     timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v6
-
-      - name: Install SymbiYosys and Yices SMT solver
-        run: |
-          set -euxo pipefail
-          if ! command -v sby >/dev/null; then
-            git clone --depth 1 https://github.com/YosysHQ/sby.git /tmp/sby
-            make -C /tmp/sby PREFIX=/usr/local install
-          else
-            echo "sby already on PATH at $(command -v sby)"
-          fi
-          if ! command -v yices-smt2 >/dev/null; then
-            # The Yices project hosts releases on GitHub now; the SRI vendor URL no longer serves them.
-            curl -fLsS -o /tmp/yices.tar.gz \
-              https://github.com/SRI-CSL/yices2/releases/download/yices-2.7.0/yices-2.7.0-x86_64-pc-linux-gnu-static-gmp.tar.gz
-            tar -C /tmp -xf /tmp/yices.tar.gz
-            install -Dm755 /tmp/yices-2.7.0/bin/yices-smt2 /usr/local/bin/yices-smt2
-          else
-            echo "yices-smt2 already on PATH at $(command -v yices-smt2)"
-          fi
-          sby --help | head -1
-          yices-smt2 --version | head -1
 
       - name: Lint
         run: make lint
