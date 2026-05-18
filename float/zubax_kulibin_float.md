@@ -446,7 +446,7 @@ modules, consistent with the internal helper module convention above.
 ## 9. Cast From Signed Integer
 
 ```verilog
-zkf_from_sint #(
+zkf_from_int #(
     parameter int WEXP = 6,
     parameter int WMAN = 18,
     parameter int WINT = 32
@@ -484,7 +484,7 @@ zero input maps to canonical +0
 ## 10. Cast To Signed Integer
 
 ```verilog
-zkf_to_sint #(
+zkf_to_int #(
     parameter int WEXP = 6,
     parameter int WMAN = 18,
     parameter int WINT = 32

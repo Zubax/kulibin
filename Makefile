@@ -77,6 +77,36 @@ FLOAT_CONST_MATRIX = \
 	w8_m24:8:24 \
 	w11_m53:11:53
 
+# Signed-int <-> float cast matrices share the same shape: wexp:wman:wint:kind:count.
+FLOAT_FROM_INT_MATRIX = \
+	w2_m4_int4_exhaustive:2:4:4:exhaustive:0 \
+	w3_m4_int8_exhaustive:3:4:8:exhaustive:0 \
+	w3_m5_int8_exhaustive:3:5:8:exhaustive:0 \
+	w5_m11_int16_random:5:11:16:random:512 \
+	w6_m18_int32_random:6:18:32:random:768 \
+	w8_m24_int32_random:8:24:32:random:1024
+
+FLOAT_TO_INT_MATRIX = \
+	w2_m4_int4_exhaustive:2:4:4:exhaustive:0 \
+	w3_m4_int8_exhaustive:3:4:8:exhaustive:0 \
+	w3_m5_int8_exhaustive:3:5:8:exhaustive:0 \
+	w5_m11_int16_random:5:11:16:random:512 \
+	w6_m18_int32_random:6:18:32:random:768 \
+	w8_m24_int32_random:8:24:32:random:1024 \
+	w11_m53_int32_random:11:53:32:random:384
+
+# Resize matrix shape: wexp_in:wman_in:wexp_out:wman_out:kind:count. The small entries are
+# exhaustive over the input bit space for full corner-case coverage.
+FLOAT_RESIZE_MATRIX = \
+	w3_m4_to_w3_m4_exhaustive:3:4:3:4:exhaustive:0 \
+	w3_m5_to_w3_m4_exhaustive:3:5:3:4:exhaustive:0 \
+	w3_m4_to_w4_m6_exhaustive:3:4:4:6:exhaustive:0 \
+	w4_m6_to_w3_m4_exhaustive:4:6:3:4:exhaustive:0 \
+	w6_m18_to_w5_m11_random:6:18:5:11:random:768 \
+	w5_m11_to_w6_m18_random:5:11:6:18:random:768 \
+	w8_m24_to_w6_m18_random:8:24:6:18:random:512 \
+	w11_m53_to_w8_m24_random:11:53:8:24:random:384
+
 .PHONY: \
 	verify verify-deep verify-float verify-float-fast verify-float-deep verify-float-extended \
 	verify-float-model verify-float-icarus verify-float-verilator verify-float-properties \
@@ -149,6 +179,28 @@ verify-float-icarus: library
 	    --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_cast() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; wint="$$6"; kind="$$7"; count="$$8"; \
+	  root="build/float/$${sim}/$${op}/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --WINT "$$wint" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_WINT "$$wint" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	run_resize() { \
+	  sim="$$1"; config="$$2"; wexp_in="$$3"; wman_in="$$4"; wexp_out="$$5"; wman_out="$$6"; kind="$$7"; count="$$8"; \
+	  root="build/float/$${sim}/resize/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_resize_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_resize_$${sim} \
+	    $(FLOAT_CORE) --WEXP_IN "$$wexp_in" --WMAN_IN "$$wman_in" --WEXP_OUT "$$wexp_out" --WMAN_OUT "$$wman_out" \
+	    --ZKF_WEXP_IN "$$wexp_in" --ZKF_WMAN_IN "$$wman_in" --ZKF_WEXP_OUT "$$wexp_out" --ZKF_WMAN_OUT "$$wman_out" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	for spec in $(FLOAT_PACK_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack icarus "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
@@ -172,6 +224,18 @@ verify-float-icarus: library
 	for spec in $(FLOAT_UNARY_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary icarus mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	done; \
+	for spec in $(FLOAT_FROM_INT_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_cast icarus from_int "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
+	done; \
+	for spec in $(FLOAT_TO_INT_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_cast icarus to_int "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
+	done; \
+	for spec in $(FLOAT_RESIZE_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_resize icarus "$$1" "$$2" "$$3" "$$4" "$$5" "$$6" "$$7"; \
 	done; \
 	run_binary icarus add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \
@@ -226,6 +290,28 @@ verify-float-verilator: library
 	    --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_cast() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; wint="$$6"; kind="$$7"; count="$$8"; \
+	  root="build/float/$${sim}/$${op}/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --WINT "$$wint" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_WINT "$$wint" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	run_resize() { \
+	  sim="$$1"; config="$$2"; wexp_in="$$3"; wman_in="$$4"; wexp_out="$$5"; wman_out="$$6"; kind="$$7"; count="$$8"; \
+	  root="build/float/$${sim}/resize/$${config}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_resize_$${sim} :: $${config} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_resize_$${sim} \
+	    $(FLOAT_CORE) --WEXP_IN "$$wexp_in" --WMAN_IN "$$wman_in" --WEXP_OUT "$$wexp_out" --WMAN_OUT "$$wman_out" \
+	    --ZKF_WEXP_IN "$$wexp_in" --ZKF_WMAN_IN "$$wman_in" --ZKF_WEXP_OUT "$$wexp_out" --ZKF_WMAN_OUT "$$wman_out" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	for spec in $(FLOAT_PACK_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack verilator "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
@@ -249,6 +335,18 @@ verify-float-verilator: library
 	for spec in $(FLOAT_UNARY_MATRIX); do \
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary verilator mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	done; \
+	for spec in $(FLOAT_FROM_INT_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_cast verilator from_int "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
+	done; \
+	for spec in $(FLOAT_TO_INT_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_cast verilator to_int "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
+	done; \
+	for spec in $(FLOAT_RESIZE_MATRIX); do \
+	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	  run_resize verilator "$$1" "$$2" "$$3" "$$4" "$$5" "$$6" "$$7"; \
 	done; \
 	run_binary verilator add w6_m100_directed 6 100 directed 0; \
 	for spec in $(FLOAT_PIPE_MATRIX); do \

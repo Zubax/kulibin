@@ -29,11 +29,28 @@ Non-NaN infinity cases (same intent as IEEE 754):
 
 ## Usage
 
-The `zkf_*` modules implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have registered outputs. The two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
+The `zkf_*` modules located under `hdl/` implement various operators. Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines, and all have registered outputs. The two parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand; the most significant bit of the significand is not stored, but there is a sign bit, so the total bit width is simply WFULL=WEXP+WMAN.
 
+The modules are entirely self-contained -- no external dependencies; simply drag-and-drop into your project.
 There are private helper modules named `_zkf_*`; they are not supposed to be instantiated by the user but the public modules depend on them. They do not offer any of the guarantees that are valid for the public modules.
 
-Register-stage counts are documented in the doc comments separately for each module.
+| Module                | Function                                                       |
+|-----------------------|----------------------------------------------------------------|
+| `zkf_abs`             | Absolute value.                                                |
+| `zkf_neg`             | Negation.                                                      |
+| `zkf_is_finite`       | True iff `x` is finite.                                        |
+| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           |
+| `zkf_const`           | Elaboration-time constant from a `real` literal.               |
+| `zkf_cmp`             | Compare two values.                                            |
+| `zkf_sort`            | Min and max of two values.                                     |
+| `zkf_add`             | `a + b`.                                                       |
+| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |
+| `zkf_mul`             | `a × b`.                                                       |
+| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |
+| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |
+| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |
+| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |
+| `zkf_resize`          | Cast between different float formats.                          |
 
 ## Notable sizes
 

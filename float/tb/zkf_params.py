@@ -25,9 +25,21 @@ class TestContext:
     wexp_unbiased: int | None = None
     pipe_w: int | None = None
     pipe_n: int | None = None
+    wint: int | None = None
+    wexp_in: int | None = None
+    wman_in: int | None = None
+    wexp_out: int | None = None
+    wman_out: int | None = None
 
     @property
     def params(self) -> str:
+        if self.wexp_in is not None and self.wman_in is not None:
+            return (
+                f"{self.config} {self.wexp_in}/{self.wman_in}->"
+                f"{self.wexp_out}/{self.wman_out}"
+            )
+        if self.wint is not None:
+            return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}"
         if self.wexp is not None and self.wman is not None:
             return f"{self.config} WEXP={self.wexp} WMAN={self.wman}"
         if self.pipe_w is not None and self.pipe_n is not None:
@@ -106,6 +118,54 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
+    )
+
+
+def cast_context(suite: str) -> TestContext:
+    wexp = plusarg_int("ZKF_WEXP")
+    wman = plusarg_int("ZKF_WMAN")
+    wint = plusarg_int("ZKF_WINT")
+    if wexp < 2:
+        raise ValueError(f"ZKF_WEXP must be at least 2, got {wexp}")
+    if wman < 4:
+        raise ValueError(f"ZKF_WMAN must be at least 4, got {wman}")
+    if wint < 2:
+        raise ValueError(f"ZKF_WINT must be at least 2, got {wint}")
+    return TestContext(
+        suite=suite,
+        config=plusarg_str("ZKF_CONFIG", "default"),
+        seed=_seed(),
+        kind=_kind(),
+        count=plusarg_int("ZKF_COUNT", 0, aliases=("ZKF_RANDOM_COUNT",)),
+        wexp=wexp,
+        wman=wman,
+        wint=wint,
+    )
+
+
+def resize_context(suite: str) -> TestContext:
+    wexp_in = plusarg_int("ZKF_WEXP_IN")
+    wman_in = plusarg_int("ZKF_WMAN_IN")
+    wexp_out = plusarg_int("ZKF_WEXP_OUT")
+    wman_out = plusarg_int("ZKF_WMAN_OUT")
+    if wexp_in < 2 or wexp_out < 2:
+        raise ValueError(
+            f"ZKF_WEXP_IN/OUT must each be at least 2, got in={wexp_in} out={wexp_out}"
+        )
+    if wman_in < 4 or wman_out < 4:
+        raise ValueError(
+            f"ZKF_WMAN_IN/OUT must each be at least 4, got in={wman_in} out={wman_out}"
+        )
+    return TestContext(
+        suite=suite,
+        config=plusarg_str("ZKF_CONFIG", "default"),
+        seed=_seed(),
+        kind=_kind(),
+        count=plusarg_int("ZKF_COUNT", 0, aliases=("ZKF_RANDOM_COUNT",)),
+        wexp_in=wexp_in,
+        wman_in=wman_in,
+        wexp_out=wexp_out,
+        wman_out=wman_out,
     )
 
 

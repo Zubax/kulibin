@@ -129,3 +129,51 @@ def normal_from_significands(fmt: ZkfFormat, ma: int, mb: int) -> tuple[int, int
     a = normal(fmt, 0, fmt.bias, ma - (1 << fmt.wfrac))
     b = normal(fmt, 0, fmt.bias, mb - (1 << fmt.wfrac))
     return a, b
+
+
+def directed_integers(wint: int) -> dict[str, int]:
+    if wint < 2:
+        raise ValueError(f"wint must be at least 2, got {wint}")
+    int_min = -(1 << (wint - 1))
+    int_max = (1 << (wint - 1)) - 1
+    values: dict[str, int] = {
+        "zero": 0,
+        "one": 1,
+        "neg_one": -1,
+        "int_max": int_max,
+        "int_min": int_min,
+        "int_max_minus_one": int_max - 1,
+        "int_min_plus_one": int_min + 1,
+    }
+    if wint >= 3:
+        values["two"] = 2
+        values["neg_two"] = -2
+    if wint >= 4:
+        half = 1 << (wint - 2)
+        values["half_range"] = half
+        values["neg_half_range"] = -half
+        values["half_range_minus_one"] = half - 1
+        values["neg_half_range_minus_one"] = -(half - 1)
+    return values
+
+
+def random_integer(wint: int, rng: np.random.Generator) -> int:
+    int_min = -(1 << (wint - 1))
+    int_max = (1 << (wint - 1)) - 1
+    mode = int(rng.integers(0, 8))
+    if mode == 0:
+        return 0
+    if mode == 1:
+        magnitude = int(rng.integers(1, min(16, int_max + 1)))
+        return -magnitude if int(rng.integers(0, 2)) else magnitude
+    if mode == 2:
+        return int(rng.choice([int_min, int_max, int_min + 1, int_max - 1]))
+    if mode == 3 and wint >= 4:
+        center = 1 << int(rng.integers(1, wint - 1))
+        offset = int(rng.integers(-4, 5))
+        candidate = center + offset
+        candidate = max(int_min, min(int_max, candidate))
+        return -candidate if int(rng.integers(0, 2)) else candidate
+    # Fully random across the signed range using random unsigned bits then sign-extend.
+    bits = random_bits(wint, rng)
+    return bits - (1 << wint) if bits & (1 << (wint - 1)) else bits

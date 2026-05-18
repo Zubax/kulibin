@@ -397,6 +397,72 @@ def saturate_reference(fmt: ZkfFormat, bits: int) -> int:
     return normal(fmt, item.sign, fmt.exp_max_finite, fmt.frac_mask)
 
 
+def signed_int_min(wint: int) -> int:
+    if wint < 2:
+        raise ValueError(f"wint must be at least 2, got {wint}")
+    return -(1 << (wint - 1))
+
+
+def signed_int_max(wint: int) -> int:
+    if wint < 2:
+        raise ValueError(f"wint must be at least 2, got {wint}")
+    return (1 << (wint - 1)) - 1
+
+
+def from_int_reference(fmt: ZkfFormat, wint: int, value: int) -> int:
+    if not signed_int_min(wint) <= value <= signed_int_max(wint):
+        raise ValueError(f"value={value} out of signed {wint}-bit range")
+    if value == 0:
+        return zero(fmt)
+    sign = 1 if value < 0 else 0
+    magnitude = -value if value < 0 else value
+    return round_fraction_to_zkf(fmt, sign, Fraction(magnitude, 1))
+
+
+def _round_fraction_to_int_ties_even(value: Fraction) -> int:
+    floor = value.numerator // value.denominator
+    frac_part = value - Fraction(floor, 1)
+    half = Fraction(1, 2)
+    if frac_part < half:
+        return floor
+    if frac_part > half:
+        return floor + 1
+    return floor if (floor % 2 == 0) else floor + 1
+
+
+def to_int_reference(fmt: ZkfFormat, wint: int, bits: int) -> int:
+    int_max = signed_int_max(wint)
+    int_min = signed_int_min(wint)
+    item = decode(fmt, bits)
+    if item.is_inf:
+        return int_min if item.sign else int_max
+    if item.is_zero:
+        return 0
+
+    exp_unbiased = item.exp - fmt.bias
+    sig_int = significand(fmt, bits)
+    magnitude = Fraction(sig_int, 1) * pow2_fraction(exp_unbiased - fmt.wfrac)
+    rounded = _round_fraction_to_int_ties_even(-magnitude if item.sign else magnitude)
+    if rounded > int_max:
+        return int_max
+    if rounded < int_min:
+        return int_min
+    return rounded
+
+
+def resize_reference(fmt_in: ZkfFormat, fmt_out: ZkfFormat, bits: int) -> int:
+    item = decode(fmt_in, bits)
+    if item.is_zero:
+        return zero(fmt_out)
+    if item.is_inf:
+        return canonical_inf(fmt_out, item.sign)
+
+    exp_unbiased = item.exp - fmt_in.bias
+    sig_int = significand(fmt_in, bits)
+    magnitude = Fraction(sig_int, 1) * pow2_fraction(exp_unbiased - fmt_in.wfrac)
+    return round_fraction_to_zkf(fmt_out, item.sign, magnitude)
+
+
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
     item = decode(fmt, bits)
     if item.exp == 0:

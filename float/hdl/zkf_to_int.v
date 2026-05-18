@@ -1,0 +1,318 @@
+/// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
+/// The outputs are latched and are only valid when out_valid is asserted.
+/// Register stages: 3 end-to-end.
+///
+/// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,
+/// zero produces zero, and finite in-range values are round-to-nearest, ties-to-even.
+
+`default_nettype none
+
+module zkf_to_int #(
+    parameter WEXP = 6,
+    parameter WMAN = 18,
+    parameter WINT = 32
+) (
+    input wire clk,
+    input wire rst,
+
+    input wire                 in_valid,
+    input wire [WEXP+WMAN-1:0] a,
+
+    output wire                   out_valid,
+    output wire signed [WINT-1:0] y
+);
+    // verilator coverage_off
+    generate
+        if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
+            _zkf_invalid_wexp_or_wman u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
+    localparam WFRAC = WMAN - 1;
+    localparam WFULL = WEXP + WMAN;
+    // Largest useful left shift before the result definitely overflows WINT signed bits.
+    localparam LSH_MAX  = (WINT > WMAN) ? (WINT - WMAN) : 0;
+    localparam WLSH     = (LSH_MAX > 0) ? $clog2(LSH_MAX + 1) : 1;
+    localparam WLEFT    = WMAN + LSH_MAX;
+    // Largest useful right shift before everything becomes sticky.
+    localparam RSH_MAX  = WMAN + 2;
+    localparam WRSH     = $clog2(RSH_MAX + 1);
+    // Working magnitude width: enough to detect overflow against INT_NEG_MAG (= 2^(WINT-1)).
+    localparam WMAG = ((WINT + 1) > (WLEFT + 1)) ? (WINT + 1) : (WLEFT + 1);
+
+    // Folded shift-magnitude and predicate thresholds in integer arithmetic so widths can be sized from them rather
+    // than from WEXP alone.
+    //   LEFT_SHIFT_BASE  : exp_in == this means value == 2^WFRAC, the boundary between right and left shift.
+    //                      left_shift_full = exp_in - LEFT_SHIFT_BASE.
+    //   LEFT_OVER_BASE   : exp_in >= this guarantees the value overflows WINT signed bits even before rounding
+    //                      (saturation will fire downstream).
+    //   RIGHT_OVER_BASE  : exp_in < this means the right shift amount exceeds RSH_MAX, so the shifter would not
+    //                      capture any useful bits and we clamp to RSH_MAX.
+    localparam integer BIAS_INT         = (1 << (WEXP - 1)) - 1;
+    localparam integer LEFT_SHIFT_BASE  = BIAS_INT + WFRAC;
+    localparam integer LEFT_OVER_BASE   = LEFT_SHIFT_BASE + LSH_MAX + 1;
+    localparam integer RIGHT_OVER_BASE  = LEFT_SHIFT_BASE - RSH_MAX;
+    // WEU sizes the two wide subtractions that produce the shift magnitudes. left_shift_full's
+    // range is [-LEFT_SHIFT_BASE, MAX_EXP_IN - LEFT_SHIFT_BASE]; right_shift_full's is its mirror.
+    // The largest absolute value across both is LEFT_OVER_BASE (= LEFT_SHIFT_BASE + LSH_MAX + 1).
+    // Deriving WEU from WEXP alone (e.g. WEXP+2) silently truncated the constants at wide WMAN —
+    // a regression test (WEXP=6, WMAN=100, WINT=32) caught it: zero was misclassified as overflow.
+    localparam integer MAX_EXP_IN     = (1 << WEXP) - 1;
+    localparam integer MAX_POS_RESULT = MAX_EXP_IN - RIGHT_OVER_BASE;
+    localparam integer MAX_ABS_RESULT = (LEFT_OVER_BASE > MAX_POS_RESULT) ? LEFT_OVER_BASE : MAX_POS_RESULT;
+    // $clog2(N+1)+1 is the minimum signed width that holds [-N, N-1]; the formula always yields
+    // WEU >= WEXP + 1, which the exp_in_ext zero-extension below also needs.
+    localparam integer WEU            = $clog2(MAX_ABS_RESULT + 1) + 1;
+
+    localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET = -LEFT_SHIFT_BASE;
+
+    // -- Combinational decode.
+    wire             sign_in = a[WFULL-1];
+    wire [WEXP-1:0]  exp_in  = a[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] frac_in = a[WFRAC-1:0];
+    wire             is_zero = ~|exp_in;
+    wire             is_inf  = &exp_in;
+    // The hidden bit is implicit for normal values. For zero inputs the right shifter cannot always saturate enough
+    // to wipe the hidden bit (BIAS + WFRAC can be less than WMAN + 2 for small WEXP), so explicitly zero the
+    // significand here; the downstream pipeline then yields mag_rounded = 0 without a separate is_zero late-stage mux.
+    wire [WMAN-1:0]  sig_in  = is_zero ? {WMAN{1'b0}} : {1'b1, frac_in};
+
+    wire signed [WEU-1:0] exp_in_ext = $signed({{(WEU-WEXP){1'b0}}, exp_in});
+
+    // Folded constant used to compute right_shift_full directly (instead of negating left_shift_full, which would
+    // put both shift amounts on the same serial carry chain).
+    localparam signed [WEU-1:0] LEFT_SHIFT_BASE_EXT = LEFT_SHIFT_BASE;
+
+    // Two parallel folded-constant subtractions provide the shift magnitudes (only their low WLSH / WRSH bits are
+    // consumed downstream). They lay on independent carry chains.
+    wire signed [WEU-1:0] left_shift_full  = exp_in_ext + LEFT_SHIFT_OFFSET;
+    wire signed [WEU-1:0] right_shift_full = LEFT_SHIFT_BASE_EXT - exp_in_ext;
+
+    // The three predicates are unsigned comparisons of exp_in against compile-time non-negative
+    // constants. When a constant lies outside the unsigned exp_in range (e.g. very wide WMAN
+    // pushes LEFT_SHIFT_BASE above 2^WEXP-1), the comparison resolves at elaboration and emits
+    // no runtime logic. When it fits inside exp_in's width, yosys/abc realises the compare as a
+    // shallow LUT tree on the carry chain rather than a wide signed subtract, so the predicate
+    // does not chain a WEU-bit CCU2 stack onto the critical path feeding the shifter mux.
+    wire is_left_shift;
+    wire left_too_big;
+    wire right_too_big_pred;
+
+    generate
+        if (LEFT_SHIFT_BASE > MAX_EXP_IN) begin : g_lshift_never
+            assign is_left_shift = 1'b0;
+        end else begin : g_lshift_cmp
+            assign is_left_shift = exp_in >= LEFT_SHIFT_BASE[WEXP-1:0];
+        end
+
+        if (LEFT_OVER_BASE > MAX_EXP_IN) begin : g_lover_never
+            assign left_too_big = 1'b0;
+        end else begin : g_lover_cmp
+            assign left_too_big = exp_in >= LEFT_OVER_BASE[WEXP-1:0];
+        end
+
+        if (RIGHT_OVER_BASE <= 0) begin : g_rover_never
+            assign right_too_big_pred = 1'b0;
+        end else if (RIGHT_OVER_BASE > MAX_EXP_IN) begin : g_rover_always
+            assign right_too_big_pred = 1'b1;
+        end else begin : g_rover_cmp
+            assign right_too_big_pred = exp_in < RIGHT_OVER_BASE[WEXP-1:0];
+        end
+    endgenerate
+
+    wire right_too_big = ~is_left_shift & right_too_big_pred;
+
+    wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
+    wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !left_too_big) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
+
+    // Apply the barrel shifters before stage 1 so the heavy mux trees ride the input cone instead
+    // of chaining behind a register; the rounding adder and saturation logic then have a shallow
+    // combinational cone after stage 1 and the design closes timing in three stages.
+    wire [WMAN+1:0] rsh_out_pre;
+    _zkf_to_int_rshift #(.W(WMAN + 2)) u_rshift (
+        .x({sig_in, 2'b00}),
+        .shamt(rshamt_clamped),
+        .y(rsh_out_pre)
+    );
+
+    wire [WMAN-1:0] rsh_mag_pre    = rsh_out_pre[WMAN+1:2];
+    wire            rsh_guard_pre  = rsh_out_pre[1];
+    wire            rsh_sticky_pre = rsh_out_pre[0];
+
+    wire [WLEFT-1:0] lsh_out_pre;
+    generate
+        if (LSH_MAX > 0) begin : g_lshift
+            _zkf_to_int_lshift #(.W(WLEFT), .WSHAMT(WLSH)) u_lshift (
+                .x({{LSH_MAX{1'b0}}, sig_in}),
+                .shamt(lshamt_clamped),
+                .y(lsh_out_pre)
+            );
+        end else begin : g_no_lshift
+            assign lsh_out_pre = sig_in;
+        end
+    endgenerate
+
+    wire [WMAG-1:0] mag_pre_rsh_in = {{(WMAG-WMAN){1'b0}}, rsh_mag_pre};
+    wire [WMAG-1:0] mag_pre_lsh_in = {{(WMAG-WLEFT){1'b0}}, lsh_out_pre};
+    wire [WMAG-1:0] mag_pre_in     = is_left_shift ? mag_pre_lsh_in : mag_pre_rsh_in;
+
+    wire guard_in  = is_left_shift ? 1'b0 : rsh_guard_pre;
+    wire sticky_in = is_left_shift ? 1'b0 : rsh_sticky_pre;
+
+    // -- Stage 1: capture post-shift state. Reset only validity; payload free-runs.
+    reg             s1_valid;
+    reg             s1_sign;
+    reg             s1_is_inf;
+    reg             s1_left_too_big;
+    reg [WMAG-1:0]  s1_mag_pre;
+    reg             s1_guard;
+    reg             s1_sticky;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s1_valid <= 1'b0;
+        end else begin
+            s1_valid <= in_valid;
+        end
+        s1_sign         <= sign_in;
+        s1_is_inf       <= is_inf;
+        s1_left_too_big <= left_too_big;
+        s1_mag_pre      <= mag_pre_in;
+        s1_guard        <= guard_in;
+        s1_sticky       <= sticky_in;
+    end
+
+    // -- Stage 1 -> Stage 2 combinational: round, then saturation detect via bit-range checks.
+    wire [WMAG-1:0] mag_pre         = s1_mag_pre;
+    wire            guard           = s1_guard;
+    wire            sticky_combined = s1_sticky;
+    wire            round_increment = guard & (sticky_combined | mag_pre[0]);
+
+    wire [WMAG-1:0] mag_rounded = mag_pre + {{(WMAG-1){1'b0}}, round_increment};
+
+    // Saturation detection: top bits of mag_rounded answer "above threshold?" directly, without a comparator.
+    // Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. when any bit at position WINT-1 or higher is set.
+    // Negative overflow fires when mag > 2^(WINT-1) (the magnitude 2^(WINT-1) itself is valid: it negates exactly
+    // to INT_MIN), i.e. when any bit above WINT-1 is set OR (bit WINT-1 is set AND some lower bit is set).
+    wire hi_set  = |mag_rounded[WMAG-1:WINT];
+    wire top_bit =  mag_rounded[WINT-1];
+    wire low_set = |mag_rounded[WINT-2:0];
+
+    wire overflow_pos = hi_set | top_bit;
+    wire overflow_neg = hi_set | (top_bit & low_set);
+    wire overflow_now = s1_is_inf | s1_left_too_big | (s1_sign ? overflow_neg : overflow_pos);
+
+    // Saturation magnitudes (as unsigned WINT bits). INT_NEG_MAG (= 0x80..0) negates back to INT_MIN.
+    localparam [WINT-1:0] INT_NEG_MAG = {1'b1, {(WINT-1){1'b0}}};
+    localparam [WINT-1:0] INT_MAX     = {1'b0, {(WINT-1){1'b1}}};
+
+    wire [WINT-1:0] mag_sat_overflow = s1_sign ? INT_NEG_MAG : INT_MAX;
+    wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded[WINT-1:0];
+
+    // -- Stage 2 register.
+    reg            s2_valid;
+    reg            s2_sign;
+    reg [WINT-1:0] s2_mag_sat;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s2_valid <= 1'b0;
+        end else begin
+            s2_valid <= s1_valid;
+        end
+        s2_sign    <= s1_sign;
+        s2_mag_sat <= mag_sat;
+    end
+
+    // -- Stage 2 -> Stage 3: apply sign by two's-complement negation.
+    wire [WINT-1:0] y_pre_unsigned = s2_sign ? (~s2_mag_sat + {{(WINT-1){1'b0}}, 1'b1}) : s2_mag_sat;
+
+    // -- Stage 3 register (output).
+    reg                   s3_valid;
+    reg signed [WINT-1:0] s3_y;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s3_valid <= 1'b0;
+        end else begin
+            s3_valid <= s2_valid;
+        end
+        s3_y <= $signed(y_pre_unsigned);
+    end
+
+    assign out_valid = s3_valid;
+    assign y         = s3_y;
+endmodule
+
+
+// Sticky-folded right-shift barrel. Bit 0 of the output OR-collects the input's bit 0 with every bit that falls off,
+// so a single combined sticky bit feeds the rounding logic instead of an expensive wide OR-reduction outside the
+// shifter. Caller must clamp shamt so that shamt <= W (this module's only consumer in zkf_to_int clamps via
+// rshamt_clamped); beyond that point the stage-internal logic naturally produces zero magnitude with sticky = |x,
+// which is the desired behaviour for our integer-cast use.
+module _zkf_to_int_rshift #(parameter W = 20) (
+    input  wire           [W-1:0] x,
+    input  wire [$clog2(W+1)-1:0] shamt,
+    output wire           [W-1:0] y
+);
+    localparam WLOCAL = $clog2(W + 1);
+    wire [((WLOCAL + 1) * W)-1:0] data_stage;
+    wire           [WLOCAL:0]     sticky_stage;
+
+    assign data_stage[0 +: W] = x;
+    assign sticky_stage[0]    = 1'b0;
+
+    genvar i_stage;
+    generate
+        for (i_stage = 0; i_stage < WLOCAL; i_stage = i_stage + 1) begin : g_stage
+            localparam integer DIST = 1 << i_stage;
+            wire [W-1:0] data_in;
+            wire [W-1:0] shifted;
+            wire         lost;
+            assign data_in = data_stage[i_stage * W +: W];
+            if (DIST >= W) begin : g_saturating
+                assign shifted = {W{1'b0}};
+                assign lost    = |data_in;
+            end else begin : g_in_range
+                assign shifted = {{DIST{1'b0}}, data_in[W-1:DIST]};
+                assign lost    = |data_in[DIST-1:0];
+            end
+            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
+            assign sticky_stage[i_stage + 1]          = sticky_stage[i_stage] | (shamt[i_stage] & lost);
+        end
+    endgenerate
+
+    assign y = {data_stage[(WLOCAL * W) + W - 1 : (WLOCAL * W) + 1],
+                data_stage[WLOCAL * W] | sticky_stage[WLOCAL]};
+endmodule
+
+
+// Left-shift barrel with zero fill. WSHAMT may be less than $clog2(W) when the upstream clamp
+// guarantees the shift can never reach W; the high stages are then implicit pass-throughs and
+// the loop only generates the live stages.
+module _zkf_to_int_lshift #(parameter W = 32, parameter WSHAMT = $clog2(W)) (
+    input  wire      [W-1:0] x,
+    input  wire [WSHAMT-1:0] shamt,
+    output wire      [W-1:0] y
+);
+    wire [((WSHAMT + 1) * W)-1:0] data_stage;
+    assign data_stage[0 +: W] = x;
+    genvar i_stage;
+    generate
+        for (i_stage = 0; i_stage < WSHAMT; i_stage = i_stage + 1) begin : g_stage
+            localparam integer DIST = 1 << i_stage;
+            wire [W-1:0] data_in = data_stage[i_stage * W +: W];
+            wire [W-1:0] shifted;
+            if (DIST < W) begin : g_in_range
+                assign shifted = {data_in[W-1-DIST:0], {DIST{1'b0}}};
+            end else begin : g_saturating
+                assign shifted = {W{1'b0}};
+            end
+            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
+        end
+    endgenerate
+    assign y = data_stage[WSHAMT * W +: W];
+endmodule
+
+`default_nettype wire

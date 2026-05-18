@@ -103,6 +103,23 @@ filesets:
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
+  rtl_from_int:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_from_int.v
+    file_type: verilogSource
+
+  rtl_to_int:
+    files:
+      - hdl/zkf_to_int.v
+    file_type: verilogSource
+
+  rtl_resize:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_resize.v
+    file_type: verilogSource
+
   tb_const_wrap:
     files:
       - tb/zkf_const_wrap.v
@@ -154,6 +171,12 @@ filesets:
       - tb/test_const.py:
           file_type: user
       - tb/test_mul_ilog2_const.py:
+          file_type: user
+      - tb/test_from_int.py:
+          file_type: user
+      - tb/test_to_int.py:
+          file_type: user
+      - tb/test_resize.py:
           file_type: user
       - tb/test_properties.py:
           file_type: user
@@ -214,6 +237,46 @@ parameters:
   ZKF_PIPE_N:
     datatype: int
     default: 0
+    paramtype: plusarg
+  WINT:
+    datatype: int
+    default: 32
+    paramtype: vlogparam
+  ZKF_WINT:
+    datatype: int
+    default: 32
+    paramtype: plusarg
+  WEXP_IN:
+    datatype: int
+    default: 6
+    paramtype: vlogparam
+  WMAN_IN:
+    datatype: int
+    default: 18
+    paramtype: vlogparam
+  WEXP_OUT:
+    datatype: int
+    default: 5
+    paramtype: vlogparam
+  WMAN_OUT:
+    datatype: int
+    default: 11
+    paramtype: vlogparam
+  ZKF_WEXP_IN:
+    datatype: int
+    default: 6
+    paramtype: plusarg
+  ZKF_WMAN_IN:
+    datatype: int
+    default: 18
+    paramtype: plusarg
+  ZKF_WEXP_OUT:
+    datatype: int
+    default: 5
+    paramtype: plusarg
+  ZKF_WMAN_OUT:
+    datatype: int
+    default: 11
     paramtype: plusarg
 
 targets:
@@ -598,3 +661,85 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_mul_ilog2_const
     parameters: *float_binary_params
+
+  sim_from_int_icarus:
+    filesets: [rtl_from_int, tb_cocotb]
+    toplevel: zkf_from_int
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_from_int
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_cast_params
+      - WEXP
+      - WMAN
+      - WINT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_WINT
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_from_int_verilator:
+    filesets: [rtl_from_int, tb_cocotb]
+    toplevel: zkf_from_int
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_from_int
+    parameters: *float_cast_params
+
+  sim_to_int_icarus:
+    filesets: [rtl_to_int, tb_cocotb]
+    toplevel: zkf_to_int
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_to_int
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_cast_params
+
+  sim_to_int_verilator:
+    filesets: [rtl_to_int, tb_cocotb]
+    toplevel: zkf_to_int
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_to_int
+    parameters: *float_cast_params
+
+  sim_resize_icarus:
+    filesets: [rtl_resize, tb_cocotb]
+    toplevel: zkf_resize
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_resize
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_resize_params
+      - WEXP_IN
+      - WMAN_IN
+      - WEXP_OUT
+      - WMAN_OUT
+      - ZKF_WEXP_IN
+      - ZKF_WMAN_IN
+      - ZKF_WEXP_OUT
+      - ZKF_WMAN_OUT
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_resize_verilator:
+    filesets: [rtl_resize, tb_cocotb]
+    toplevel: zkf_resize
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_resize
+    parameters: *float_resize_params

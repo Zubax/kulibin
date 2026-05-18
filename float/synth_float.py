@@ -50,6 +50,11 @@ class ModuleSpec:
     wexp: int
     wman: int
     wexp_unbiased: int
+    wint: int = 0
+    wexp_in: int = 0
+    wman_in: int = 0
+    wexp_out: int = 0
+    wman_out: int = 0
 
 
 @dataclass(frozen=True)
@@ -147,6 +152,52 @@ MODULES = [
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_from_int",
+        label="zkf_from_int (WINT=32)",
+        top="zkf_from_int_synth_top",
+        kind="from_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+    ),
+    ModuleSpec(
+        name="zkf_to_int",
+        label="zkf_to_int (WINT=32)",
+        top="zkf_to_int_synth_top",
+        kind="to_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+    ),
+    ModuleSpec(
+        name="zkf_resize_narrow",
+        label="zkf_resize 6/18 -> 5/11 (narrowing)",
+        top="zkf_resize_narrow_synth_top",
+        kind="resize",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wexp_in=6,
+        wman_in=18,
+        wexp_out=5,
+        wman_out=11,
+    ),
+    ModuleSpec(
+        name="zkf_resize_widen",
+        label="zkf_resize 5/11 -> 6/18 (widening)",
+        top="zkf_resize_widen_synth_top",
+        kind="resize",
+        wexp=5,
+        wman=11,
+        wexp_unbiased=0,
+        wexp_in=5,
+        wman_in=11,
+        wexp_out=6,
+        wman_out=18,
     ),
 ]
 
@@ -247,6 +298,18 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         ]
     if spec.kind == "mul_ilog2_const":
         return [REPO / "float" / "hdl" / "zkf_mul_ilog2_const.v"]
+    if spec.kind == "from_int":
+        return [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "zkf_from_int.v",
+        ]
+    if spec.kind == "to_int":
+        return [REPO / "float" / "hdl" / "zkf_to_int.v"]
+    if spec.kind == "resize":
+        return [
+            REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "zkf_resize.v",
+        ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -274,6 +337,10 @@ def register_stages(spec: ModuleSpec) -> int:
         return 1
     if spec.kind == "mul_ilog2_const":
         return 1
+    if spec.kind in {"from_int", "to_int"}:
+        return 3
+    if spec.kind == "resize":
+        return 2
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -295,6 +362,13 @@ def params(spec: ModuleSpec) -> str:
         )
     if spec.kind == "mul_ilog2_const":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}"
+    if spec.kind in {"from_int", "to_int"}:
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}"
+    if spec.kind == "resize":
+        return (
+            f"WEXP_IN={spec.wexp_in}, WMAN_IN={spec.wman_in}, "
+            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}"
+        )
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
@@ -1026,6 +1100,196 @@ endmodule
     )
 
 
+def write_from_int_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    wint = spec.wint
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                          clk,
+    input  wire                          rst,
+    input  wire                          in_valid,
+    input  wire signed [{wint - 1}:0]    a,
+    output wire                          out_valid,
+    output wire [{wfull - 1}:0]          y
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                       r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg signed [{wint - 1}:0] r_a;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_from_int #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .WINT({wint})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_to_int_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    wint = spec.wint
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                          clk,
+    input  wire                          rst,
+    input  wire                          in_valid,
+    input  wire [{wfull - 1}:0]          a,
+    output wire                          out_valid,
+    output wire signed [{wint - 1}:0]    y
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+
+    wire                       dut_out_valid;
+    wire signed [{wint - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                       r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg signed [{wint - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_to_int #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .WINT({wint})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_resize_wrapper(spec: ModuleSpec, path: Path) -> None:
+    in_wfull  = spec.wexp_in  + spec.wman_in
+    out_wfull = spec.wexp_out + spec.wman_out
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                       clk,
+    input  wire                       rst,
+    input  wire                       in_valid,
+    input  wire [{in_wfull - 1}:0]    a,
+    output wire                       out_valid,
+    output wire [{out_wfull - 1}:0]   y
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                    r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{in_wfull - 1}:0] r_a;
+
+    wire                     dut_out_valid;
+    wire [{out_wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                     r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{out_wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_resize #(
+        .WEXP_IN({spec.wexp_in}),
+        .WMAN_IN({spec.wman_in}),
+        .WEXP_OUT({spec.wexp_out}),
+        .WMAN_OUT({spec.wman_out})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -1045,6 +1309,12 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_sort_wrapper(spec, path)
     elif spec.kind == "mul_ilog2_const":
         write_mul_ilog2_const_wrapper(spec, path)
+    elif spec.kind == "from_int":
+        write_from_int_wrapper(spec, path)
+    elif spec.kind == "to_int":
+        write_to_int_wrapper(spec, path)
+    elif spec.kind == "resize":
+        write_resize_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -1085,6 +1355,62 @@ def artifact_link(result: dict[str, str], key: str, label: str) -> str:
 
 def joined_links(*links: str) -> str:
     return " | ".join(link for link in links if link)
+
+
+def parse_metric_value(text: str) -> float | None:
+    match = re.search(r"-?[0-9]+(?:\.[0-9]+)?", text)
+    return float(match.group(0)) if match else None
+
+
+def metric_bounds(results: list[dict[str, str]], key: str) -> tuple[float, float] | None:
+    values = [value for result in results if (value := parse_metric_value(result.get(key, ""))) is not None]
+    return (min(values), max(values)) if values else None
+
+
+def metric_color_style(
+    value_text: str,
+    bounds: tuple[float, float] | None,
+    higher_is_better: bool,
+) -> str:
+    value = parse_metric_value(value_text)
+    if value is None or bounds is None:
+        return ""
+
+    lowest, highest = bounds
+    if highest <= lowest:
+        normalized_worstness = 0.0
+    elif higher_is_better:
+        normalized_worstness = (highest - value) / (highest - lowest)
+    else:
+        normalized_worstness = (value - lowest) / (highest - lowest)
+
+    normalized_worstness = max(0.0, min(1.0, normalized_worstness))
+    best_rgb = (207, 237, 216)
+    worst_rgb = (246, 205, 205)
+    rgb = tuple(
+        round(best + (worst - best) * normalized_worstness)
+        for best, worst in zip(best_rgb, worst_rgb)
+    )
+    return f"background-color: #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x};"
+
+
+def table_cell(text: str, class_name: str = "", style: str = "") -> str:
+    attributes = []
+    if class_name:
+        attributes.append(f'class="{class_name}"')
+    if style:
+        attributes.append(f'style="{style}"')
+    attribute_text = " " + " ".join(attributes) if attributes else ""
+    return f"<td{attribute_text}>{escape(text)}</td>"
+
+
+def metric_cell(
+    text: str,
+    bounds: tuple[float, float] | None,
+    higher_is_better: bool,
+    class_name: str = "",
+) -> str:
+    return table_cell(text, class_name, metric_color_style(text, bounds, higher_is_better))
 
 
 def read_text(path: Path | None) -> str:
@@ -1395,6 +1721,8 @@ def write_yosys_html(results: list[dict[str, str]]) -> None:
     rows = []
     details = []
     generated_at = generated_local_time()
+    fmax_bounds = metric_bounds(results, "fmax")
+    placed_lut4_bounds = metric_bounds(results, "lut_placed")
     for result in results:
         status_class = "pass" if result["status"] == "PASS" else "fail"
         rows.append(
@@ -1403,20 +1731,20 @@ def write_yosys_html(results: list[dict[str, str]]) -> None:
             f"<td>{escape(result['params'])}</td>"
             f"<td>{escape(result['register_stages'])}</td>"
             f"<td>{escape(result['target'])}</td>"
-            f"<td>{escape(result['fmax'])}</td>"
-            f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
-            f"<td class=\"resource\">{escape(result['lut'])}</td>"
-            f"<td class=\"resource\">{escape(result['lut_placed'])}</td>"
-            f"<td class=\"resource\">{escape(result['ff'])}</td>"
-            f"<td class=\"resource\">{escape(result['comb'])}</td>"
-            f"<td class=\"resource\">{escape(result['carry'])}</td>"
-            f"<td class=\"resource\">{escape(result['pfumx'])}</td>"
-            f"<td class=\"resource\">{escape(result['l6mux21'])}</td>"
-            f"<td class=\"resource\">{escape(result['dsp'])}</td>"
-            f"<td class=\"resource\">{escape(result['alu54'])}</td>"
-            f"<td class=\"resource\">{escape(result['bram'])}</td>"
-            f"<td class=\"resource\">{escape(result['io'])}</td>"
-            "<td>"
+            + metric_cell(result["fmax"], fmax_bounds, higher_is_better=True)
+            + f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
+            + f"<td class=\"resource\">{escape(result['lut'])}</td>"
+            + metric_cell(result["lut_placed"], placed_lut4_bounds, higher_is_better=False, class_name="resource")
+            + f"<td class=\"resource\">{escape(result['ff'])}</td>"
+            + f"<td class=\"resource\">{escape(result['comb'])}</td>"
+            + f"<td class=\"resource\">{escape(result['carry'])}</td>"
+            + f"<td class=\"resource\">{escape(result['pfumx'])}</td>"
+            + f"<td class=\"resource\">{escape(result['l6mux21'])}</td>"
+            + f"<td class=\"resource\">{escape(result['dsp'])}</td>"
+            + f"<td class=\"resource\">{escape(result['alu54'])}</td>"
+            + f"<td class=\"resource\">{escape(result['bram'])}</td>"
+            + f"<td class=\"resource\">{escape(result['io'])}</td>"
+            + "<td>"
             + joined_links(
                 artifact_link(result, "nextpnr_log", "nextpnr"),
                 artifact_link(result, "yosys_log", "Yosys"),
@@ -1472,13 +1800,13 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + f"{DEVICE_SPEED_GRADE} at {format_mhz(YOSYS_TARGET_FREQ_MHZ)}.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
-every DUT output is captured by a wrapper register. This makes the reported Fmax a register-to-register limit instead
+every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
 of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
 <p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
 helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>Fmax</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>f max</th><th>Status</th>
 <th>Yosys LUT4</th><th>Placed LUT4</th><th>FF</th><th>TRELLIS_COMB</th>
 <th>CCU2C</th><th>PFUMX</th><th>L6MUX21</th><th>DSP MULT18X18D</th>
 <th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Logs</th>
@@ -1863,6 +2191,8 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
     rows = []
     details = []
     generated_at = generated_local_time()
+    fmax_bounds = metric_bounds(results, "fmax")
+    slice_bounds = metric_bounds(results, "slice")
     for result in results:
         status_class = "pass" if result["status"] == "PASS" else "fail"
         rows.append(
@@ -1871,14 +2201,14 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
             f"<td>{escape(result['params'])}</td>"
             f"<td>{escape(result['register_stages'])}</td>"
             f"<td>{escape(result['target'])}</td>"
-            f"<td>{escape(result['fmax'])}</td>"
-            f"<td>{escape(result['slack'])}</td>"
-            f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
-            f"<td>{escape(result['lut4'])}</td>"
-            f"<td>{escape(result['registers'])}</td>"
-            f"<td>{escape(result['slice'])}</td>"
-            f"<td>{escape(result['pio'])}</td>"
-            "<td>"
+            + metric_cell(result["fmax"], fmax_bounds, higher_is_better=True)
+            + f"<td>{escape(result['slack'])}</td>"
+            + f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
+            + f"<td class=\"resource\">{escape(result['lut4'])}</td>"
+            + f"<td class=\"resource\">{escape(result['registers'])}</td>"
+            + metric_cell(result["slice"], slice_bounds, higher_is_better=False, class_name="resource")
+            + f"<td class=\"resource\">{escape(result['pio'])}</td>"
+            + "<td>"
             + joined_links(
                 artifact_link(result, "twr", "TRACE"),
                 artifact_link(result, "par", "PAR"),
@@ -1923,6 +2253,7 @@ body { font-family: sans-serif; margin: 2rem; color: #111; }
 table { border-collapse: collapse; margin-bottom: 2rem; }
 th, td { border: 1px solid #bbb; padding: 0.35rem 0.6rem; text-align: left; }
 th { background: #eee; }
+td.resource { white-space: nowrap; }
 .status { border-radius: 999px; display: inline-block; font-weight: 700; padding: 0.2rem 0.6rem; }
 .status.pass { background: #11823b; color: #fff; }
 .status.fail { background: #c82424; color: #fff; }
@@ -1939,13 +2270,13 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + f"{DIAMOND_ROUTE_PASSES}.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
-every DUT output is captured by a wrapper register. This makes the reported Fmax a register-to-register limit instead
+every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
 of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
 <p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
 helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>Fmax</th><th>Slack</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>f max</th><th>Slack</th><th>Status</th>
 <th>LUT4</th><th>Registers</th><th>Slice</th><th>PIO</th><th>Logs</th>
 </tr></thead>
 <tbody>
