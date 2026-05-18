@@ -36,6 +36,35 @@ def raw_directed_values(fmt: ZkfFormat) -> list[int]:
     ]
 
 
+def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
+    """Non-canonical zero and infinity bit patterns at a few representative fractions; same shape as test_cmp."""
+    frac_bits = [0, 1, fmt.frac_mask >> 1, fmt.frac_mask] if fmt.wfrac >= 2 else [0, fmt.frac_mask]
+    frac_bits = sorted({f & fmt.frac_mask for f in frac_bits})
+    cases: list[tuple[str, int]] = []
+    for sign in (0, 1):
+        for frac in frac_bits:
+            cases.append((f"zero_s{sign}_f{frac:x}", (sign << fmt.sign_shift) | frac))
+            inf_bits = (sign << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac) | frac
+            cases.append((f"inf_s{sign}_f{frac:x}",  inf_bits))
+    return cases
+
+
+def corner_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
+    """Exercise the same special-class transitions that test_cmp covers, plus equal-operand reflexivity."""
+    pairs: list[tuple[str, int, int]] = []
+    specials = special_class_representatives(fmt)
+    for left_label, left in specials:
+        for right_label, right in specials:
+            pairs.append((f"{left_label}_vs_{right_label}", left, right))
+    if fmt.wexp >= 3:
+        named = directed_numbers(fmt)
+        for label, value in named.items():
+            pairs.append((f"self_{label}", value, value))
+            neighbour = value ^ 0x1
+            pairs.append((f"{label}_vs_lsbflip", value, neighbour & mask(fmt.wfull)))
+    return pairs
+
+
 def add_unique(
     cases: list[SortCase],
     seen: set[tuple[int, int]],
@@ -85,6 +114,9 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[SortCase
         return cases
 
     for label, a, b in directed_case_operands(fmt):
+        add_unique(cases, seen, label, fmt, a, b)
+
+    for label, a, b in corner_pairs(fmt):
         add_unique(cases, seen, label, fmt, a, b)
 
     if kind == "directed":

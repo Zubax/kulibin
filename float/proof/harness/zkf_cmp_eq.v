@@ -48,6 +48,26 @@ module zkf_cmp_eq #(parameter WEXP = 6, parameter WMAN = 18) (
         .a_gt_b(dut_gt), .a_eq_b(dut_eq), .a_lt_b(dut_lt)
     );
 
+    // Second DUT instance with the operands swapped. Lets the harness prove anti-symmetry
+    // (cmp(a,b).gt == cmp(b,a).lt and cmp is reflexive on equality) on the same arbitrary inputs as the
+    // primary equivalence check, without leaning on the reference for those properties.
+    wire dut_swap_valid, dut_swap_gt, dut_swap_eq, dut_swap_lt;
+    zkf_cmp #(.WEXP(WEXP), .WMAN(WMAN)) u_dut_swap (
+        .clk(clk), .rst(rst), .in_valid(in_valid),
+        .a(b), .b(a),
+        .out_valid(dut_swap_valid),
+        .a_gt_b(dut_swap_gt), .a_eq_b(dut_swap_eq), .a_lt_b(dut_swap_lt)
+    );
+
+    // Third DUT instance comparing a against itself, used to assert reflexivity.
+    wire dut_self_valid, dut_self_gt, dut_self_eq, dut_self_lt;
+    zkf_cmp #(.WEXP(WEXP), .WMAN(WMAN)) u_dut_self (
+        .clk(clk), .rst(rst), .in_valid(in_valid),
+        .a(a), .b(a),
+        .out_valid(dut_self_valid),
+        .a_gt_b(dut_self_gt), .a_eq_b(dut_self_eq), .a_lt_b(dut_self_lt)
+    );
+
     // Reference applied to the latched inputs.
     wire ref_gt, ref_eq, ref_lt;
     zkf_cmp_ref #(.WEXP(WEXP), .WMAN(WMAN)) u_ref (
@@ -63,6 +83,14 @@ module zkf_cmp_eq #(parameter WEXP = 6, parameter WMAN = 18) (
             assert(dut_lt == ref_lt);
             // One-hot output.
             assert((dut_gt + dut_eq + dut_lt) == 3'd1);
+            // Anti-symmetry: cmp(a,b) and cmp(b,a) must agree with gt/lt swapped, eq preserved.
+            assert(dut_gt == dut_swap_lt);
+            assert(dut_lt == dut_swap_gt);
+            assert(dut_eq == dut_swap_eq);
+            // Reflexivity: cmp(a,a) always reports equality.
+            assert(dut_self_eq == 1'b1);
+            assert(dut_self_gt == 1'b0);
+            assert(dut_self_lt == 1'b0);
         end
         if (cycle == 4'd1) begin
             assert(dut_valid == 1'b0);

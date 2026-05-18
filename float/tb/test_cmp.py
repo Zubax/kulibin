@@ -36,6 +36,45 @@ def raw_directed_values(fmt: ZkfFormat) -> list[int]:
     ]
 
 
+def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
+    """All non-canonical zero and infinity bit patterns at a few representative fractions.
+
+    Targets the `override_eq` logic in zkf_cmp_comb: every pattern in the zero class must compare equal to every
+    other zero pattern, every same-sign infinity pattern must compare equal regardless of fraction, and crossing
+    a class boundary must produce strict ordering.
+    """
+    frac_bits = [0, 1, fmt.frac_mask >> 1, fmt.frac_mask] if fmt.wfrac >= 2 else [0, fmt.frac_mask]
+    frac_bits = sorted({f & fmt.frac_mask for f in frac_bits})
+    cases: list[tuple[str, int]] = []
+    for sign in (0, 1):
+        for frac in frac_bits:
+            cases.append((f"zero_s{sign}_f{frac:x}", (sign << fmt.sign_shift) | frac))
+            inf_bits = (sign << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac) | frac
+            cases.append((f"inf_s{sign}_f{frac:x}",  inf_bits))
+    return cases
+
+
+def corner_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
+    """Hand-picked pairings that exercise every transition in the cmp_comb decision tree."""
+    pairs: list[tuple[str, int, int]] = []
+    specials = special_class_representatives(fmt)
+    # Cross-product of all zero and infinity representations: equality of any two zeros, equality of same-sign
+    # infinities, and strict ordering of different-sign infinities all surface in this cross-product.
+    for left_label, left in specials:
+        for right_label, right in specials:
+            pairs.append((f"{left_label}_vs_{right_label}", left, right))
+    # Reflexivity-style probes outside the special classes (already covered by exhaustive at small widths, but
+    # listed explicitly here so they also fire at the larger random configurations).
+    if fmt.wexp >= 3:
+        named = directed_numbers(fmt)
+        for label, value in named.items():
+            pairs.append((f"self_{label}", value, value))
+            # Adjacent-value probe: smallest-LSB perturbation should always change the ordering.
+            neighbour = value ^ 0x1
+            pairs.append((f"{label}_vs_lsbflip", value, neighbour & mask(fmt.wfull)))
+    return pairs
+
+
 def add_unique(
     cases: list[CompareCase],
     seen: set[tuple[int, int]],
@@ -85,6 +124,9 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[CompareC
         return cases
 
     for label, a, b in directed_case_operands(fmt):
+        add_unique(cases, seen, label, fmt, a, b)
+
+    for label, a, b in corner_pairs(fmt):
         add_unique(cases, seen, label, fmt, a, b)
 
     if kind == "directed":
