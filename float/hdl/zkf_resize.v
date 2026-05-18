@@ -21,8 +21,8 @@ module zkf_resize #(
     input wire                       in_valid,
     input wire [WEXP_IN+WMAN_IN-1:0] a,
 
-    output wire                          out_valid,
-    output wire [WEXP_OUT+WMAN_OUT-1:0]  y
+    output wire                         out_valid,
+    output wire [WEXP_OUT+WMAN_OUT-1:0] y
 );
     // verilator coverage_off
     generate
@@ -44,7 +44,7 @@ module zkf_resize #(
     // Decode under the input format. Canonicalisation of zero (frac/sign ignored when exp == 0) and
     // signed infinity (frac ignored when exp == all_ones) happens here.
     wire                sign_in = a[WFULL_IN-1];
-    wire [WEXP_IN-1:0]  exp_in  = a[WFULL_IN-2:WFRAC_IN];
+    wire  [WEXP_IN-1:0] exp_in  = a[WFULL_IN-2:WFRAC_IN];
     wire [WFRAC_IN-1:0] frac_in = a[WFRAC_IN-1:0];
     wire                is_zero = ~|exp_in;
     wire                is_inf  =  &exp_in;
@@ -53,7 +53,7 @@ module zkf_resize #(
     // exp_unbiased = exp_in - IN_BIAS, performed as a single signed add with a folded constant so the path lands on
     // the carry chain rather than a comparator + adder. IN_BIAS is built from a sized vector (top bit 0, lower
     // WEXP_IN-1 bits all 1 = 2^(WEXP_IN-1) - 1); this keeps the constant portable for any WEXP_IN >= 2.
-    localparam [WEXP_IN-1:0]    IN_BIAS      = {1'b0, {(WEXP_IN-1){1'b1}}};
+    localparam    [WEXP_IN-1:0] IN_BIAS      = {1'b0, {(WEXP_IN-1){1'b1}}};
     localparam signed [WEU-1:0] IN_BIAS_EXT  = $signed({{(WEU-WEXP_IN){1'b0}}, IN_BIAS});
     wire       signed [WEU-1:0] exp_unbiased = $signed({{(WEU-WEXP_IN){1'b0}}, exp_in}) - IN_BIAS_EXT;
 
