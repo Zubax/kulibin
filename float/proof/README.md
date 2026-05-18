@@ -47,20 +47,20 @@ when emitting models through bitwuzla; on those modules we fall back to yices-on
 
 Every `.sby` file under `sby/` is a primary proof and is exercised by `make formal-float`.
 
-| Module                  | Parameters               | Engine    | Wall-clock | Notes |
-|-------------------------|--------------------------|-----------|------------|-------|
-| `zkf_abs`               | WEXP=6, WMAN=18          | yices     | < 1 s      | spec inlined |
-| `zkf_neg`               | WEXP=6, WMAN=18          | yices     | < 1 s      | spec inlined; involution checked |
-| `zkf_is_finite`         | WEXP=6, WMAN=18          | yices     | < 1 s      | spec inlined |
-| `zkf_saturate`          | WEXP=6, WMAN=18          | yices     | < 1 s      | spec inlined; idempotence checked |
-| `zkf_cmp`               | WEXP=6, WMAN=18          | yices     | < 1 s      | references explicit case analysis |
-| `zkf_sort`              | WEXP=6, WMAN=18          | yices     | < 1 s      | multiset + ordering via cmp_ref |
-| `_zkf_pipe`             | W=24, N=4                | yices     | < 1 s      | BMC depth 12 covers full propagation |
-| `_zkf_pack`             | WEXP=6, WMAN=18          | yices     | < 1 s      | at the production parameter set |
-| `_zkf_div_radix4_step`  | WMAN=18                  | yices     | < 1 s      | greedy digit selection invariant |
-| `zkf_mul`               | WEXP=5, WMAN=10          | yices     | ~4 min     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
-| `zkf_add`               | WEXP=4, WMAN=6           | yices     | ~6.5 min   | 8-stage BMC; reference uses wide-integer summation |
-| `zkf_div`               | WEXP=4, WMAN=6           | yices     | < 1 s      | wraps core+pack; reference uses wide unsigned division |
+| Module                  | Parameters      | Engine    | Notes |
+|-------------------------|-----------------|-----------|-------|
+| `zkf_abs`               | WEXP=6, WMAN=18 | yices     | spec inlined |
+| `zkf_neg`               | WEXP=6, WMAN=18 | yices     | spec inlined; involution checked |
+| `zkf_is_finite`         | WEXP=6, WMAN=18 | yices     | spec inlined |
+| `zkf_saturate`          | WEXP=6, WMAN=18 | yices     | spec inlined; idempotence checked |
+| `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis |
+| `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |
+| `_zkf_pipe`             | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
+| `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set |
+| `_zkf_div_radix4_step`  | WMAN=18         | yices     | greedy digit selection invariant |
+| `zkf_mul`               | WEXP=5, WMAN=10 | yices     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
+| `zkf_add`               | WEXP=4, WMAN=6  | yices     | 8-stage BMC; reference uses wide-integer summation |
+| `zkf_div`               | WEXP=4, WMAN=6  | yices     | wraps core+pack; reference uses wide unsigned division |
 
 Combinational/sequential and trivial-wrapper consolidation rule applied:
 
@@ -89,9 +89,9 @@ on failure it embeds links to the SBY counter-example VCDs.
 
 ## Known limitations and design decisions
 
-- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`) is proved at reduced widths because SBY's
-  QF_BV instance at default `(WEXP=6, WMAN=18)` is currently intractable on yices in any
-  reasonable wall-clock. The parameter-genericity gap is mitigated by:
+- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`) is proved at reduced widths because SBY's QF_BV instance at
+  default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
+  The parameter-genericity gap is mitigated by:
   1. The full-width `_zkf_pack` proof (rounding logic shared by every arithmetic module).
   2. The full-width `_zkf_div_radix4_step` proof (digit primitive shared by every divider width).
   3. The simulation matrix in `../tb/`, which spans default widths up to binary64.
@@ -101,7 +101,3 @@ on failure it embeds links to the SBY counter-example VCDs.
 
 - The combinational references under `refs/` use `always @(*)` blocks with blocking assignments.
   This style is what makes the references easy to audit against the Python golden in `../tb/zkf_model.py`.
-
-- Bitwuzla is built locally (built from source under `/tmp/bitwuzla-src/`) but is currently
-  unused by the .sby flows because of a recursion-limit issue in the system `yosys-smtbmc`'s
-  Python driver when handling bitwuzla output. yices alone solves every proof in budget.
