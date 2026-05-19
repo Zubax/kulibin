@@ -28,6 +28,10 @@ All testbenches and validation synthesis targets are run locally with:
 
 A failed simulation, uncovered gated RTL line (where required), synthesis failure, or timing miss fails `make verify`.
 
+For interactive use, prefer targeted module-specific verificaiton. For the floating point specifically, use
+
+    make verify-float-fast
+
 To simulate one specific target instead of the full library, run e.g.
 `fusesoc run --target=sim_cic_decimator zubax:kulibin:cic_decimator` from the repository root.
 

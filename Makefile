@@ -451,7 +451,51 @@ coverage-float-report:
 coverage-float-gate:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator --output-dir build/float/coverage --gate
 
-verify-float-fast: verify-float
+## Minimal smoke suite intended for interactive use between edits. Runs in well under a minute on a workstation.
+## Compiles every public module under Icarus at its smallest exhaustive configuration; in-scope modules also run
+## the same configuration with EXTRA_STAGES=1 to catch breakage of the optional knob. Skips Verilator, coverage
+## gating, algebraic-property tests, formal proofs, all random sweeps, and the wide-WMAN configs.
+## Use verify-float (medium) or verify-float-deep (full) for anything past quick regression checks.
+verify-float-fast: library
+	@$(MAKE) verify-float-model
+	@set -e; \
+	export PYTHONPATH="$(FLOAT_PYTHONPATH)"; \
+	export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1; \
+	export COCOTB_REWRITE_ASSERTION_FILES=; \
+	smoke() { \
+	  name="$$1"; target="$$2"; shift 2; \
+	  root="build/float/fast/$${name}"; \
+	  echo "=== $(FLOAT_CORE) :: $${target} :: $${name} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=$${target} \
+	    $(FLOAT_CORE) "$$@" \
+	    --ZKF_KIND exhaustive --ZKF_COUNT 0 --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$name"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	smoke pack          sim_pack_icarus               --WEXP 2 --WMAN 4 --WEXP_UNBIASED 4 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_WEXP_UNBIASED 4; \
+	smoke cmp           sim_cmp_icarus                --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke sort          sim_sort_icarus               --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke abs           sim_abs_icarus                --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke neg           sim_neg_icarus                --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke is_finite     sim_is_finite_icarus          --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke saturate      sim_saturate_icarus           --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke const         sim_const_icarus              --WEXP 3 --WMAN 4 --ZKF_WEXP 3 --ZKF_WMAN 4; \
+	smoke mul_es0       sim_mul_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 0; \
+	smoke mul_es1       sim_mul_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 1; \
+	smoke add_es0       sim_add_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 0; \
+	smoke add_es1       sim_add_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 1; \
+	smoke addsub_es0    sim_addsub_icarus             --WEXP 2 --WMAN 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 0; \
+	smoke addsub_es1    sim_addsub_icarus             --WEXP 2 --WMAN 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 1; \
+	smoke div_es0       sim_div_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 0; \
+	smoke div_es1       sim_div_icarus                --WEXP 2 --WMAN 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 1; \
+	smoke ilog2_es0     sim_mul_ilog2_const_icarus    --WEXP 2 --WMAN 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 0; \
+	smoke ilog2_es1     sim_mul_ilog2_const_icarus    --WEXP 2 --WMAN 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_EXTRA_STAGES 1; \
+	smoke from_int_es0  sim_from_int_icarus           --WEXP 2 --WMAN 4 --WINT 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_WINT 4 --ZKF_EXTRA_STAGES 0; \
+	smoke from_int_es1  sim_from_int_icarus           --WEXP 2 --WMAN 4 --WINT 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_WINT 4 --ZKF_EXTRA_STAGES 1; \
+	smoke to_int_es0    sim_to_int_icarus             --WEXP 2 --WMAN 4 --WINT 4 --EXTRA_STAGES 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_WINT 4 --ZKF_EXTRA_STAGES 0; \
+	smoke to_int_es1    sim_to_int_icarus             --WEXP 2 --WMAN 4 --WINT 4 --EXTRA_STAGES 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_WINT 4 --ZKF_EXTRA_STAGES 1; \
+	smoke resize_es0    sim_resize_icarus             --WEXP_IN 3 --WMAN_IN 4 --WEXP_OUT 3 --WMAN_OUT 4 --EXTRA_STAGES 0 --ZKF_WEXP_IN 3 --ZKF_WMAN_IN 4 --ZKF_WEXP_OUT 3 --ZKF_WMAN_OUT 4 --ZKF_EXTRA_STAGES 0; \
+	smoke resize_es1    sim_resize_icarus             --WEXP_IN 3 --WMAN_IN 4 --WEXP_OUT 3 --WMAN_OUT 4 --EXTRA_STAGES 1 --ZKF_WEXP_IN 3 --ZKF_WMAN_IN 4 --ZKF_WEXP_OUT 3 --ZKF_WMAN_OUT 4 --ZKF_EXTRA_STAGES 1
 
 verify-float-deep: library
 	@$(MAKE) verify-float
