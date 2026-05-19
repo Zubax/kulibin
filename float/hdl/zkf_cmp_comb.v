@@ -4,8 +4,9 @@
 /// equal to canonical +0, and infinities of the same sign compare equal regardless of input fraction bits.
 /// The class-detection paths run in parallel with the wide compare so they do not extend its critical path.
 ///
-/// Only one wide comparator is instantiated: `a < b` (carry chain) and `a == b` (XOR-reduce) share the same
-/// operands and are derived independently; `a > b` is the leftover case. See zkf_cmp for a registered variant.
+/// `a < b` is realized as an explicit subtraction whose borrow-out is the result; this maps directly to the
+/// FPGA's carry chain (CCU2 on Lattice). `a == b` is an XOR-reduce on the same operands; `a > b` is the
+/// leftover case. See zkf_cmp for a registered variant.
 
 `default_nettype none
 
@@ -40,8 +41,13 @@ module zkf_cmp_comb #(parameter WEXP = 6, parameter WMAN = 18) (
     wire same_sign_inf = a_inf & b_inf & ~(a[WFULL-1] ^ b[WFULL-1]);
     wire override_eq   = both_zero | same_sign_inf;
 
-    // Raw key compare. `<` and `==` are independent reductions on the same operands; `>` is the leftover case.
-    wire raw_lt = a_key <  b_key;
+    // Raw key compare. `<` is realized as a zero-extended subtraction whose top bit (borrow-out) is set
+    // iff a_key < b_key; this maps to a clean carry chain. `==` is an independent XOR-reduce; `>` is the
+    // leftover case. Writing `<` as a `-` keeps the path off whatever wider unsigned-compare lowering the
+    // tool might otherwise pick — same trick as `_zkf_add_ge` inside zkf_add.
+    // https://stackoverflow.com/questions/60844496/does-subtraction-need-less-resource-than-comparison-symbol-in-verilog
+    wire [WFULL:0] raw_diff = {1'b0, a_key} - {1'b0, b_key};
+    wire raw_lt = raw_diff[WFULL];
     wire raw_eq = a_key == b_key;
     assign a_eq_b = raw_eq | override_eq;
     assign a_lt_b = raw_lt & ~override_eq;
