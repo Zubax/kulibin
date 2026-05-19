@@ -78,7 +78,9 @@ module zkf_add #(
     wire a_exp_eq_b_exp = a_key_exp == b_key_exp;
     wire a_exp_ge_b_exp = a_exp_gt_b_exp || a_exp_eq_b_exp;
     wire a_sig_ge_b_sig;
-    wire a_mag_ge_b_mag = a_exp_gt_b_exp || (a_exp_eq_b_exp && a_sig_ge_b_sig);
+    // Used only when exponents are equal (consumers gate on s1_exp_eq), so this reduces to the significand
+    // comparison. The full a_exp_gt_b_exp || (a_exp_eq_b_exp && a_sig_ge_b_sig) form is dead in context.
+    wire a_mag_ge_b_mag = a_sig_ge_b_sig;
 
     _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(a_key_sig), .b(b_key_sig), .ge(a_sig_ge_b_sig));
 

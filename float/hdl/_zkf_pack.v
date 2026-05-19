@@ -78,10 +78,13 @@ module _zkf_pack #(
     wire            s1_round_increment     = s1_guard && (s1_round || s1_sticky || s1_significand[0]);
     wire   [WMAN:0] s1_rounded_ext         = {1'b0, s1_significand} + {{WMAN{1'b0}}, s1_round_increment};
     wire            s1_round_carry         = s1_rounded_ext[WMAN];
-    wire            s1_exp_round_overflow  = (s1_exp_biased == EXP_MAX_FINITE) && s1_round_carry;
-    wire            s1_infinity            = s1_force_inf || s1_overflow || s1_exp_round_overflow;
+    wire            s1_infinity            = s1_force_inf || s1_overflow;
     wire [WMAN-1:0] s1_rounded_significand = s1_round_carry ? s1_rounded_ext[WMAN:1] : s1_rounded_ext[WMAN-1:0];
     wire [WEXP-1:0] s1_exp_rounded         = s1_exp_biased + {{(WEXP-1){1'b0}}, s1_round_carry};
+
+    // Round-carry at exp_biased == EXP_MAX_FINITE bumps the exponent to EXP_INF and forces the rounded significand
+    // to 1.000...0 (the carry-out path on s1_rounded_ext). The resulting s1_normal_y encoding is then bit-identical
+    // to s1_infinity_y, so the normal-output path produces canonical infinity without an explicit overflow flag.
 
     // Final packing is deliberately outside the reset branch; only validity is reset.
     wire             s1_underflow_after_round = s1_underflow && !(s1_one_below_min && s1_round_carry);
