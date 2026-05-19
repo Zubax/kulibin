@@ -159,7 +159,7 @@ module zkf_to_int #(
     // -- Stage 1 -> Stage 2 combinational: the heavy barrel shifters. The right-shift barrel folds the discarded
     // tail into a single sticky bit; the left-shift is exact (no GRS). The two branches are muxed by s1_is_left_shift.
     wire [WMAN+1:0] rsh_out_pre;
-    _zkf_to_int_rshift #(.W(WMAN + 2)) u_rshift (
+    _zkf_rshift_sticky #(.W(WMAN + 2), .WSHIFT(WRSH)) u_rshift (
         .x({s1_sig, 2'b00}),
         .shamt(s1_rshamt),
         .y(rsh_out_pre)
@@ -282,46 +282,5 @@ module zkf_to_int #(
     assign y         = s4_y;
 endmodule
 
-
-// Sticky-folded right-shift barrel. Bit 0 of the output OR-collects the input's bit 0 with every bit that falls off,
-// so a single combined sticky bit feeds the rounding logic instead of an expensive wide OR-reduction outside the
-// shifter. Caller must clamp shamt so that shamt <= W (this module's only consumer in zkf_to_int clamps via
-// rshamt_clamped); beyond that point the stage-internal logic naturally produces zero magnitude with sticky = |x,
-// which is the desired behaviour for our integer-cast use.
-module _zkf_to_int_rshift #(parameter W = 20) (
-    input  wire           [W-1:0] x,
-    input  wire [$clog2(W+1)-1:0] shamt,
-    output wire           [W-1:0] y
-);
-    localparam WLOCAL = $clog2(W + 1);
-    wire [((WLOCAL + 1) * W)-1:0] data_stage;
-    wire           [WLOCAL:0]     sticky_stage;
-
-    assign data_stage[0 +: W] = x;
-    assign sticky_stage[0]    = 1'b0;
-
-    genvar i_stage;
-    generate
-        for (i_stage = 0; i_stage < WLOCAL; i_stage = i_stage + 1) begin : g_stage
-            localparam integer DIST = 1 << i_stage;
-            wire [W-1:0] data_in;
-            wire [W-1:0] shifted;
-            wire         lost;
-            assign data_in = data_stage[i_stage * W +: W];
-            if (DIST >= W) begin : g_saturating
-                assign shifted = {W{1'b0}};
-                assign lost    = |data_in;
-            end else begin : g_in_range
-                assign shifted = {{DIST{1'b0}}, data_in[W-1:DIST]};
-                assign lost    = |data_in[DIST-1:0];
-            end
-            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
-            assign sticky_stage[i_stage + 1]          = sticky_stage[i_stage] | (shamt[i_stage] & lost);
-        end
-    endgenerate
-
-    assign y = {data_stage[(WLOCAL * W) + W - 1 : (WLOCAL * W) + 1],
-                data_stage[WLOCAL * W] | sticky_stage[WLOCAL]};
-endmodule
 
 `default_nettype wire

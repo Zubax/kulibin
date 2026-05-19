@@ -110,7 +110,7 @@ module zkf_add #(
 
     wire [WEXT-1:0] s0_small_aligned;
 
-    _zkf_add_align_sticky #(.W(WEXT), .WSHIFT(WSHIFT)) u_align_small (
+    _zkf_rshift_sticky #(.W(WEXT), .WSHIFT(WSHIFT)) u_align_small (
         .x({s0_small_sig_exp, {WGRS{1'b0}}}),
         .shamt({{(WSHIFT-WEXP){1'b0}}, s0_exp_diff}),
         .y(s0_small_aligned)
@@ -322,48 +322,5 @@ module _zkf_add_sub_shift_apply #(parameter WMAN = 18, parameter WINDEX = $clog2
     assign sticky      = shifted[0];
 endmodule
 
-
-// Right-shift x by shamt bit positions while making y[0] sticky.
-// y[0] includes the shifted bit and every low bit discarded by the shift.
-// Higher shift bits are handled as a sticky-only saturation case before the narrower local barrel.
-module _zkf_add_align_sticky #(parameter W = 16, parameter WSHIFT = $clog2(W) + 1) (
-    input  wire      [W-1:0] x,
-    input  wire [WSHIFT-1:0] shamt,
-    output wire      [W-1:0] y
-);
-    localparam WLOCAL = $clog2(W);
-    wire                          shift_ge_width;
-    wire [((WLOCAL + 1) * W)-1:0] data_stage;
-    wire               [WLOCAL:0] sticky_stage;
-    assign data_stage[0 +: W] = x;
-    assign sticky_stage[0]    = 1'b0;
-    genvar i_stage;
-    generate
-        if (WSHIFT > WLOCAL) begin : g_saturating_shift
-            assign shift_ge_width = |shamt[WSHIFT-1:WLOCAL];
-        end else begin : g_no_saturating_shift
-            assign shift_ge_width = 1'b0;
-        end
-        for (i_stage = 0; i_stage < WLOCAL; i_stage = i_stage + 1) begin : g_stage
-            localparam integer DIST = 1 << i_stage;
-            wire [W-1:0] data_in;
-            wire [W-1:0] shifted;
-            wire         lost;
-            assign data_in = data_stage[i_stage * W +: W];
-            if (DIST >= W) begin : g_saturating
-                assign shifted = {W{1'b0}};
-                assign lost    = |data_in;
-            end else begin : g_in_range
-                assign shifted = {{DIST{1'b0}}, data_in[W-1:DIST]};
-                assign lost    = |data_in[DIST-1:0];
-            end
-            assign data_stage[(i_stage + 1) * W +: W] = shamt[i_stage] ? shifted : data_in;
-            assign sticky_stage[i_stage + 1]          = sticky_stage[i_stage] | (shamt[i_stage] & lost);
-        end
-    endgenerate
-    wire [W-1:0] in_range_y = {data_stage[(WLOCAL * W) + W - 1:(WLOCAL * W) + 1],
-                               data_stage[WLOCAL * W] | sticky_stage[WLOCAL]};
-    assign y = shift_ge_width ? {{(W-1){1'b0}}, |x} : in_range_y;
-endmodule
 
 `default_nettype wire

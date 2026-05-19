@@ -198,7 +198,8 @@ async def mul_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = 3 + context.extra_stages
+    # zkf_mul: ES=0 -> 3 stages; ES>=1 -> 4 stages (DSP cascade split). Values >1 clamp to 1.
+    register_stages = 3 + (1 if context.extra_stages >= 1 else 0)
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: BinaryCase) -> dict[str, int]:

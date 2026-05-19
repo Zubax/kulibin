@@ -106,6 +106,26 @@ MODULES = [
         extra_stages=1,
     ),
     ModuleSpec(
+        name="zkf_mul_w8m36_es1",
+        label="zkf_mul (WEXP=8, WMAN=36, EXTRA_STAGES=1 split DSP cascade)",
+        top="zkf_mul_w8m36_es1_synth_top",
+        kind="mul",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_mul_w8m25_es1",
+        label="zkf_mul (WEXP=8, WMAN=25, EXTRA_STAGES=1 asymmetric split WLO=13/WHI=12)",
+        top="zkf_mul_w8m25_es1_synth_top",
+        kind="mul",
+        wexp=8,
+        wman=25,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
         name="zkf_add",
         label="zkf_add",
         top="zkf_add_synth_top",
@@ -123,6 +143,15 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_add_w8m36",
+        label="zkf_add (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18)",
+        top="zkf_add_w8m36_synth_top",
+        kind="add",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
     ),
     ModuleSpec(
         name="zkf_addsub",
@@ -170,6 +199,15 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_div_w8m36",
+        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18)",
+        top="zkf_div_w8m36_synth_top",
+        kind="div",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
     ),
     ModuleSpec(
         name="zkf_cmp",
@@ -251,6 +289,16 @@ MODULES = [
         extra_stages=1,
     ),
     ModuleSpec(
+        name="zkf_to_int_w8m36",
+        label="zkf_to_int (WEXP=8, WMAN=36, WINT=32)",
+        top="zkf_to_int_w8m36_synth_top",
+        kind="to_int",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wint=32,
+    ),
+    ModuleSpec(
         name="zkf_resize_narrow",
         label="zkf_resize 6/18 -> 5/11 (narrowing)",
         top="zkf_resize_narrow_synth_top",
@@ -309,10 +357,8 @@ MODULES = [
 
 def module_group(spec: ModuleSpec) -> str:
     """Identifier for grouping baseline + EXTRA_STAGES variants of the same physical module."""
-    name = spec.name
-    if name.endswith("_es1"):
-        return name[:-4]
-    return name
+    match = re.match(r"^(.+)_es\d+$", spec.name)
+    return match.group(1) if match else spec.name
 
 
 MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
@@ -378,7 +424,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "mul":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
-            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "zkf_mul.v",
         ]
     if spec.kind == "add":
@@ -386,6 +431,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
+            REPO / "float" / "hdl" / "_zkf_rshift_sticky.v",
             REPO / "float" / "hdl" / "zkf_add.v",
         ]
     if spec.kind == "addsub":
@@ -393,6 +439,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "_zkf_pack.v",
             REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
+            REPO / "float" / "hdl" / "_zkf_rshift_sticky.v",
             REPO / "float" / "hdl" / "zkf_add.v",
             REPO / "float" / "hdl" / "zkf_addsub.v",
         ]
@@ -430,6 +477,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "to_int":
         return [
             REPO / "float" / "hdl" / "_zkf_pipe.v",
+            REPO / "float" / "hdl" / "_zkf_rshift_sticky.v",
             REPO / "float" / "hdl" / "zkf_to_int.v",
         ]
     if spec.kind == "resize":
@@ -454,7 +502,8 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "pack":
         return 2
     if spec.kind == "mul":
-        return 3 + spec.extra_stages
+        # ES=0 -> 3 stages; ES>=1 -> 4 stages (DSP cascade split). Values >1 clamp to 1.
+        return 3 + (1 if spec.extra_stages >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
         return 6 + spec.extra_stages
     if spec.kind == "div_core":

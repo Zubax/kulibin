@@ -8,6 +8,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
+      - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
       - hdl/zkf_add.v
@@ -32,7 +33,6 @@ filesets:
   rtl_mul:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
       - hdl/zkf_mul.v
     file_type: verilogSource
 
@@ -41,6 +41,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
+      - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
     file_type: verilogSource
 
@@ -96,6 +97,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
+      - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
       - hdl/zkf_addsub.v
     file_type: verilogSource
@@ -122,6 +124,7 @@ filesets:
   rtl_to_int:
     files:
       - hdl/_zkf_pipe.v
+      - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_to_int.v
     file_type: verilogSource
 

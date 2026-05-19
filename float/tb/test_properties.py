@@ -80,7 +80,8 @@ def infer_stages(dut, extra_stages: int = 0) -> int:
     Adds the optional REGISTER_INPUT extension that every in-scope timing-tight module honours."""
     name = str(dut._name)
     if "mul" in name:
-        return 3 + extra_stages
+        # zkf_mul: ES=0 -> 3 stages; ES>=1 -> 4 stages (DSP cascade split). Values >1 clamp.
+        return 3 + (1 if extra_stages >= 1 else 0)
     if "addsub" in name:
         return 6 + extra_stages
     if "add" in name:
