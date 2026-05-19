@@ -5,8 +5,10 @@
 `default_nettype none
 
 module zkf_addsub #(
-    parameter WEXP = 6,    // exponent field width
-    parameter WMAN = 18    // significand precision including the hidden bit
+    parameter WEXP         = 6,    // exponent field width
+    parameter WMAN         = 18,   // significand precision including the hidden bit
+    parameter STAGE_DECODE = 0,    // forwarded to zkf_add
+    parameter STAGE_ALIGN  = 0     // forwarded to zkf_add
 ) (
     input wire clk,
     input wire rst,
@@ -20,7 +22,7 @@ module zkf_addsub #(
     output wire [WEXP+WMAN-1:0] y
 );
     localparam WFULL = WEXP + WMAN;
-    zkf_add #(.WEXP(WEXP), .WMAN(WMAN)) u_add (
+    zkf_add #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_DECODE(STAGE_DECODE), .STAGE_ALIGN(STAGE_ALIGN)) u_add (
         .clk(clk),
         .rst(rst),
         .in_valid(in_valid),

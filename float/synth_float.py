@@ -61,6 +61,8 @@ class ModuleSpec:
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize: 0 or 1.
     stage_product: int = 0   # zkf_mul: 0 or 1.
+    stage_align: int = 0     # zkf_add, zkf_addsub: 0 or 1 (alignment shifter split).
+    stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const: 0 or 1 (decoded-signal register).
 
 
 @dataclass(frozen=True)
@@ -136,13 +138,16 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_add_w8m36",
-        label="zkf_add (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18)",
-        top="zkf_add_w8m36_synth_top",
+        name="zkf_add_w8m36_sd1_sa1",
+        label="zkf_add (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18, STAGE_DECODE=1 register decoded operands, "
+              "STAGE_ALIGN=1 split align shifter)",
+        top="zkf_add_w8m36_sd1_sa1_synth_top",
         kind="add",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
+        stage_decode=1,
+        stage_align=1,
     ),
     ModuleSpec(
         name="zkf_addsub",
@@ -236,13 +241,14 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_mul_ilog2_const_w8m36",
-        label="zkf_mul_ilog2_const (WEXP=8, WMAN=36, K=+10)",
-        top="zkf_mul_ilog2_const_w8m36_synth_top",
+        name="zkf_mul_ilog2_const_w8m36_sd1",
+        label="zkf_mul_ilog2_const (WEXP=8, WMAN=36, K=+10, STAGE_DECODE=1)",
+        top="zkf_mul_ilog2_const_w8m36_sd1_synth_top",
         kind="mul_ilog2_const",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
+        stage_decode=1,
     ),
     ModuleSpec(
         name="zkf_from_int",
@@ -390,8 +396,8 @@ MODULES = [
 
 
 def module_group(spec: ModuleSpec) -> str:
-    """Identifier for grouping a module with its STAGE_INPUT / STAGE_PRODUCT variants."""
-    match = re.match(r"^(.+)_(si|sp)\d+$", spec.name)
+    """Identifier for grouping a module with its STAGE_* variants."""
+    match = re.match(r"^(.+?)(?:_(?:si|sp|sa|sd)\d+)+$", spec.name)
     return match.group(1) if match else spec.name
 
 
@@ -536,7 +542,7 @@ def register_stages(spec: ModuleSpec) -> int:
         # zkf_mul: STAGE_PRODUCT=0 -> 3 stages; >=1 -> 4 stages (DSP cascade split). Cap at 1.
         return 3 + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
-        return 6
+        return 6 + spec.stage_decode + spec.stage_align
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
@@ -544,7 +550,7 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind in {"cmp", "sort"}:
         return 1
     if spec.kind == "mul_ilog2_const":
-        return 1
+        return 1 + spec.stage_decode
     if spec.kind in {"from_int", "to_int"}:
         return 4 + spec.stage_input
     if spec.kind == "resize":
@@ -568,6 +574,14 @@ def _sp_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_PRODUCT={spec.stage_product}" if spec.stage_product else ""
 
 
+def _sa_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_ALIGN={spec.stage_align}" if spec.stage_align else ""
+
+
+def _sd_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_DECODE={spec.stage_decode}" if spec.stage_decode else ""
+
+
 def params(spec: ModuleSpec) -> str:
     if spec.kind == "pack":
         return (
@@ -585,7 +599,7 @@ def params(spec: ModuleSpec) -> str:
             f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}{_si_suffix(spec)}"
         )
     if spec.kind == "mul_ilog2_const":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_sd_suffix(spec)}"
     if spec.kind in {"from_int", "to_int"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
     if spec.kind == "resize":
@@ -598,7 +612,7 @@ def params(spec: ModuleSpec) -> str:
     if spec.kind == "mul":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}"
     if spec.kind in {"add", "addsub"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}"
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
@@ -805,7 +819,9 @@ module {spec.top} (
 
     zkf_add #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .STAGE_DECODE({spec.stage_decode}),
+        .STAGE_ALIGN({spec.stage_align})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -875,7 +891,9 @@ module {spec.top} (
 
     zkf_addsub #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .STAGE_DECODE({spec.stage_decode}),
+        .STAGE_ALIGN({spec.stage_align})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1303,7 +1321,8 @@ module {spec.top} (
     zkf_mul_ilog2_const #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .K({MUL_ILOG2_CONST_K})
+        .K({MUL_ILOG2_CONST_K}),
+        .STAGE_DECODE({spec.stage_decode})
     ) dut (
         .clk(clk),
         .rst(rst),

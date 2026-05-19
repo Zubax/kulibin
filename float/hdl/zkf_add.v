@@ -1,12 +1,26 @@
 /// Streamed Zubax Kulibin float adder.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 6 end-to-end.
+/// Register stages: 6+STAGE_DECODE+STAGE_ALIGN end-to-end.
+///
+/// STAGE_DECODE=0: per-operand decode (sign, exponent classification, significand extraction, exponent compare)
+/// feeds the s0 capture combinationally — input flop → decode → mux/subtract → s0 register sits in one clock period.
+///
+/// STAGE_DECODE=1: registers the full decoded-operand bundle (per-operand keys, classification flags, exponent
+/// compare results) between the raw decode and the s0 capture. Costs one extra pipeline cycle.
+/// Useful when the pre-shifter exponent-compare/mux/subtract chain misses timing at wide WMAN.
+///
+/// STAGE_ALIGN=0: single-cycle alignment shifter (radix-4 cascade combinational).
+///
+/// STAGE_ALIGN=1: registers one stage inside the alignment shifter, splitting the radix-4 cascade across two clock
+/// periods. Costs one extra pipeline cycle. Useful when the wide-WMAN alignment path misses timing.
 
 `default_nettype none
 
 module zkf_add #(
-    parameter WEXP = 6,    // exponent field width
-    parameter WMAN = 18    // significand precision including the hidden bit
+    parameter WEXP         = 6,    // exponent field width
+    parameter WMAN         = 18,   // significand precision including the hidden bit
+    parameter STAGE_DECODE = 0,    // 0 = decode feeds s0 combinationally; =1 = registered decoded bundle (+1 cycle)
+    parameter STAGE_ALIGN  = 0     // 0 = single-cycle alignment; =1 = split alignment shifter (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -43,45 +57,126 @@ module zkf_add #(
     localparam [WEXP-1:0]   EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
 
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
-    wire            a_sign    = a[WFULL-1];
-    wire            b_sign    = b[WFULL-1];
-    wire            same_sign = ~(a_sign ^ b_sign);
-    wire [WEXP-1:0] a_exp     = a[WFULL-2:WFRAC];
-    wire [WEXP-1:0] b_exp     = b[WFULL-2:WFRAC];
+    wire            a_sign        = a[WFULL-1];
+    wire            b_sign        = b[WFULL-1];
+    wire            raw_same_sign = ~(a_sign ^ b_sign);
+    wire [WEXP-1:0] a_exp         = a[WFULL-2:WFRAC];
+    wire [WEXP-1:0] b_exp         = b[WFULL-2:WFRAC];
 
-    wire             a_inf         = &a_exp;
-    wire             b_inf         = &b_exp;
-    wire             a_finite      = (|a_exp) && !a_inf;
-    wire             b_finite      = (|b_exp) && !b_inf;
-    wire [WFRAC-1:0] a_fraction    = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_fraction    = b[WFRAC-1:0];
-    wire [WMAN-1:0]  a_significand = {1'b1, a_fraction};
-    wire [WMAN-1:0]  b_significand = {1'b1, b_fraction};
+    wire             raw_a_inf         = &a_exp;
+    wire             raw_b_inf         = &b_exp;
+    wire             a_finite          = (|a_exp) && !raw_a_inf;
+    wire             b_finite          = (|b_exp) && !raw_b_inf;
+    wire [WFRAC-1:0] a_fraction        = a[WFRAC-1:0];
+    wire [WFRAC-1:0] b_fraction        = b[WFRAC-1:0];
+    wire [WMAN-1:0]  a_significand     = {1'b1, a_fraction};
+    wire [WMAN-1:0]  b_significand     = {1'b1, b_fraction};
 
     // Finite exponent order feeds exponent arithmetic; full magnitude order feeds significand subtraction.
-    wire [WEXP-1:0] a_key_exp = a_finite ? a_exp : {WEXP{1'b0}};
-    wire [WEXP-1:0] b_key_exp = b_finite ? b_exp : {WEXP{1'b0}};
-    wire [WMAN-1:0] a_key_sig = a_finite ? a_significand : {WMAN{1'b0}};
-    wire [WMAN-1:0] b_key_sig = b_finite ? b_significand : {WMAN{1'b0}};
+    wire [WEXP-1:0] raw_a_key_exp = a_finite ? a_exp : {WEXP{1'b0}};
+    wire [WEXP-1:0] raw_b_key_exp = b_finite ? b_exp : {WEXP{1'b0}};
+    wire [WMAN-1:0] raw_a_key_sig = a_finite ? a_significand : {WMAN{1'b0}};
+    wire [WMAN-1:0] raw_b_key_sig = b_finite ? b_significand : {WMAN{1'b0}};
 
-    wire a_exp_gt_b_exp = a_key_exp > b_key_exp;
-    wire a_exp_eq_b_exp = a_key_exp == b_key_exp;
-    wire a_exp_ge_b_exp = a_exp_gt_b_exp || a_exp_eq_b_exp;
-    wire a_sig_ge_b_sig;
+    wire raw_a_exp_gt_b_exp = raw_a_key_exp > raw_b_key_exp;
+    wire raw_a_exp_eq_b_exp = raw_a_key_exp == raw_b_key_exp;
+    wire raw_a_exp_ge_b_exp = raw_a_exp_gt_b_exp || raw_a_exp_eq_b_exp;
+    wire raw_a_sig_ge_b_sig;
     // Used only when exponents are equal (consumers gate on s1_exp_eq), so this reduces to the significand
     // comparison. The full a_exp_gt_b_exp || (a_exp_eq_b_exp && a_sig_ge_b_sig) form is dead in context.
-    wire a_mag_ge_b_mag = a_sig_ge_b_sig;
+    wire raw_a_mag_ge_b_mag = raw_a_sig_ge_b_sig;
 
-    _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(a_key_sig), .b(b_key_sig), .ge(a_sig_ge_b_sig));
+    _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(raw_a_key_sig), .b(raw_b_key_sig), .ge(raw_a_sig_ge_b_sig));
 
-    wire ordered_exp_sign  = a_exp_ge_b_exp ? a_sign : b_sign;
-    wire equal_finite_sign = same_sign ? a_sign : (a_mag_ge_b_mag ? a_sign : b_sign);
-    wire inf_sign          = (a_inf & a_sign) | (b_inf & b_sign);
+    // Decoded-operand bundle. When STAGE_DECODE=0 the d_* signals are combinational aliases of the raw
+    // decoded wires above; when STAGE_DECODE!=0 they are registered, so the s0 capture below sees the
+    // decode results one cycle later but its own combinational fanin (compare-mux + 8-bit subtract) starts
+    // afresh from registered inputs. This removes the input-flop -> 8-bit compare -> mux -> subtract ->
+    // s0 register chain that otherwise dominates timing at wide WMAN.
+    wire            d_valid;
+    wire            d_a_sign;
+    wire            d_b_sign;
+    wire            d_same_sign;
+    wire            d_a_inf;
+    wire            d_b_inf;
+    wire [WEXP-1:0] d_a_key_exp;
+    wire [WEXP-1:0] d_b_key_exp;
+    wire [WMAN-1:0] d_a_key_sig;
+    wire [WMAN-1:0] d_b_key_sig;
+    wire            d_a_exp_ge_b_exp;
+    wire            d_a_exp_eq_b_exp;
+    wire            d_a_mag_ge_b_mag;
 
-    wire [WEXP-1:0] large_exp     = a_exp_ge_b_exp ? a_key_exp : b_key_exp;
-    wire [WEXP-1:0] small_exp     = a_exp_ge_b_exp ? b_key_exp : a_key_exp;
-    wire [WMAN-1:0] large_sig_exp = a_exp_ge_b_exp ? a_key_sig : b_key_sig;
-    wire [WMAN-1:0] small_sig_exp = a_exp_ge_b_exp ? b_key_sig : a_key_sig;
+    generate
+        if (STAGE_DECODE == 0) begin : g_no_decode_register
+            assign d_valid           = in_valid;
+            assign d_a_sign          = a_sign;
+            assign d_b_sign          = b_sign;
+            assign d_same_sign       = raw_same_sign;
+            assign d_a_inf           = raw_a_inf;
+            assign d_b_inf           = raw_b_inf;
+            assign d_a_key_exp       = raw_a_key_exp;
+            assign d_b_key_exp       = raw_b_key_exp;
+            assign d_a_key_sig       = raw_a_key_sig;
+            assign d_b_key_sig       = raw_b_key_sig;
+            assign d_a_exp_ge_b_exp  = raw_a_exp_ge_b_exp;
+            assign d_a_exp_eq_b_exp  = raw_a_exp_eq_b_exp;
+            assign d_a_mag_ge_b_mag  = raw_a_mag_ge_b_mag;
+        end else begin : g_decode_register
+            reg            r_valid;
+            reg            r_a_sign;
+            reg            r_b_sign;
+            reg            r_same_sign;
+            reg            r_a_inf;
+            reg            r_b_inf;
+            reg [WEXP-1:0] r_a_key_exp;
+            reg [WEXP-1:0] r_b_key_exp;
+            reg [WMAN-1:0] r_a_key_sig;
+            reg [WMAN-1:0] r_b_key_sig;
+            reg            r_a_exp_ge_b_exp;
+            reg            r_a_exp_eq_b_exp;
+            reg            r_a_mag_ge_b_mag;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else      r_valid <= in_valid;
+                r_a_sign         <= a_sign;
+                r_b_sign         <= b_sign;
+                r_same_sign      <= raw_same_sign;
+                r_a_inf          <= raw_a_inf;
+                r_b_inf          <= raw_b_inf;
+                r_a_key_exp      <= raw_a_key_exp;
+                r_b_key_exp      <= raw_b_key_exp;
+                r_a_key_sig      <= raw_a_key_sig;
+                r_b_key_sig      <= raw_b_key_sig;
+                r_a_exp_ge_b_exp <= raw_a_exp_ge_b_exp;
+                r_a_exp_eq_b_exp <= raw_a_exp_eq_b_exp;
+                r_a_mag_ge_b_mag <= raw_a_mag_ge_b_mag;
+            end
+            assign d_valid           = r_valid;
+            assign d_a_sign          = r_a_sign;
+            assign d_b_sign          = r_b_sign;
+            assign d_same_sign       = r_same_sign;
+            assign d_a_inf           = r_a_inf;
+            assign d_b_inf           = r_b_inf;
+            assign d_a_key_exp       = r_a_key_exp;
+            assign d_b_key_exp       = r_b_key_exp;
+            assign d_a_key_sig       = r_a_key_sig;
+            assign d_b_key_sig       = r_b_key_sig;
+            assign d_a_exp_ge_b_exp  = r_a_exp_ge_b_exp;
+            assign d_a_exp_eq_b_exp  = r_a_exp_eq_b_exp;
+            assign d_a_mag_ge_b_mag  = r_a_mag_ge_b_mag;
+        end
+    endgenerate
+
+    // Combinational selections sourced from the decoded bundle. These feed the s0 capture below.
+    wire ordered_exp_sign  = d_a_exp_ge_b_exp ? d_a_sign : d_b_sign;
+    wire equal_finite_sign = d_same_sign ? d_a_sign : (d_a_mag_ge_b_mag ? d_a_sign : d_b_sign);
+    wire inf_sign          = (d_a_inf & d_a_sign) | (d_b_inf & d_b_sign);
+
+    wire [WEXP-1:0] large_exp     = d_a_exp_ge_b_exp ? d_a_key_exp : d_b_key_exp;
+    wire [WEXP-1:0] small_exp     = d_a_exp_ge_b_exp ? d_b_key_exp : d_a_key_exp;
+    wire [WMAN-1:0] large_sig_exp = d_a_exp_ge_b_exp ? d_a_key_sig : d_b_key_sig;
+    wire [WMAN-1:0] small_sig_exp = d_a_exp_ge_b_exp ? d_b_key_sig : d_a_key_sig;
 
     // Stage 0: decoded/classified operands, exponent order, and full-magnitude order.
     reg                            s0_valid;
@@ -98,13 +193,84 @@ module zkf_add #(
     reg                 [WMAN-1:0] s0_large_sig_exp;
     reg                 [WMAN-1:0] s0_small_sig_exp;
 
+    // Alignment shifter. When STAGE_ALIGN != 0 the shifter inserts one pipeline register inside its radix-4 cascade,
+    // so s0_small_aligned arrives one cycle later than the other s0_* signals; the s0b_* intermediate stage below
+    // delays the sideband signals to match.
     wire [WEXT-1:0] s0_small_aligned;
-
-    _zkf_rshift_sticky #(.W(WEXT), .WSHIFT(WSHIFT)) u_align_small (
+    _zkf_rshift_sticky #(.W(WEXT), .WSHIFT(WSHIFT), .STAGE_SPLIT(STAGE_ALIGN)) u_align_small (
+        .clk(clk),
         .x({s0_small_sig_exp, {WGRS{1'b0}}}),
         .shamt({{(WSHIFT-WEXP){1'b0}}, s0_exp_diff}),
         .y(s0_small_aligned)
     );
+
+    // Intermediate stage s0b: when STAGE_ALIGN=0 it is a combinational alias of s0_*; when STAGE_ALIGN!=0 it is a
+    // real register stage that delays the sideband signals by one cycle so they remain aligned with the
+    // late-arriving s0_small_aligned.
+    wire                            s0b_valid;
+    wire                            s0b_ordered_exp_sign;
+    wire                            s0b_equal_finite_sign;
+    wire                            s0b_inf_sign;
+    wire                            s0b_same_sign;
+    wire                            s0b_force_zero;
+    wire                            s0b_force_inf;
+    wire                            s0b_exp_eq;
+    wire                            s0b_a_mag_ge_b_mag;
+    wire signed [WEXP_UNBIASED-1:0] s0b_exp_unbiased;
+    wire                 [WMAN-1:0] s0b_large_sig_exp;
+
+    generate
+        if (STAGE_ALIGN == 0) begin : g_no_align_register
+            assign s0b_valid             = s0_valid;
+            assign s0b_ordered_exp_sign  = s0_ordered_exp_sign;
+            assign s0b_equal_finite_sign = s0_equal_finite_sign;
+            assign s0b_inf_sign          = s0_inf_sign;
+            assign s0b_same_sign         = s0_same_sign;
+            assign s0b_force_zero        = s0_force_zero;
+            assign s0b_force_inf         = s0_force_inf;
+            assign s0b_exp_eq            = s0_exp_eq;
+            assign s0b_a_mag_ge_b_mag    = s0_a_mag_ge_b_mag;
+            assign s0b_exp_unbiased      = s0_exp_unbiased;
+            assign s0b_large_sig_exp     = s0_large_sig_exp;
+        end else begin : g_align_register
+            reg                            r_valid;
+            reg                            r_ordered_exp_sign;
+            reg                            r_equal_finite_sign;
+            reg                            r_inf_sign;
+            reg                            r_same_sign;
+            reg                            r_force_zero;
+            reg                            r_force_inf;
+            reg                            r_exp_eq;
+            reg                            r_a_mag_ge_b_mag;
+            reg signed [WEXP_UNBIASED-1:0] r_exp_unbiased;
+            reg                 [WMAN-1:0] r_large_sig_exp;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else      r_valid <= s0_valid;
+                r_ordered_exp_sign  <= s0_ordered_exp_sign;
+                r_equal_finite_sign <= s0_equal_finite_sign;
+                r_inf_sign          <= s0_inf_sign;
+                r_same_sign         <= s0_same_sign;
+                r_force_zero        <= s0_force_zero;
+                r_force_inf         <= s0_force_inf;
+                r_exp_eq            <= s0_exp_eq;
+                r_a_mag_ge_b_mag    <= s0_a_mag_ge_b_mag;
+                r_exp_unbiased      <= s0_exp_unbiased;
+                r_large_sig_exp     <= s0_large_sig_exp;
+            end
+            assign s0b_valid             = r_valid;
+            assign s0b_ordered_exp_sign  = r_ordered_exp_sign;
+            assign s0b_equal_finite_sign = r_equal_finite_sign;
+            assign s0b_inf_sign          = r_inf_sign;
+            assign s0b_same_sign         = r_same_sign;
+            assign s0b_force_zero        = r_force_zero;
+            assign s0b_force_inf         = r_force_inf;
+            assign s0b_exp_eq            = r_exp_eq;
+            assign s0b_a_mag_ge_b_mag    = r_a_mag_ge_b_mag;
+            assign s0b_exp_unbiased      = r_exp_unbiased;
+            assign s0b_large_sig_exp     = r_large_sig_exp;
+        end
+    endgenerate
 
     // Stage 1: registered aligned operands.
     reg                            s1_valid;
@@ -218,7 +384,8 @@ module zkf_add #(
         .y(y)
     );
 
-    // Reset only stream validity. Payload registers intentionally free-run.
+    // Reset only stream validity. Payload registers intentionally free-run. s0b_valid is reset
+    // inside the generate block above when STAGE_ALIGN!=0; this always block only manages s0/s1/s2/s3.
     always @(posedge clk) begin
         if (rst) begin
             s0_valid <= 1'b0;
@@ -226,8 +393,8 @@ module zkf_add #(
             s2_valid <= 1'b0;
             s3_valid <= 1'b0;
         end else begin
-            s0_valid <= in_valid;
-            s1_valid <= s0_valid;
+            s0_valid <= d_valid;
+            s1_valid <= s0b_valid;
             s2_valid <= s1_valid;
             s3_valid <= s2_valid;
         end
@@ -236,27 +403,28 @@ module zkf_add #(
         s0_ordered_exp_sign  <= ordered_exp_sign;
         s0_equal_finite_sign <= equal_finite_sign;
         s0_inf_sign          <= inf_sign;
-        s0_same_sign         <= same_sign;
-        s0_force_zero        <= a_inf && b_inf && !same_sign;
-        s0_force_inf         <= a_inf || b_inf;
-        s0_exp_eq            <= a_exp_eq_b_exp;
-        s0_a_mag_ge_b_mag    <= a_mag_ge_b_mag;
+        s0_same_sign         <= d_same_sign;
+        s0_force_zero        <= d_a_inf && d_b_inf && !d_same_sign;
+        s0_force_inf         <= d_a_inf || d_b_inf;
+        s0_exp_eq            <= d_a_exp_eq_b_exp;
+        s0_a_mag_ge_b_mag    <= d_a_mag_ge_b_mag;
         s0_exp_unbiased      <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp} - {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
         s0_exp_diff          <= large_exp - small_exp;
         s0_large_sig_exp     <= large_sig_exp;
         s0_small_sig_exp     <= small_sig_exp;
 
-        // Stage 1 capture: aligned operands. The add/sub carry-chain is in the next stage.
-        s1_ordered_exp_sign  <= s0_ordered_exp_sign;
-        s1_equal_finite_sign <= s0_equal_finite_sign;
-        s1_inf_sign          <= s0_inf_sign;
-        s1_same_sign         <= s0_same_sign;
-        s1_force_zero        <= s0_force_zero;
-        s1_force_inf         <= s0_force_inf;
-        s1_exp_eq            <= s0_exp_eq;
-        s1_a_mag_ge_b_mag    <= s0_a_mag_ge_b_mag;
-        s1_exp_unbiased      <= s0_exp_unbiased;
-        s1_large_ext_exp     <= {s0_large_sig_exp, {WGRS{1'b0}}};
+        // Stage 1 capture: aligned operands sourced from s0b_* (which is either s0_* directly or a
+        // delayed copy of s0_*, depending on STAGE_ALIGN). The add/sub carry-chain is in the next stage.
+        s1_ordered_exp_sign  <= s0b_ordered_exp_sign;
+        s1_equal_finite_sign <= s0b_equal_finite_sign;
+        s1_inf_sign          <= s0b_inf_sign;
+        s1_same_sign         <= s0b_same_sign;
+        s1_force_zero        <= s0b_force_zero;
+        s1_force_inf         <= s0b_force_inf;
+        s1_exp_eq            <= s0b_exp_eq;
+        s1_a_mag_ge_b_mag    <= s0b_a_mag_ge_b_mag;
+        s1_exp_unbiased      <= s0b_exp_unbiased;
+        s1_large_ext_exp     <= {s0b_large_sig_exp, {WGRS{1'b0}}};
         s1_small_aligned     <= s0_small_aligned;
 
         // Stage 2 capture: the single carry-chain computes add or subtract by conditionally inverting the small

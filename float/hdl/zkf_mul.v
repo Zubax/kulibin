@@ -1,6 +1,6 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 3 (STAGE_PRODUCT=0) or 4 (STAGE_PRODUCT>=1) end-to-end.
+/// Register stages: 3+STAGE_PRODUCT end-to-end.
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
 ///   is one combinational hop into the s1_mag register. Use this when the inferred cascade closes timing in one cycle.

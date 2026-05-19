@@ -32,6 +32,8 @@ class TestContext:
     wman_out: int | None = None
     stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize
     stage_product: int = 0   # zkf_mul
+    stage_align: int = 0     # zkf_add / zkf_addsub (alignment shifter split)
+    stage_decode: int = 0    # zkf_mul_ilog2_const (decoded-signal pipeline register)
 
     @property
     def params(self) -> str:
@@ -40,6 +42,10 @@ class TestContext:
             knob_suffix += f" SI={self.stage_input}"
         if self.stage_product:
             knob_suffix += f" SP={self.stage_product}"
+        if self.stage_align:
+            knob_suffix += f" SA={self.stage_align}"
+        if self.stage_decode:
+            knob_suffix += f" SD={self.stage_decode}"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
@@ -118,6 +124,20 @@ def _stage_product() -> int:
     return value
 
 
+def _stage_align() -> int:
+    value = plusarg_int("ZKF_STAGE_ALIGN", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_ALIGN must be non-negative, got {value}")
+    return value
+
+
+def _stage_decode() -> int:
+    value = plusarg_int("ZKF_STAGE_DECODE", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_DECODE must be non-negative, got {value}")
+    return value
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -141,6 +161,8 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp_unbiased=wexp_unbiased,
         stage_input=_stage_input(),
         stage_product=_stage_product(),
+        stage_align=_stage_align(),
+        stage_decode=_stage_decode(),
     )
 
 
@@ -165,6 +187,8 @@ def cast_context(suite: str) -> TestContext:
         wint=wint,
         stage_input=_stage_input(),
         stage_product=_stage_product(),
+        stage_align=_stage_align(),
+        stage_decode=_stage_decode(),
     )
 
 
@@ -193,6 +217,8 @@ def resize_context(suite: str) -> TestContext:
         wman_out=wman_out,
         stage_input=_stage_input(),
         stage_product=_stage_product(),
+        stage_align=_stage_align(),
+        stage_decode=_stage_decode(),
     )
 
 

@@ -192,6 +192,17 @@ verify-float-icarus: library
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_binary_sad() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; sd="$$8"; sa="$$9"; \
+	  cfg="$${config}_sd$${sd}_sa$${sa}"; root="build/float/$${sim}/$${op}/$${cfg}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${cfg} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --STAGE_DECODE "$$sd" --STAGE_ALIGN "$$sa" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_STAGE_DECODE "$$sd" --ZKF_STAGE_ALIGN "$$sa" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	run_unary() { \
 	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; \
 	  root="build/float/$${sim}/$${op}/$${config}"; \
@@ -200,6 +211,17 @@ verify-float-icarus: library
 	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
 	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	run_unary_sd() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; sd="$$8"; \
+	  cfg="$${config}_sd$${sd}"; root="build/float/$${sim}/$${op}/$${cfg}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${cfg} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --STAGE_DECODE "$$sd" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_STAGE_DECODE "$$sd" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
 	run_pipe() { \
@@ -240,10 +262,20 @@ verify-float-icarus: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack icarus "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
 	done; \
-	for op in cmp sort add addsub; do \
+	for op in cmp sort; do \
 	  for spec in $(FLOAT_BINARY_MATRIX); do \
 	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	    run_binary icarus "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  done; \
+	done; \
+	for op in add addsub; do \
+	  for sd in 0 1; do \
+	    for sa in 0 1; do \
+	      for spec in $(FLOAT_BINARY_MATRIX); do \
+	        old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	        run_binary_sad icarus "$$op" "$$1" "$$2" "$$3" "$$4" "$$5" "$$sd" "$$sa"; \
+	      done; \
+	    done; \
 	  done; \
 	done; \
 	for sp in 0 1; do \
@@ -268,9 +300,11 @@ verify-float-icarus: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary icarus const "$$1" "$$2" "$$3" directed 0; \
 	done; \
-	for spec in $(FLOAT_UNARY_MATRIX); do \
-	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
-	  run_unary icarus mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	for sd in 0 1; do \
+	  for spec in $(FLOAT_UNARY_MATRIX); do \
+	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	    run_unary_sd icarus mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5" "$$sd"; \
+	  done; \
 	done; \
 	for si in 0 1; do \
 	  for spec in $(FLOAT_FROM_INT_MATRIX); do \
@@ -345,6 +379,17 @@ verify-float-verilator: library
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_binary_sad() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; sd="$$8"; sa="$$9"; \
+	  cfg="$${config}_sd$${sd}_sa$${sa}"; root="build/float/$${sim}/$${op}/$${cfg}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${cfg} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --STAGE_DECODE "$$sd" --STAGE_ALIGN "$$sa" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_STAGE_DECODE "$$sd" --ZKF_STAGE_ALIGN "$$sa" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	run_unary() { \
 	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; \
 	  root="build/float/$${sim}/$${op}/$${config}"; \
@@ -353,6 +398,17 @@ verify-float-verilator: library
 	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
 	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
+	run_unary_sd() { \
+	  sim="$$1"; op="$$2"; config="$$3"; wexp="$$4"; wman="$$5"; kind="$$6"; count="$$7"; sd="$$8"; \
+	  cfg="$${config}_sd$${sd}"; root="build/float/$${sim}/$${op}/$${cfg}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_$${op}_$${sim} :: $${cfg} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_$${op}_$${sim} \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --STAGE_DECODE "$$sd" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_STAGE_DECODE "$$sd" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
 	run_pipe() { \
@@ -393,10 +449,20 @@ verify-float-verilator: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_pack verilator "$$1" "$$2" "$$3" "$$4" "$$5" "$$6"; \
 	done; \
-	for op in cmp sort add addsub; do \
+	for op in cmp sort; do \
 	  for spec in $(FLOAT_BINARY_MATRIX); do \
 	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	    run_binary verilator "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  done; \
+	done; \
+	for op in add addsub; do \
+	  for sd in 0 1; do \
+	    for sa in 0 1; do \
+	      for spec in $(FLOAT_BINARY_MATRIX); do \
+	        old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	        run_binary_sad verilator "$$op" "$$1" "$$2" "$$3" "$$4" "$$5" "$$sd" "$$sa"; \
+	      done; \
+	    done; \
 	  done; \
 	done; \
 	for sp in 0 1; do \
@@ -421,9 +487,11 @@ verify-float-verilator: library
 	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
 	  run_unary verilator const "$$1" "$$2" "$$3" directed 0; \
 	done; \
-	for spec in $(FLOAT_UNARY_MATRIX); do \
-	  old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
-	  run_unary verilator mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	for sd in 0 1; do \
+	  for spec in $(FLOAT_UNARY_MATRIX); do \
+	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	    run_unary_sd verilator mul_ilog2_const "$$1" "$$2" "$$3" "$$4" "$$5" "$$sd"; \
+	  done; \
 	done; \
 	for si in 0 1; do \
 	  for spec in $(FLOAT_FROM_INT_MATRIX); do \
@@ -485,9 +553,12 @@ verify-float-fast: library
 	smoke is_finite     sim_is_finite_icarus          --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
 	smoke saturate      sim_saturate_icarus           --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
 	smoke const         sim_const_icarus              --WEXP 3 --WMAN 4 --ZKF_WEXP 3 --ZKF_WMAN 4; \
-	smoke add           sim_add_icarus                --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
-	smoke addsub        sim_addsub_icarus             --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
-	smoke ilog2         sim_mul_ilog2_const_icarus    --WEXP 2 --WMAN 4 --ZKF_WEXP 2 --ZKF_WMAN 4; \
+	smoke add_sd0_sa0   sim_add_icarus                --WEXP 2 --WMAN 4 --STAGE_DECODE 0 --STAGE_ALIGN 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 0 --ZKF_STAGE_ALIGN 0; \
+	smoke add_sd1_sa1   sim_add_icarus                --WEXP 2 --WMAN 4 --STAGE_DECODE 1 --STAGE_ALIGN 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 1 --ZKF_STAGE_ALIGN 1; \
+	smoke addsub_sd0_sa0 sim_addsub_icarus            --WEXP 2 --WMAN 4 --STAGE_DECODE 0 --STAGE_ALIGN 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 0 --ZKF_STAGE_ALIGN 0; \
+	smoke addsub_sd1_sa1 sim_addsub_icarus            --WEXP 2 --WMAN 4 --STAGE_DECODE 1 --STAGE_ALIGN 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 1 --ZKF_STAGE_ALIGN 1; \
+	smoke ilog2_sd0     sim_mul_ilog2_const_icarus    --WEXP 2 --WMAN 4 --STAGE_DECODE 0  --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 0; \
+	smoke ilog2_sd1     sim_mul_ilog2_const_icarus    --WEXP 2 --WMAN 4 --STAGE_DECODE 1  --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_DECODE 1; \
 	smoke mul_sp0       sim_mul_icarus                --WEXP 2 --WMAN 4 --STAGE_PRODUCT 0 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_PRODUCT 0; \
 	smoke mul_sp1       sim_mul_icarus                --WEXP 2 --WMAN 4 --STAGE_PRODUCT 1 --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_PRODUCT 1; \
 	smoke div_si0       sim_div_icarus                --WEXP 2 --WMAN 4 --STAGE_INPUT 0   --ZKF_WEXP 2 --ZKF_WMAN 4 --ZKF_STAGE_INPUT 0; \
@@ -517,17 +588,6 @@ verify-float-properties: library
 	export PYTHONPATH="$(FLOAT_PYTHONPATH)"; \
 	export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1; \
 	export COCOTB_REWRITE_ASSERTION_FILES=; \
-	run_props() { \
-	  op="$$1"; config="$$2"; wexp="$$3"; wman="$$4"; kind="$$5"; count="$$6"; \
-	  root="build/float/properties/$${op}/$${config}"; \
-	  echo "=== $(FLOAT_CORE) :: sim_properties_$${op}_icarus :: $${config} ==="; \
-	  rm -rf "$$root"; \
-	  $(FUSESOC) run --build-root="$$root" --target=sim_properties_$${op}_icarus \
-	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" \
-	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" \
-	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$config"; \
-	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
-	}; \
 	run_props_sp() { \
 	  op="$$1"; config="$$2"; wexp="$$3"; wman="$$4"; kind="$$5"; count="$$6"; sp="$$7"; \
 	  cfg="$${config}_sp$${sp}"; root="build/float/properties/$${op}/$${cfg}"; \
@@ -539,10 +599,25 @@ verify-float-properties: library
 	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
 	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
 	}; \
+	run_props_sad() { \
+	  op="$$1"; config="$$2"; wexp="$$3"; wman="$$4"; kind="$$5"; count="$$6"; sd="$$7"; sa="$$8"; \
+	  cfg="$${config}_sd$${sd}_sa$${sa}"; root="build/float/properties/$${op}/$${cfg}"; \
+	  echo "=== $(FLOAT_CORE) :: sim_properties_$${op}_icarus :: $${cfg} ==="; \
+	  rm -rf "$$root"; \
+	  $(FUSESOC) run --build-root="$$root" --target=sim_properties_$${op}_icarus \
+	    $(FLOAT_CORE) --WEXP "$$wexp" --WMAN "$$wman" --STAGE_DECODE "$$sd" --STAGE_ALIGN "$$sa" \
+	    --ZKF_WEXP "$$wexp" --ZKF_WMAN "$$wman" --ZKF_STAGE_DECODE "$$sd" --ZKF_STAGE_ALIGN "$$sa" \
+	    --ZKF_KIND "$$kind" --ZKF_COUNT "$$count" --ZKF_SEED "$(FLOAT_SEED)" --ZKF_CONFIG "$$cfg"; \
+	  $(PYTHON) float/tb/zkf_results.py "$$root"; \
+	}; \
 	for op in add addsub; do \
-	  for spec in $(FLOAT_BINARY_MATRIX); do \
-	    old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
-	    run_props "$$op" "$$1" "$$2" "$$3" "$$4" "$$5"; \
+	  for sd in 0 1; do \
+	    for sa in 0 1; do \
+	      for spec in $(FLOAT_BINARY_MATRIX); do \
+	        old_ifs="$$IFS"; IFS=:; set -- $$spec; IFS="$$old_ifs"; \
+	        run_props_sad "$$op" "$$1" "$$2" "$$3" "$$4" "$$5" "$$sd" "$$sa"; \
+	      done; \
+	    done; \
 	  done; \
 	done; \
 	for sp in 0 1; do \

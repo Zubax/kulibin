@@ -1,5 +1,5 @@
 /// Constant-power-of-two multiplier: y = a * 2^K, where K is a compile-time signed integer parameter.
-/// Register stages: 1.
+/// Register stages: 1+STAGE_DECODE end-to-end.
 ///
 /// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the mantissa is preserved
 /// bit-for-bit and only the biased exponent is incremented by K. Special inputs (zero, signed infinity) are
@@ -8,13 +8,20 @@
 /// Elaboration fails when K is so extreme that every normal input either overflows to signed infinity or underflows
 /// to zero, since the module is then provably useless. Concretely, K must satisfy -EXP_MAX_FINITE < K < EXP_MAX_FINITE
 /// where EXP_MAX_FINITE = 2**WEXP-2. This bound preserves at least one exponent value that maps to a normal output.
+///
+/// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
+///
+/// STAGE_DECODE=1: registers the decoded sign / new_exp / frac / classification predicates before the output mux.
+/// Splits the long route from input port to output register (the dominant delay path at wide WMAN on
+/// placement-sensitive tools). Costs one extra pipeline cycle.
 
 `default_nettype none
 
 module zkf_mul_ilog2_const #(
-    parameter         WEXP = 6,     // exponent field width
-    parameter         WMAN = 18,    // significand precision including the hidden bit
-    parameter integer K    = 0      // signed integer exponent shift: y = a * 2^K
+    parameter         WEXP         = 6,     // exponent field width
+    parameter         WMAN         = 18,    // significand precision including the hidden bit
+    parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
+    parameter         STAGE_DECODE = 0      // 0 = single-cycle; >=1 = register decoded signals (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -102,21 +109,62 @@ module zkf_mul_ilog2_const #(
     // verilator coverage_on
     wire [WFULL-1:0] y_normal_w = {a_sign, new_exp, a_frac};
 
+    // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
+    // but the 2'b11 row is listed so the priority is explicit and the case is full.
     // Reset only stream validity. Payload register intentionally free-runs (project Reset strategy).
-    always @(posedge clk) begin
-        if (rst) begin
-            out_valid <= 1'b0;
-        end else begin
-            out_valid <= in_valid;
+    generate
+        if (STAGE_DECODE == 0) begin : g_decode_combinational
+            always @(posedge clk) begin
+                if (rst) begin
+                    out_valid <= 1'b0;
+                end else begin
+                    out_valid <= in_valid;
+                end
+                case ({result_is_zero, result_is_inf})
+                    2'b10, 2'b11: y <= {WFULL{1'b0}};
+                    2'b01:        y <= y_inf_w;
+                    default:      y <= y_normal_w;
+                endcase
+            end
+        end else begin : g_decode_registered
+            // Intermediate stage: register decoded signals so the output mux sees registered inputs,
+            // breaking the long input-to-output route into two short hops.
+            reg                 r_in_valid;
+            reg                 r_sign;
+            reg                 r_result_is_zero;
+            reg                 r_result_is_inf;
+            reg [WEXP-1:0]      r_new_exp;
+            reg [WFRAC-1:0]     r_frac;
+            always @(posedge clk) begin
+                if (rst) begin
+                    r_in_valid <= 1'b0;
+                end else begin
+                    r_in_valid <= in_valid;
+                end
+                r_sign           <= a_sign;
+                r_result_is_zero <= result_is_zero;
+                r_result_is_inf  <= result_is_inf;
+                r_new_exp        <= new_exp;
+                r_frac           <= a_frac;
+            end
+
+            wire [WFULL-1:0] r_y_inf_w    = {r_sign, EXP_INF, {WFRAC{1'b0}}};
+            wire [WFULL-1:0] r_y_normal_w = {r_sign, r_new_exp, r_frac};
+
+            always @(posedge clk) begin
+                if (rst) begin
+                    out_valid <= 1'b0;
+                end else begin
+                    out_valid <= r_in_valid;
+                end
+                case ({r_result_is_zero, r_result_is_inf})
+                    2'b10, 2'b11: y <= {WFULL{1'b0}};
+                    2'b01:        y <= r_y_inf_w;
+                    default:      y <= r_y_normal_w;
+                endcase
+            end
         end
-        // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
-        // but the 2'b11 row is listed so the priority is explicit and the case is full.
-        case ({result_is_zero, result_is_inf})
-            2'b10, 2'b11: y <= {WFULL{1'b0}};
-            2'b01:        y <= y_inf_w;
-            default:      y <= y_normal_w;
-        endcase
-    end
+    endgenerate
 endmodule
 
 `default_nettype wire

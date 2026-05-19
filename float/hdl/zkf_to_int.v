@@ -159,7 +159,8 @@ module zkf_to_int #(
     // -- Stage 1 -> Stage 2 combinational: the heavy barrel shifters. The right-shift barrel folds the discarded
     // tail into a single sticky bit; the left-shift is exact (no GRS). The two branches are muxed by s1_is_left_shift.
     wire [WMAN+1:0] rsh_out_pre;
-    _zkf_rshift_sticky #(.W(WMAN + 2), .WSHIFT(WRSH)) u_rshift (
+    _zkf_rshift_sticky #(.W(WMAN + 2), .WSHIFT(WRSH), .STAGE_SPLIT(0)) u_rshift (
+        .clk(clk),
         .x({s1_sig, 2'b00}),
         .shamt(s1_rshamt),
         .y(rsh_out_pre)

@@ -306,6 +306,22 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_ALIGN:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_ALIGN:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  STAGE_DECODE:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_DECODE:
+    datatype: int
+    default: 0
+    paramtype: plusarg
 
 targets:
   default:
@@ -410,15 +426,19 @@ targets:
       cocotb_module: test_add
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: &float_binary_params
+    parameters: &float_binary_params_sad
       - WEXP
       - WMAN
+      - STAGE_DECODE
+      - STAGE_ALIGN
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_STAGE_DECODE
+      - ZKF_STAGE_ALIGN
 
   sim_add_verilator:
     filesets: [rtl_add, tb_cocotb]
@@ -427,7 +447,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_add
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sad
 
   sim_div_icarus:
     filesets: [rtl_div, tb_cocotb]
@@ -468,7 +488,7 @@ targets:
       cocotb_module: test_addsub
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sad
 
   sim_addsub_verilator:
     filesets: [rtl_addsub, tb_cocotb]
@@ -477,7 +497,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_addsub
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sad
 
   sim_properties_mul_icarus:
     filesets: [rtl_mul, tb_cocotb]
@@ -499,7 +519,7 @@ targets:
       cocotb_module: test_properties
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sad
 
   sim_properties_addsub_icarus:
     filesets: [rtl_addsub, tb_cocotb]
@@ -510,7 +530,7 @@ targets:
       cocotb_module: test_properties
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sad
 
   sim_abs_icarus:
     filesets: [rtl_abs, tb_cocotb]
@@ -521,7 +541,15 @@ targets:
       cocotb_module: test_abs
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: &float_binary_params
+      - WEXP
+      - WMAN
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
 
   sim_abs_verilator:
     filesets: [rtl_abs, tb_cocotb]
@@ -699,7 +727,17 @@ targets:
       cocotb_module: test_mul_ilog2_const
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: &float_binary_params_sd
+      - WEXP
+      - WMAN
+      - STAGE_DECODE
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_DECODE
 
   sim_mul_ilog2_const_verilator:
     filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
@@ -708,7 +746,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_mul_ilog2_const
-    parameters: *float_binary_params
+    parameters: *float_binary_params_sd
 
   sim_from_int_icarus:
     filesets: [rtl_from_int, tb_cocotb]

@@ -142,7 +142,8 @@ async def mul_ilog2_const_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.a.value = 0
 
-    register_stages = 1
+    # zkf_mul_ilog2_const: STAGE_DECODE=0 -> 1 stage; >=1 -> 2 stages (decoded-signal register). Values >1 clamp.
+    register_stages = 1 + (1 if context.stage_decode >= 1 else 0)
     outputs = {port: (getattr(dut, port), fmt.wfull) for port in ports}
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, outputs)
 

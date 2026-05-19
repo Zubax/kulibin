@@ -10,8 +10,9 @@
 `default_nettype none
 
 module zkf_mul_ilog2_const_wrap #(
-    parameter WEXP = 6,
-    parameter WMAN = 18
+    parameter WEXP         = 6,
+    parameter WMAN         = 18,
+    parameter STAGE_DECODE = 0
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -34,31 +35,31 @@ module zkf_mul_ilog2_const_wrap #(
 
     wire ov_k0, ov_kp1, ov_kn1, ov_kp_mid, ov_kn_mid, ov_kp_max, ov_kn_max;
 
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(0)) u_k0 (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(0), .STAGE_DECODE(STAGE_DECODE)) u_k0 (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_k0), .y(y_k0)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(1)) u_kp1 (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(1), .STAGE_DECODE(STAGE_DECODE)) u_kp1 (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kp1), .y(y_kp1)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(-1)) u_kn1 (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(-1), .STAGE_DECODE(STAGE_DECODE)) u_kn1 (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kn1), .y(y_kn1)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MID_POS)) u_kp_mid (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MID_POS), .STAGE_DECODE(STAGE_DECODE)) u_kp_mid (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kp_mid), .y(y_kp_mid)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MID_NEG)) u_kn_mid (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MID_NEG), .STAGE_DECODE(STAGE_DECODE)) u_kn_mid (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kn_mid), .y(y_kn_mid)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MAX_POS)) u_kp_max (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MAX_POS), .STAGE_DECODE(STAGE_DECODE)) u_kp_max (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kp_max), .y(y_kp_max)
     );
-    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MAX_NEG)) u_kn_max (
+    zkf_mul_ilog2_const #(.WEXP(WEXP), .WMAN(WMAN), .K(K_MAX_NEG), .STAGE_DECODE(STAGE_DECODE)) u_kn_max (
         .clk(clk), .rst(rst), .in_valid(in_valid), .a(a),
         .out_valid(ov_kn_max), .y(y_kn_max)
     );
