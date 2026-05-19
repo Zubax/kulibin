@@ -86,7 +86,13 @@ module zkf_add #(
     // comparison. The full a_exp_gt_b_exp || (a_exp_eq_b_exp && a_sig_ge_b_sig) form is dead in context.
     wire raw_a_mag_ge_b_mag = raw_a_sig_ge_b_sig;
 
-    _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(raw_a_key_sig), .b(raw_b_key_sig), .ge(raw_a_sig_ge_b_sig));
+    // Compare the raw significands (with the hidden 1) rather than the finite-masked key_sigs. When exponents
+    // are equal the consumer's behaviour only depends on this signal if both operands are finite, in which case
+    // a_key_sig == a_significand and b_key_sig == b_significand, so the comparison is identical. For non-finite
+    // operands the result is don't-care because force_inf/force_zero takes over downstream. Skipping the mask
+    // drops three LUT levels (raw_*_inf -> *_finite -> raw_*_key_sig) and several long routes from the path
+    // into the SD-bundle register, where this comparison was the critical-path source on Yosys+nextpnr.
+    _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(a_significand), .b(b_significand), .ge(raw_a_sig_ge_b_sig));
 
     // Decoded-operand bundle. When STAGE_DECODE=0 the d_* signals are combinational aliases of the raw
     // decoded wires above; when STAGE_DECODE!=0 they are registered, so the s0 capture below sees the
