@@ -1,8 +1,7 @@
 # Float-HDL Formal Verification
 
-This directory contains the SymbiYosys-driven equivalence proofs for every module under
-`float/hdl/`. The proofs run via `make formal-float`, which invokes
-[`run_proofs.py`](run_proofs.py) and renders the HTML report at
+This directory contains the SymbiYosys-driven equivalence proofs for certain modules under `float/hdl/`.
+The proofs run via `make formal-float`, which invokes [`run_proofs.py`](run_proofs.py) and renders the HTML report at
 `build/float/formal/report.html`.
 
 ## How it works
@@ -15,17 +14,18 @@ For each module we write:
   assignments, no pipeline, no shared helper modules. The intent is that a bug in the production
   RTL is unlikely to also be present in a fundamentally different implementation of the same
   spec.
+
 - An **equivalence harness** under `harness/` — wraps the DUT and the reference with a
   single-pulse driver: assume `rst=1` at cycle 0, `rst=0` and `in_valid=1` at cycle 1, then
   `in_valid=0` from cycle 2 onward. The inputs at cycle 1 are latched into shadow registers.
   At cycle (1 + pipeline_depth) the harness asserts `out_valid` is 1 and the DUT outputs match
   the reference applied to the shadow inputs. Validity latency is asserted on every cycle.
+
 - A **SymbiYosys flow** under `sby/` — one `.sby` file per proof, naming the parameter set,
   engine, BMC depth, and the file list.
 
-For combinational modules (`zkf_abs`, `zkf_neg`, `zkf_is_finite`, `zkf_saturate`, `zkf_cmp_comb`)
-the spec is small enough that the harness asserts the spec directly without a separate reference
-module.
+For combinational modules the spec is small enough that the harness asserts the spec directly without a separate
+reference module.
 
 ## Tool stack
 

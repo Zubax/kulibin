@@ -44,7 +44,7 @@ module zkf_mul_ilog2_const #(
             _zkf_invalid_wexp_or_wman u_invalid();
         end
         // K is an integer parameter, and the K bound checks below use 32-bit integer arithmetic.
-        if (WEXP > 31) begin : g_invalid_wexp_too_wide
+        if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_mul_ilog2_const_wexp_too_wide_unportable u_invalid();
         end
         // K = EXP_MAX_FINITE forces every normal input to overflow (new_biased_exp >= EXP_INF for old_biased_exp >= 1).

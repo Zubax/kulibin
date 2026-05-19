@@ -27,9 +27,9 @@ module zkf_to_int #(
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // BIAS_INT and MAX_EXP_IN below use unsized integer shifts on WEXP, so WEXP > 31 would overflow Verilog's
+        // BIAS_INT and MAX_EXP_IN below use unsized integer shifts on WEXP, so WEXP >= 31 would overflow Verilog's
         // 32-bit integer constant arithmetic and yield tool-dependent values.
-        if (WEXP > 31) begin : g_invalid_wexp_too_wide
+        if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_to_int_wexp_too_wide_unportable u_invalid();
         end
     endgenerate
