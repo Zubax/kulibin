@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -15,6 +16,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -25,7 +27,9 @@ DEVICE_SPEED_GRADE = "6"
 YOSYS_TARGET_FREQ_MHZ = float(os.environ.get("YOSYS_TARGET_FREQ_MHZ", "100"))
 DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-85F-6BG381C")
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
-DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "6"))
+DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "3"))
+DIAMOND_PAR_EFFORT = int(os.environ.get("DIAMOND_PAR_EFFORT", "3"))
+SYNTH_WORKERS = max(1, int(os.environ.get("SYNTH_WORKERS", str(os.cpu_count() or 1))))
 
 IMPORTANT_UTILIZATION_RESOURCES = (
     "TRELLIS_COMB",
@@ -92,6 +96,16 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
+        name="zkf_mul_es1",
+        label="zkf_mul (EXTRA_STAGES=1)",
+        top="zkf_mul_es1_synth_top",
+        kind="mul",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
         name="zkf_add",
         label="zkf_add",
         top="zkf_add_synth_top",
@@ -101,6 +115,16 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
+        name="zkf_add_es1",
+        label="zkf_add (EXTRA_STAGES=1)",
+        top="zkf_add_es1_synth_top",
+        kind="add",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
         name="zkf_addsub",
         label="zkf_addsub",
         top="zkf_addsub_synth_top",
@@ -108,6 +132,16 @@ MODULES = [
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_addsub_es1",
+        label="zkf_addsub (EXTRA_STAGES=1)",
+        top="zkf_addsub_es1_synth_top",
+        kind="addsub",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
     ),
     ModuleSpec(
         name="_zkf_div_core",
@@ -126,6 +160,16 @@ MODULES = [
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_div_es1",
+        label="zkf_div (EXTRA_STAGES=1)",
+        top="zkf_div_es1_synth_top",
+        kind="div",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
     ),
     ModuleSpec(
         name="zkf_cmp",
@@ -155,94 +199,6 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_from_int",
-        label="zkf_from_int (WINT=32)",
-        top="zkf_from_int_synth_top",
-        kind="from_int",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        wint=32,
-    ),
-    ModuleSpec(
-        name="zkf_to_int",
-        label="zkf_to_int (WINT=32)",
-        top="zkf_to_int_synth_top",
-        kind="to_int",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        wint=32,
-    ),
-    ModuleSpec(
-        name="zkf_resize_narrow",
-        label="zkf_resize 6/18 -> 5/11 (narrowing)",
-        top="zkf_resize_narrow_synth_top",
-        kind="resize",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        wexp_in=6,
-        wman_in=18,
-        wexp_out=5,
-        wman_out=11,
-    ),
-    ModuleSpec(
-        name="zkf_resize_widen",
-        label="zkf_resize 5/11 -> 6/18 (widening)",
-        top="zkf_resize_widen_synth_top",
-        kind="resize",
-        wexp=5,
-        wman=11,
-        wexp_unbiased=0,
-        wexp_in=5,
-        wman_in=11,
-        wexp_out=6,
-        wman_out=18,
-    ),
-    # EXTRA_STAGES=1 variants of every in-scope module. Each variant gets a distinct directory key (name) so
-    # its synthesis outputs do not collide with the baseline row in the build tree or the HTML report.
-    ModuleSpec(
-        name="zkf_mul_es1",
-        label="zkf_mul (EXTRA_STAGES=1)",
-        top="zkf_mul_es1_synth_top",
-        kind="mul",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
-        name="zkf_add_es1",
-        label="zkf_add (EXTRA_STAGES=1)",
-        top="zkf_add_es1_synth_top",
-        kind="add",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
-        name="zkf_addsub_es1",
-        label="zkf_addsub (EXTRA_STAGES=1)",
-        top="zkf_addsub_es1_synth_top",
-        kind="addsub",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
-        name="zkf_div_es1",
-        label="zkf_div (EXTRA_STAGES=1)",
-        top="zkf_div_es1_synth_top",
-        kind="div",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
         name="zkf_mul_ilog2_const_es1",
         label="zkf_mul_ilog2_const (K=+10, EXTRA_STAGES=1)",
         top="zkf_mul_ilog2_const_es1_synth_top",
@@ -251,6 +207,16 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_from_int",
+        label="zkf_from_int (WINT=32)",
+        top="zkf_from_int_synth_top",
+        kind="from_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
     ),
     ModuleSpec(
         name="zkf_from_int_es1",
@@ -264,6 +230,16 @@ MODULES = [
         extra_stages=1,
     ),
     ModuleSpec(
+        name="zkf_to_int",
+        label="zkf_to_int (WINT=32)",
+        top="zkf_to_int_synth_top",
+        kind="to_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+    ),
+    ModuleSpec(
         name="zkf_to_int_es1",
         label="zkf_to_int (WINT=32, EXTRA_STAGES=1)",
         top="zkf_to_int_es1_synth_top",
@@ -273,6 +249,19 @@ MODULES = [
         wexp_unbiased=0,
         wint=32,
         extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_resize_narrow",
+        label="zkf_resize 6/18 -> 5/11 (narrowing)",
+        top="zkf_resize_narrow_synth_top",
+        kind="resize",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wexp_in=6,
+        wman_in=18,
+        wexp_out=5,
+        wman_out=11,
     ),
     ModuleSpec(
         name="zkf_resize_narrow_es1",
@@ -289,6 +278,19 @@ MODULES = [
         extra_stages=1,
     ),
     ModuleSpec(
+        name="zkf_resize_widen",
+        label="zkf_resize 5/11 -> 6/18 (widening)",
+        top="zkf_resize_widen_synth_top",
+        kind="resize",
+        wexp=5,
+        wman=11,
+        wexp_unbiased=0,
+        wexp_in=5,
+        wman_in=11,
+        wexp_out=6,
+        wman_out=18,
+    ),
+    ModuleSpec(
         name="zkf_resize_widen_es1",
         label="zkf_resize 5/11 -> 6/18 (widening, EXTRA_STAGES=1)",
         top="zkf_resize_widen_es1_synth_top",
@@ -303,6 +305,14 @@ MODULES = [
         extra_stages=1,
     ),
 ]
+
+
+def module_group(spec: ModuleSpec) -> str:
+    """Identifier for grouping baseline + EXTRA_STAGES variants of the same physical module."""
+    name = spec.name
+    if name.endswith("_es1"):
+        return name[:-4]
+    return name
 
 
 MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
@@ -1486,11 +1496,12 @@ def relative_or_missing(path: Path | None, base: Path) -> str:
     return str(path.relative_to(base))
 
 
-def artifact_link(result: dict[str, str], key: str, label: str) -> str:
+def artifact_link(result: dict[str, str], key: str, label: str, new_tab: bool = False) -> str:
     target = result.get(key, "")
     if not target:
         return ""
-    return f'<a href="{escape(target)}">{escape(label)}</a>'
+    attrs = ' target="_blank" rel="noopener"' if new_tab else ""
+    return f'<a href="{escape(target)}"{attrs}>{escape(label)}</a>'
 
 
 def joined_links(*links: str) -> str:
@@ -1559,7 +1570,17 @@ def read_text(path: Path | None) -> str:
     return path.read_text(errors="replace")
 
 
-def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: Path) -> None:
+def write_yosys_script(
+    spec: ModuleSpec,
+    wrapper: Path,
+    netlist: Path,
+    schematic_prefix: Path,
+    script: Path,
+) -> None:
+    # The schematic is emitted from a pushed copy of the post-opt, pre-techmap design so the diagram shows
+    # generic operators (adders, muxes, registers) rather than ECP5 primitives; flatten first so submodules
+    # show their internals instead of opaque boxes. The original design is then popped back for the actual
+    # synthesis pass, leaving its results unaffected.
     rtl = rtl_sources(spec) + [wrapper]
     script.write_text(
         "\n".join(
@@ -1568,6 +1589,11 @@ def write_yosys_script(spec: ModuleSpec, wrapper: Path, netlist: Path, script: P
                 f"hierarchy -check -top {spec.top}",
                 "proc",
                 "opt",
+                "design -push-copy",
+                "flatten",
+                "opt -fast",
+                f"show -prefix {schematic_prefix} -format svg -notitle -stretch -enum {spec.top}",
+                "design -pop",
                 f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -dff -json {netlist}",
                 "stat",
                 "",
@@ -1789,9 +1815,11 @@ def synthesize_yosys(spec: ModuleSpec, yosys: Path, nextpnr: Path) -> dict[str, 
     nextpnr_report = module_dir / f"{spec.name}_nextpnr.json"
     yosys_log = module_dir / "yosys.log"
     nextpnr_log = module_dir / "nextpnr.log"
+    schematic_prefix = module_dir / f"{spec.name}_schematic"
+    schematic_svg = schematic_prefix.with_suffix(".svg")
 
     write_wrapper(spec, wrapper)
-    write_yosys_script(spec, wrapper, netlist, yosys_script)
+    write_yosys_script(spec, wrapper, netlist, schematic_prefix, yosys_script)
 
     run([yosys, "-s", yosys_script], yosys_log)
     run(
@@ -1854,6 +1882,8 @@ def synthesize_yosys(spec: ModuleSpec, yosys: Path, nextpnr: Path) -> dict[str, 
         "yosys_log": str(yosys_log.relative_to(YOSYS_BUILD)),
         "nextpnr_log": str(nextpnr_log.relative_to(YOSYS_BUILD)),
         "nextpnr_json": str(nextpnr_report.relative_to(YOSYS_BUILD)),
+        "schematic": str(schematic_svg.relative_to(YOSYS_BUILD)) if schematic_svg.is_file() else "",
+        "group": module_group(spec),
     }
 
 
@@ -1863,10 +1893,14 @@ def write_yosys_html(results: list[dict[str, str]]) -> None:
     generated_at = generated_local_time()
     fmax_bounds = metric_bounds(results, "fmax")
     placed_lut4_bounds = metric_bounds(results, "lut_placed")
+    last_group: str | None = None
     for result in results:
         status_class = "pass" if result["status"] == "PASS" else "fail"
+        group = result.get("group") or result.get("name", "")
+        tr_class = ' class="group-start"' if (last_group is not None and group != last_group) else ""
+        last_group = group
         rows.append(
-            "<tr>"
+            f"<tr{tr_class}>"
             f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
             f"<td>{escape(result['register_stages'])}</td>"
@@ -1884,6 +1918,9 @@ def write_yosys_html(results: list[dict[str, str]]) -> None:
             + f"<td class=\"resource\">{escape(result['alu54'])}</td>"
             + f"<td class=\"resource\">{escape(result['bram'])}</td>"
             + f"<td class=\"resource\">{escape(result['io'])}</td>"
+            + "<td>"
+            + (artifact_link(result, "schematic", "SVG", new_tab=True) or "—")
+            + "</td>"
             + "<td>"
             + joined_links(
                 artifact_link(result, "nextpnr_log", "nextpnr"),
@@ -1925,6 +1962,7 @@ table { border-collapse: collapse; margin-bottom: 2rem; }
 th, td { border: 1px solid #bbb; padding: 0.35rem 0.6rem; text-align: left; }
 th { background: #eee; }
 td.resource { white-space: nowrap; }
+tbody tr.group-start td { border-top: 3px solid #555; }
 .status { border-radius: 999px; display: inline-block; font-weight: 700; padding: 0.2rem 0.6rem; }
 .status.pass { background: #11823b; color: #fff; }
 .status.fail { background: #c82424; color: #fff; }
@@ -1943,13 +1981,14 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
 of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
 <p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
-helper and parent resource counts are not additive.</p>
+helper and parent resource counts are not additive. Schematic links open the pre-techmap generic-cell diagram for the
+module in a new tab.</p>
 <table>
 <thead><tr>
 <th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>f max</th><th>Status</th>
 <th>Yosys LUT4</th><th>Placed LUT4</th><th>FF</th><th>TRELLIS_COMB</th>
 <th>CCU2C</th><th>PFUMX</th><th>L6MUX21</th><th>DSP MULT18X18D</th>
-<th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Logs</th>
+<th>ALU54B</th><th>BRAM DP16KD</th><th>IO</th><th>Schematic</th><th>Logs</th>
 </tr></thead>
 <tbody>
 """
@@ -1967,18 +2006,40 @@ helper and parent resource counts are not additive.</p>
 
 
 def synthesize_with_progress(flow_name: str, modules: list[ModuleSpec], synthesize_module) -> list[dict[str, str]]:
-    results = []
     total = len(modules)
-    for index, spec in enumerate(modules, start=1):
-        print(f"[{flow_name}] start {index}/{total}: {spec.name}", flush=True)
+    workers = max(1, min(SYNTH_WORKERS, total))
+    print_lock = threading.Lock()
+    started = {"n": 0}
+    completed = {"n": 0}
+
+    def run_one(spec: ModuleSpec) -> dict[str, str]:
+        with print_lock:
+            started["n"] += 1
+            index = started["n"]
+            print(f"[{flow_name}] start {index}/{total}: {spec.name}", flush=True)
         result = synthesize_module(spec)
-        results.append(result)
-        print(
-            f"[{flow_name}] done {index}/{total}: {spec.name}: "
-            f"{result['status']}, fmax {result.get('fmax', 'not reported')}",
-            flush=True,
-        )
-    return results
+        with print_lock:
+            completed["n"] += 1
+            done = completed["n"]
+            print(
+                f"[{flow_name}] done {done}/{total}: {spec.name}: "
+                f"{result['status']}, fmax {result.get('fmax', 'not reported')}",
+                flush=True,
+            )
+        return result
+
+    if workers == 1:
+        ordered = [run_one(spec) for spec in modules]
+    else:
+        print(f"[{flow_name}] running {total} modules with {workers} parallel workers", flush=True)
+        results_by_name: dict[str, dict[str, str]] = {}
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(run_one, spec): spec for spec in modules}
+            for future in as_completed(futures):
+                spec = futures[future]
+                results_by_name[spec.name] = future.result()
+        ordered = [results_by_name[spec.name] for spec in modules]
+    return ordered
 
 
 def require_passing_results(flow_name: str, results: list[dict[str, str]], report_path: Path) -> None:
@@ -2079,7 +2140,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_PARSTA_SpeedForSetupAnalysis": "default",
         "PROP_PARSTA_WordCasePaths": "10",
         "PROP_PAR_DisableTDParDes": "False",
-        "PROP_PAR_EffortParDes": "5",
+        "PROP_PAR_EffortParDes": str(DIAMOND_PAR_EFFORT),
         "PROP_PAR_MultiSeedSortMode": "Worst Slack",
         "PROP_PAR_NewRouteParDes": "NBR",
         "PROP_PAR_PARClockSkew": "Off",
@@ -2324,6 +2385,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "hold_errors": "not reported" if hold_errors is None else str(hold_errors),
         "unrouted": "not reported" if unrouted is None else str(unrouted),
         "par_errors": "not reported" if par_errors is None else str(par_errors),
+        "group": module_group(spec),
     }
 
 
@@ -2333,10 +2395,14 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
     generated_at = generated_local_time()
     fmax_bounds = metric_bounds(results, "fmax")
     slice_bounds = metric_bounds(results, "slice")
+    last_group: str | None = None
     for result in results:
         status_class = "pass" if result["status"] == "PASS" else "fail"
+        group = result.get("group") or result.get("name", "")
+        tr_class = ' class="group-start"' if (last_group is not None and group != last_group) else ""
+        last_group = group
         rows.append(
-            "<tr>"
+            f"<tr{tr_class}>"
             f"<td>{escape(result['label'])}</td>"
             f"<td>{escape(result['params'])}</td>"
             f"<td>{escape(result['register_stages'])}</td>"
@@ -2394,6 +2460,7 @@ table { border-collapse: collapse; margin-bottom: 2rem; }
 th, td { border: 1px solid #bbb; padding: 0.35rem 0.6rem; text-align: left; }
 th { background: #eee; }
 td.resource { white-space: nowrap; }
+tbody tr.group-start td { border-top: 3px solid #555; }
 .status { border-radius: 999px; display: inline-block; font-weight: 700; padding: 0.2rem 0.6rem; }
 .status.pass { background: #11823b; color: #fff; }
 .status.fail { background: #c82424; color: #fff; }
@@ -2406,7 +2473,7 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + f"<p>Generated: {escape(generated_at)}</p>"
         + f"<p>Flow: Lattice Diamond LSE for {escape(DIAMOND_DEVICE)} at "
         + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Balanced, "
-        + "MAP register retiming is enabled, PAR placement effort is 5, and routing passes are "
+        + f"MAP register retiming is enabled, PAR placement effort is {DIAMOND_PAR_EFFORT}, and routing passes are "
         + f"{DIAMOND_ROUTE_PASSES}.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
