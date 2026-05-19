@@ -101,7 +101,7 @@ async def from_int_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     drive_signed(dut.a, 0)
 
-    register_stages = 3
+    register_stages = 4 + context.extra_stages
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: FromIntCase) -> dict[str, int]:

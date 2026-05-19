@@ -55,6 +55,7 @@ class ModuleSpec:
     wman_in: int = 0
     wexp_out: int = 0
     wman_out: int = 0
+    extra_stages: int = 0
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,108 @@ MODULES = [
         wexp_out=6,
         wman_out=18,
     ),
+    # EXTRA_STAGES=1 variants of every in-scope module. Each variant gets a distinct directory key (name) so
+    # its synthesis outputs do not collide with the baseline row in the build tree or the HTML report.
+    ModuleSpec(
+        name="zkf_mul_es1",
+        label="zkf_mul (EXTRA_STAGES=1)",
+        top="zkf_mul_es1_synth_top",
+        kind="mul",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_add_es1",
+        label="zkf_add (EXTRA_STAGES=1)",
+        top="zkf_add_es1_synth_top",
+        kind="add",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_addsub_es1",
+        label="zkf_addsub (EXTRA_STAGES=1)",
+        top="zkf_addsub_es1_synth_top",
+        kind="addsub",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_div_es1",
+        label="zkf_div (EXTRA_STAGES=1)",
+        top="zkf_div_es1_synth_top",
+        kind="div",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_mul_ilog2_const_es1",
+        label="zkf_mul_ilog2_const (K=+10, EXTRA_STAGES=1)",
+        top="zkf_mul_ilog2_const_es1_synth_top",
+        kind="mul_ilog2_const",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_from_int_es1",
+        label="zkf_from_int (WINT=32, EXTRA_STAGES=1)",
+        top="zkf_from_int_es1_synth_top",
+        kind="from_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_to_int_es1",
+        label="zkf_to_int (WINT=32, EXTRA_STAGES=1)",
+        top="zkf_to_int_es1_synth_top",
+        kind="to_int",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_resize_narrow_es1",
+        label="zkf_resize 6/18 -> 5/11 (narrowing, EXTRA_STAGES=1)",
+        top="zkf_resize_narrow_es1_synth_top",
+        kind="resize",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wexp_in=6,
+        wman_in=18,
+        wexp_out=5,
+        wman_out=11,
+        extra_stages=1,
+    ),
+    ModuleSpec(
+        name="zkf_resize_widen_es1",
+        label="zkf_resize 5/11 -> 6/18 (widening, EXTRA_STAGES=1)",
+        top="zkf_resize_widen_es1_synth_top",
+        kind="resize",
+        wexp=5,
+        wman=11,
+        wexp_unbiased=0,
+        wexp_in=5,
+        wman_in=11,
+        wexp_out=6,
+        wman_out=18,
+        extra_stages=1,
+    ),
 ]
 
 
@@ -265,17 +368,20 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "mul":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "zkf_mul.v",
         ]
     if spec.kind == "add":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_add.v",
         ]
     if spec.kind == "addsub":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_add.v",
             REPO / "float" / "hdl" / "zkf_addsub.v",
@@ -285,6 +391,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "div":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_div_core.v",
             REPO / "float" / "hdl" / "zkf_div.v",
         ]
@@ -299,18 +406,26 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             REPO / "float" / "hdl" / "zkf_sort.v",
         ]
     if spec.kind == "mul_ilog2_const":
-        return [REPO / "float" / "hdl" / "zkf_mul_ilog2_const.v"]
+        return [
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
+            REPO / "float" / "hdl" / "zkf_mul_ilog2_const.v",
+        ]
     if spec.kind == "from_int":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "zkf_from_int.v",
         ]
     if spec.kind == "to_int":
-        return [REPO / "float" / "hdl" / "zkf_to_int.v"]
+        return [
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
+            REPO / "float" / "hdl" / "zkf_to_int.v",
+        ]
     if spec.kind == "resize":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
+            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "zkf_resize.v",
         ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
@@ -329,24 +444,24 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "pack":
         return 2
     if spec.kind == "mul":
-        return 3
+        return 3 + spec.extra_stages
     if spec.kind in {"add", "addsub"}:
-        return 6
+        return 6 + spec.extra_stages
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
-        return div_core_stages + 2
+        return div_core_stages + 2 + spec.extra_stages
     if spec.kind in {"cmp", "sort"}:
         return 1
     if spec.kind == "mul_ilog2_const":
-        return 1
+        return 1 + spec.extra_stages
     if spec.kind in {"from_int", "to_int"}:
-        return 3
+        return 4 + spec.extra_stages
     if spec.kind == "resize":
         # 1 stage on the widen-only fast path, 2 stages when _zkf_pack is involved.
         if spec.wman_out >= spec.wman_in and spec.wexp_out >= spec.wexp_in:
-            return 1
-        return 2
+            return 1 + spec.extra_stages
+        return 2 + spec.extra_stages
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -355,27 +470,38 @@ def format_register_stages(stages: int) -> str:
     return f"{stages} {suffix}"
 
 
+def _es_suffix(spec: ModuleSpec) -> str:
+    return f", EXTRA_STAGES={spec.extra_stages}" if spec.extra_stages else ""
+
+
 def params(spec: ModuleSpec) -> str:
     if spec.kind == "pack":
         return (
             f"WEXP={spec.wexp}, WMAN={spec.wman}, "
             f"WEXP_UNBIASED={spec.wexp_unbiased}"
         )
-    if spec.kind in {"div_core", "div"}:
+    if spec.kind == "div_core":
         return (
             f"WEXP={spec.wexp}, WMAN={spec.wman}, "
             f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
         )
+    if spec.kind == "div":
+        return (
+            f"WEXP={spec.wexp}, WMAN={spec.wman}, "
+            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}{_es_suffix(spec)}"
+        )
     if spec.kind == "mul_ilog2_const":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_es_suffix(spec)}"
     if spec.kind in {"from_int", "to_int"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_es_suffix(spec)}"
     if spec.kind == "resize":
         return (
             f"WEXP_IN={spec.wexp_in}, WMAN_IN={spec.wman_in}, "
-            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}"
+            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_es_suffix(spec)}"
         )
-    return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+    if spec.kind in {"cmp", "sort"}:
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+    return f"WEXP={spec.wexp}, WMAN={spec.wman}{_es_suffix(spec)}"
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -513,7 +639,8 @@ module {spec.top} (
 
     zkf_mul #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -580,7 +707,8 @@ module {spec.top} (
 
     zkf_add #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -650,7 +778,8 @@ module {spec.top} (
 
     zkf_addsub #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -855,7 +984,8 @@ module {spec.top} (
 
     zkf_div #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1077,7 +1207,8 @@ module {spec.top} (
     zkf_mul_ilog2_const #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .K({MUL_ILOG2_CONST_K})
+        .K({MUL_ILOG2_CONST_K}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1140,7 +1271,8 @@ module {spec.top} (
     zkf_from_int #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .WINT({wint})
+        .WINT({wint}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1203,7 +1335,8 @@ module {spec.top} (
     zkf_to_int #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .WINT({wint})
+        .WINT({wint}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1267,7 +1400,8 @@ module {spec.top} (
         .WEXP_IN({spec.wexp_in}),
         .WMAN_IN({spec.wman_in}),
         .WEXP_OUT({spec.wexp_out}),
-        .WMAN_OUT({spec.wman_out})
+        .WMAN_OUT({spec.wman_out}),
+        .EXTRA_STAGES({spec.extra_stages})
     ) dut (
         .clk(clk),
         .rst(rst),

@@ -3,13 +3,14 @@
 /// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
 /// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 4+((WMAN+2+((WMAN+2)%2))/2) end-to-end.
+/// Register stages: 4+((WMAN+2+((WMAN+2)%2))/2)+EXTRA_STAGES end-to-end.
 
 `default_nettype none
 
 module zkf_div #(
-    parameter WEXP = 6,      // exponent field width
-    parameter WMAN = 18      // significand precision including the hidden bit
+    parameter WEXP         = 6,    // exponent field width
+    parameter WMAN         = 18,   // significand precision including the hidden bit
+    parameter EXTRA_STAGES = 0     // optional extra register stages (zero-cost when 0)
 ) (
     input wire clk,
     input wire rst,
@@ -22,7 +23,18 @@ module zkf_div #(
     output wire [WEXP+WMAN-1:0] q,
     output wire                 div0
 );
+    localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
+
+    // Optional extra register stages. The divider is unlikely to require than 1 extra stage at the input because
+    // its pipeline depth already scales with the operand bit width.
+    wire                in_valid_q;
+    wire [2*WFULL-1:0]  pipe_out;
+    _zkf_pipe #(.W(2*WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}), .out_valid(in_valid_q), .out(pipe_out)
+    );
+    wire [WFULL-1:0] a_q = pipe_out[WFULL-1:0];
+    wire [WFULL-1:0] b_q = pipe_out[2*WFULL-1:WFULL];
 
     wire                            core_valid;
     wire                            core_sign;
@@ -38,9 +50,9 @@ module zkf_div #(
     _zkf_div_core #(.WEXP(WEXP), .WMAN(WMAN)) u_core (
         .clk(clk),
         .rst(rst),
-        .in_valid(in_valid),
-        .a(a),
-        .b(b),
+        .in_valid(in_valid_q),
+        .a(a_q),
+        .b(b_q),
         .out_valid(core_valid),
         .sign(core_sign),
         .force_zero(core_force_zero),

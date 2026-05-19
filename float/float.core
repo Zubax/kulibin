@@ -32,12 +32,14 @@ filesets:
   rtl_mul:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/zkf_mul.v
     file_type: verilogSource
 
   rtl_add:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
       - hdl/zkf_add.v
     file_type: verilogSource
@@ -45,6 +47,7 @@ filesets:
   rtl_div:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_div.v
     file_type: verilogSource
@@ -91,6 +94,7 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
       - hdl/zkf_add.v
       - hdl/zkf_addsub.v
@@ -103,24 +107,28 @@ filesets:
 
   rtl_mul_ilog2_const:
     files:
+      - hdl/_zkf_pipe.v
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
   rtl_from_int:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
       - hdl/zkf_from_int.v
     file_type: verilogSource
 
   rtl_to_int:
     files:
+      - hdl/_zkf_pipe.v
       - hdl/zkf_to_int.v
     file_type: verilogSource
 
   rtl_resize:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/zkf_resize.v
     file_type: verilogSource
 
@@ -282,6 +290,14 @@ parameters:
     datatype: int
     default: 11
     paramtype: plusarg
+  EXTRA_STAGES:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_EXTRA_STAGES:
+    datatype: int
+    default: 0
+    paramtype: plusarg
 
 targets:
   default:
@@ -346,15 +362,17 @@ targets:
       cocotb_module: test_mul
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: &float_binary_params
+    parameters: &float_binary_params_es
       - WEXP
       - WMAN
+      - EXTRA_STAGES
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_EXTRA_STAGES
 
   sim_mul_verilator:
     filesets: [rtl_mul, tb_cocotb]
@@ -373,7 +391,7 @@ targets:
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_add_icarus:
     filesets: [rtl_add, tb_cocotb]
@@ -384,7 +402,7 @@ targets:
       cocotb_module: test_add
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_add_verilator:
     filesets: [rtl_add, tb_cocotb]
@@ -393,7 +411,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_add
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_div_icarus:
     filesets: [rtl_div, tb_cocotb]
@@ -404,7 +422,7 @@ targets:
       cocotb_module: test_div
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_div_verilator:
     filesets: [rtl_div, tb_cocotb]
@@ -413,7 +431,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_div
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_addsub_icarus:
     filesets: [rtl_addsub, tb_cocotb]
@@ -424,7 +442,7 @@ targets:
       cocotb_module: test_addsub
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_addsub_verilator:
     filesets: [rtl_addsub, tb_cocotb]
@@ -433,7 +451,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_addsub
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_properties_mul_icarus:
     filesets: [rtl_mul, tb_cocotb]
@@ -444,7 +462,7 @@ targets:
       cocotb_module: test_properties
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_properties_add_icarus:
     filesets: [rtl_add, tb_cocotb]
@@ -455,7 +473,7 @@ targets:
       cocotb_module: test_properties
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_properties_addsub_icarus:
     filesets: [rtl_addsub, tb_cocotb]
@@ -466,7 +484,7 @@ targets:
       cocotb_module: test_properties
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_abs_icarus:
     filesets: [rtl_abs, tb_cocotb]
@@ -477,7 +495,15 @@ targets:
       cocotb_module: test_abs
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: &float_binary_params
+      - WEXP
+      - WMAN
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
 
   sim_abs_verilator:
     filesets: [rtl_abs, tb_cocotb]
@@ -655,7 +681,7 @@ targets:
       cocotb_module: test_mul_ilog2_const
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_mul_ilog2_const_verilator:
     filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
@@ -664,7 +690,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_mul_ilog2_const
-    parameters: *float_binary_params
+    parameters: *float_binary_params_es
 
   sim_from_int_icarus:
     filesets: [rtl_from_int, tb_cocotb]
@@ -679,6 +705,7 @@ targets:
       - WEXP
       - WMAN
       - WINT
+      - EXTRA_STAGES
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_WINT
@@ -686,6 +713,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_EXTRA_STAGES
 
   sim_from_int_verilator:
     filesets: [rtl_from_int, tb_cocotb]
@@ -730,6 +758,7 @@ targets:
       - WMAN_IN
       - WEXP_OUT
       - WMAN_OUT
+      - EXTRA_STAGES
       - ZKF_WEXP_IN
       - ZKF_WMAN_IN
       - ZKF_WEXP_OUT
@@ -738,6 +767,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_EXTRA_STAGES
 
   sim_resize_verilator:
     filesets: [rtl_resize, tb_cocotb]

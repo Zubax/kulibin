@@ -1,12 +1,13 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 3 end-to-end.
+/// Register stages: 3+EXTRA_STAGES end-to-end.
 
 `default_nettype none
 
 module zkf_mul #(
-    parameter WEXP = 6,      // exponent field width
-    parameter WMAN = 18      // significand precision including the hidden bit
+    parameter WEXP         = 6,    // exponent field width
+    parameter WMAN         = 18,   // significand precision including the hidden bit
+    parameter EXTRA_STAGES = 0     // optional extra register stages (zero-cost when 0)
 ) (
     input wire clk,
     input wire rst,
@@ -37,13 +38,22 @@ module zkf_mul #(
     localparam signed [WEXP_UNBIASED-1:0] ZERO_EXT = {WEXP_UNBIASED{1'b0}};
     localparam signed [WEXP_UNBIASED-1:0] ONE_EXT  = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
 
+    // Optional extra register stages. Additional stages may be added after the multiplier for EXTRA_STAGES>1.
+    wire                in_valid_q;
+    wire [2*WFULL-1:0]  pipe_out;
+    _zkf_pipe #(.W(2*WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}), .out_valid(in_valid_q), .out(pipe_out)
+    );
+    wire [WFULL-1:0] a_q = pipe_out[WFULL-1:0];
+    wire [WFULL-1:0] b_q = pipe_out[2*WFULL-1:WFULL];
+
     // Operand decode/classification.
-    wire             a_sign = a[WFULL-1];
-    wire             b_sign = b[WFULL-1];
-    wire [WEXP-1:0]  a_exp  = a[WFULL-2:WFRAC];
-    wire [WEXP-1:0]  b_exp  = b[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
+    wire             a_sign = a_q[WFULL-1];
+    wire             b_sign = b_q[WFULL-1];
+    wire [WEXP-1:0]  a_exp  = a_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0]  b_exp  = b_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a_q[WFRAC-1:0];
+    wire [WFRAC-1:0] b_frac = b_q[WFRAC-1:0];
 
     wire            a_zero        = a_exp == {WEXP{1'b0}};
     wire            b_zero        = b_exp == {WEXP{1'b0}};
@@ -104,7 +114,7 @@ module zkf_mul #(
         if (rst) begin
             s1_valid <= 1'b0;
         end else begin
-            s1_valid <= in_valid;
+            s1_valid <= in_valid_q;
         end
 
         s1_sign <= a_sign ^ b_sign;

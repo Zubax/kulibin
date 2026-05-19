@@ -1,6 +1,6 @@
 /// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 3 end-to-end.
+/// Register stages: 4+EXTRA_STAGES end-to-end.
 ///
 /// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,
 /// zero produces zero, and finite in-range values are round-to-nearest, ties-to-even.
@@ -8,9 +8,10 @@
 `default_nettype none
 
 module zkf_to_int #(
-    parameter WEXP = 6,
-    parameter WMAN = 18,
-    parameter WINT = 32
+    parameter WEXP           = 6,
+    parameter WMAN           = 18,
+    parameter WINT           = 32,
+    parameter EXTRA_STAGES = 0     // optional extra register stages, placed module-internally (zero-cost when 0)
 ) (
     input wire clk,
     input wire rst,
@@ -52,7 +53,7 @@ module zkf_to_int #(
     //                      left_shift_full = exp_in - LEFT_SHIFT_BASE.
     //   LEFT_OVER_BASE   : exp_in >= this guarantees the value overflows WINT signed bits even before rounding.
     //                      In that branch lshamt_clamped is forced to 0, so lsh_out_pre keeps sig_in un-shifted and
-    //                      mag_pre_in is a small/wrong magnitude — that's fine because s1_left_too_big propagates into
+    //                      s2_mag_pre is a small/wrong magnitude — that's fine because s2_left_too_big propagates into
     //                      overflow_now downstream and replaces mag_rounded_low with the saturated magnitude, so the
     //                      wrong intermediate is never observable.
     //   RIGHT_OVER_BASE  : exp_in < this means the right shift amount exceeds RSH_MAX, so the shifter would not
@@ -77,10 +78,23 @@ module zkf_to_int #(
     localparam signed [WEU-1:0] LEFT_SHIFT_BASE_EXT = $signed({1'b0, LEFT_SHIFT_BASE[WEU-2:0]});
     localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET   = -LEFT_SHIFT_BASE_EXT;
 
-    // -- Combinational decode.
-    wire             sign_in = a[WFULL-1];
-    wire [WEXP-1:0]  exp_in  = a[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] frac_in = a[WFRAC-1:0];
+    // Optional extra register stages (placement is this module's choice; here we put them at the input via _zkf_pipe). When EXTRA_STAGES=0 the pipe collapses to wires (zero hardware cost).
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    _zkf_pipe #(.W(WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+        .clk(clk), .rst(rst),
+        .in_valid(in_valid), .in(a),
+        .out_valid(in_valid_q), .out(a_q)
+    );
+
+    // -- Stage-1 cone: decode the float, derive the shift magnitudes, and resolve the predicates that pick between
+    // the right- and left-shift branches. The barrel shifters themselves are intentionally placed in the next cone
+    // (stage 2 input). At WEXP=6/WMAN=18/WINT=32 the decode+barrel+sticky path missed 100 MHz on Diamond by ~4 MHz,
+    // so we split the two halves with a register: this stage carries everything the shifters need into stage 1,
+    // and stage 2 captures the post-shift magnitude+GRS.
+    wire             sign_in = a_q[WFULL-1];
+    wire [WEXP-1:0]  exp_in  = a_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] frac_in = a_q[WFRAC-1:0];
     wire             is_zero = ~|exp_in;
     wire             is_inf  =  &exp_in;
     // The hidden bit is implicit for normal values. For zero inputs the right shifter cannot always saturate enough
@@ -132,12 +146,22 @@ module zkf_to_int #(
         end
     endgenerate
 
-    // Apply the barrel shifters before stage 1 so the heavy mux trees ride the input cone instead of chaining behind
-    // a register; the rounding adder and saturation logic then have a shallow combinational cone after stage 1.
+    // -- Stage 1: capture pre-shift state (decode + clamp). Reset only validity; payload free-runs.
+    reg             s1_valid;
+    reg             s1_sign;
+    reg             s1_is_inf;
+    reg             s1_is_left_shift;
+    reg             s1_left_too_big;
+    reg [WMAN-1:0]  s1_sig;
+    reg [WRSH-1:0]  s1_rshamt;
+    reg [WLSH-1:0]  s1_lshamt;
+
+    // -- Stage 1 -> Stage 2 combinational: the heavy barrel shifters. The right-shift barrel folds the discarded
+    // tail into a single sticky bit; the left-shift is exact (no GRS). The two branches are muxed by s1_is_left_shift.
     wire [WMAN+1:0] rsh_out_pre;
     _zkf_to_int_rshift #(.W(WMAN + 2)) u_rshift (
-        .x({sig_in, 2'b00}),
-        .shamt(rshamt_clamped),
+        .x({s1_sig, 2'b00}),
+        .shamt(s1_rshamt),
         .y(rsh_out_pre)
     );
 
@@ -147,49 +171,59 @@ module zkf_to_int #(
     wire [WLEFT-1:0] lsh_out_pre;
     generate
         if (LSH_MAX > 0) begin : g_lshift
-            assign lsh_out_pre = {{LSH_MAX{1'b0}}, sig_in} << lshamt_clamped;
+            assign lsh_out_pre = {{LSH_MAX{1'b0}}, s1_sig} << s1_lshamt;
         end else begin : g_no_lshift
-            assign lsh_out_pre = sig_in;
+            assign lsh_out_pre = s1_sig;
         end
     endgenerate
 
     wire [WMAG-1:0] mag_pre_rsh_in = {{(WMAG-WMAN){1'b0}}, rsh_mag_pre};
     wire [WMAG-1:0] mag_pre_lsh_in = {{(WMAG-WLEFT){1'b0}}, lsh_out_pre};
-    wire [WMAG-1:0] mag_pre_in     = is_left_shift ? mag_pre_lsh_in : mag_pre_rsh_in;
+    wire [WMAG-1:0] mag_pre_in     = s1_is_left_shift ? mag_pre_lsh_in : mag_pre_rsh_in;
 
-    wire guard_in  = is_left_shift ? 1'b0 : rsh_guard_pre;
-    wire sticky_in = is_left_shift ? 1'b0 : rsh_sticky_pre;
+    wire guard_in  = s1_is_left_shift ? 1'b0 : rsh_guard_pre;
+    wire sticky_in = s1_is_left_shift ? 1'b0 : rsh_sticky_pre;
 
-    // -- Stage 1: capture post-shift state. Reset only validity; payload free-runs.
-    reg             s1_valid;
-    reg             s1_sign;
-    reg             s1_is_inf;
-    reg             s1_left_too_big;
-    reg [WMAG-1:0]  s1_mag_pre;
-    reg             s1_guard;
-    reg             s1_sticky;
+    // -- Stage 2: capture post-shift state. Reset only validity; payload free-runs.
+    reg             s2_valid;
+    reg             s2_sign;
+    reg             s2_is_inf;
+    reg             s2_left_too_big;
+    reg [WMAG-1:0]  s2_mag_pre;
+    reg             s2_guard;
+    reg             s2_sticky;
 
     always @(posedge clk) begin
         if (rst) begin
             s1_valid <= 1'b0;
+            s2_valid <= 1'b0;
         end else begin
-            s1_valid <= in_valid;
+            s1_valid <= in_valid_q;
+            s2_valid <= s1_valid;
         end
-        s1_sign         <= sign_in;
-        s1_is_inf       <= is_inf;
-        s1_left_too_big <= left_too_big;
-        s1_mag_pre      <= mag_pre_in;
-        s1_guard        <= guard_in;
-        s1_sticky       <= sticky_in;
+        s1_sign          <= sign_in;
+        s1_is_inf        <= is_inf;
+        s1_is_left_shift <= is_left_shift;
+        s1_left_too_big  <= left_too_big;
+        s1_sig           <= sig_in;
+        s1_rshamt        <= rshamt_clamped;
+        s1_lshamt        <= lshamt_clamped;
+
+        s2_sign          <= s1_sign;
+        s2_is_inf        <= s1_is_inf;
+        s2_left_too_big  <= s1_left_too_big;
+        s2_mag_pre       <= mag_pre_in;
+        s2_guard         <= guard_in;
+        s2_sticky        <= sticky_in;
     end
 
-    // -- Stage 1 -> Stage 2 combinational: round, then saturation detect via bit-range checks.
+    // -- Stage 2 -> Stage 3 combinational: round, then saturation detect via bit-range checks.
     // Round only the low WINT bits — those are all that ever leaves this module — and feed any bit above WINT-1 into
     // hi_pre in parallel. This caps the carry chain at WINT+1 bits even when WMAN > WINT (where mag_pre is much wider)
     // and keeps the rounding adder off the critical path that wider configurations expose.
-    wire           round_increment = s1_guard & (s1_sticky | s1_mag_pre[0]);
-    wire           hi_pre          = |s1_mag_pre[WMAG-1:WINT];
-    wire [WINT:0]  mag_rounded_low = {1'b0, s1_mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
+    wire           round_increment = s2_guard & (s2_sticky | s2_mag_pre[0]);
+    wire           hi_pre          = |s2_mag_pre[WMAG-1:WINT];
+    wire [WINT:0]  mag_rounded_low = {1'b0, s2_mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
     wire           rcarry          = mag_rounded_low[WINT];
 
     // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any bit at position WINT-1
@@ -204,36 +238,19 @@ module zkf_to_int #(
 
     wire overflow_pos = hi_set | top_bit;
     wire overflow_neg = hi_set | (top_bit & low_set);
-    wire overflow_now = s1_is_inf | s1_left_too_big | (s1_sign ? overflow_neg : overflow_pos);
+    wire overflow_now = s2_is_inf | s2_left_too_big | (s2_sign ? overflow_neg : overflow_pos);
 
     // Saturation magnitudes (as unsigned WINT bits). INT_NEG_MAG (= 0x80..0) negates back to INT_MIN.
     localparam [WINT-1:0] INT_NEG_MAG = {1'b1, {(WINT-1){1'b0}}};
     localparam [WINT-1:0] INT_MAX     = {1'b0, {(WINT-1){1'b1}}};
 
-    wire [WINT-1:0] mag_sat_overflow = s1_sign ? INT_NEG_MAG : INT_MAX;
+    wire [WINT-1:0] mag_sat_overflow = s2_sign ? INT_NEG_MAG : INT_MAX;
     wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded_low[WINT-1:0];
 
-    // -- Stage 2 register.
-    reg            s2_valid;
-    reg            s2_sign;
-    reg [WINT-1:0] s2_mag_sat;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            s2_valid <= 1'b0;
-        end else begin
-            s2_valid <= s1_valid;
-        end
-        s2_sign    <= s1_sign;
-        s2_mag_sat <= mag_sat;
-    end
-
-    // -- Stage 2 -> Stage 3: apply sign by two's-complement negation.
-    wire [WINT-1:0] y_pre_unsigned = s2_sign ? (~s2_mag_sat + {{(WINT-1){1'b0}}, 1'b1}) : s2_mag_sat;
-
-    // -- Stage 3 register (output).
-    reg                   s3_valid;
-    reg signed [WINT-1:0] s3_y;
+    // -- Stage 3 register.
+    reg            s3_valid;
+    reg            s3_sign;
+    reg [WINT-1:0] s3_mag_sat;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -241,11 +258,28 @@ module zkf_to_int #(
         end else begin
             s3_valid <= s2_valid;
         end
-        s3_y <= $signed(y_pre_unsigned);
+        s3_sign    <= s2_sign;
+        s3_mag_sat <= mag_sat;
     end
 
-    assign out_valid = s3_valid;
-    assign y         = s3_y;
+    // -- Stage 3 -> Stage 4: apply sign by two's-complement negation.
+    wire [WINT-1:0] y_pre_unsigned = s3_sign ? (~s3_mag_sat + {{(WINT-1){1'b0}}, 1'b1}) : s3_mag_sat;
+
+    // -- Stage 4 register (output).
+    reg                   s4_valid;
+    reg signed [WINT-1:0] s4_y;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s4_valid <= 1'b0;
+        end else begin
+            s4_valid <= s3_valid;
+        end
+        s4_y <= $signed(y_pre_unsigned);
+    end
+
+    assign out_valid = s4_valid;
+    assign y         = s4_y;
 endmodule
 
 

@@ -1,5 +1,5 @@
 /// Constant-power-of-two multiplier: y = a * 2^K, where K is a compile-time signed integer parameter.
-/// Register stages: 1.
+/// Register stages: 1+EXTRA_STAGES.
 ///
 /// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the mantissa is preserved
 /// bit-for-bit and only the biased exponent is incremented by K. Special inputs (zero, signed infinity) are
@@ -12,9 +12,10 @@
 `default_nettype none
 
 module zkf_mul_ilog2_const #(
-    parameter         WEXP = 6,    // exponent field width
-    parameter         WMAN = 18,   // significand precision including the hidden bit
-    parameter integer K    = 0     // signed integer exponent shift: y = a * 2^K
+    parameter         WEXP         = 6,     // exponent field width
+    parameter         WMAN         = 18,    // significand precision including the hidden bit
+    parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
+    parameter         EXTRA_STAGES = 0      // optional extra register stages
 ) (
     input wire clk,
     input wire rst,
@@ -57,10 +58,17 @@ module zkf_mul_ilog2_const #(
     endgenerate
     // verilator coverage_on
 
+    // Optional extra register stages.
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    _zkf_pipe #(.W(WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in(a), .out_valid(in_valid_q), .out(a_q)
+    );
+
     // Decode and classify.
-    wire             a_sign = a[WFULL-1];
-    wire [WEXP-1:0]  a_exp  = a[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
+    wire             a_sign = a_q[WFULL-1];
+    wire [WEXP-1:0]  a_exp  = a_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a_q[WFRAC-1:0];
     wire             a_zero = ~|a_exp;
     wire             a_inf  =  &a_exp;
 
@@ -107,7 +115,7 @@ module zkf_mul_ilog2_const #(
         if (rst) begin
             out_valid <= 1'b0;
         end else begin
-            out_valid <= in_valid;
+            out_valid <= in_valid_q;
         end
         // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
         // but the 2'b11 row is listed so the priority is explicit and the case is full.

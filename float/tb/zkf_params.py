@@ -30,18 +30,20 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
+    extra_stages: int = 0
 
     @property
     def params(self) -> str:
+        es_suffix = f" ES={self.extra_stages}" if self.extra_stages else ""
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
-                f"{self.wexp_out}/{self.wman_out}"
+                f"{self.wexp_out}/{self.wman_out}{es_suffix}"
             )
         if self.wint is not None:
-            return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}"
+            return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}{es_suffix}"
         if self.wexp is not None and self.wman is not None:
-            return f"{self.config} WEXP={self.wexp} WMAN={self.wman}"
+            return f"{self.config} WEXP={self.wexp} WMAN={self.wman}{es_suffix}"
         if self.pipe_w is not None and self.pipe_n is not None:
             return f"{self.config} W={self.pipe_w} N={self.pipe_n}"
         return self.config
@@ -97,6 +99,13 @@ def _kind() -> str:
     return kind
 
 
+def _extra_stages() -> int:
+    value = plusarg_int("ZKF_EXTRA_STAGES", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_EXTRA_STAGES must be non-negative, got {value}")
+    return value
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -118,6 +127,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
+        extra_stages=_extra_stages(),
     )
 
 
@@ -140,6 +150,7 @@ def cast_context(suite: str) -> TestContext:
         wexp=wexp,
         wman=wman,
         wint=wint,
+        extra_stages=_extra_stages(),
     )
 
 
@@ -166,6 +177,7 @@ def resize_context(suite: str) -> TestContext:
         wman_in=wman_in,
         wexp_out=wexp_out,
         wman_out=wman_out,
+        extra_stages=_extra_stages(),
     )
 
 

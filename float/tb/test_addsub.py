@@ -135,7 +135,7 @@ async def addsub_runtime_cases(dut) -> None:
     dut.b.value = 0
     dut.op_sub.value = 0
 
-    scoreboard = RegisterStageScoreboard(dut, 6, context, {"y": (dut.y, fmt.wfull)})
+    scoreboard = RegisterStageScoreboard(dut, 6 + context.extra_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddSubCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
