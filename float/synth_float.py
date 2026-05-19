@@ -1630,6 +1630,36 @@ def metric_bounds(results: list[dict[str, str]], key: str) -> tuple[float, float
     return (min(values), max(values)) if values else None
 
 
+# Five saturated stops from best (worstness=0) to worst (worstness=1). Adjacent regions are
+# visually distinct without relying on dim pastels, and the hue progression is easy to scan in
+# either direction. Approximate Material-design palette: green / yellow-green / amber / orange / red.
+_PALETTE_STOPS = (
+    (0.00, ( 46, 125,  50)),   # dark green
+    (0.25, (154, 205,  50)),   # yellow-green
+    (0.50, (255, 213,  79)),   # amber yellow
+    (0.75, (251, 140,   0)),   # orange
+    (1.00, (198,  40,  40)),   # dark red
+)
+
+
+def _interpolate_palette(t: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, t))
+    for i in range(len(_PALETTE_STOPS) - 1):
+        a_t, a_rgb = _PALETTE_STOPS[i]
+        b_t, b_rgb = _PALETTE_STOPS[i + 1]
+        if t <= b_t:
+            frac = 0.0 if b_t <= a_t else (t - a_t) / (b_t - a_t)
+            return tuple(round(a + (b - a) * frac) for a, b in zip(a_rgb, b_rgb))
+    return _PALETTE_STOPS[-1][1]
+
+
+def _readable_text_color(rgb: tuple[int, int, int]) -> str:
+    # ITU-R BT.601 perceived luminance. Threshold tuned so amber/yellow keeps black text and
+    # the darker green/orange/red use white.
+    lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+    return "#000" if lum >= 160 else "#fff"
+
+
 def metric_color_style(
     value_text: str,
     bounds: tuple[float, float] | None,
@@ -1647,14 +1677,10 @@ def metric_color_style(
     else:
         normalized_worstness = (value - lowest) / (highest - lowest)
 
-    normalized_worstness = max(0.0, min(1.0, normalized_worstness))
-    best_rgb = (207, 237, 216)
-    worst_rgb = (246, 205, 205)
-    rgb = tuple(
-        round(best + (worst - best) * normalized_worstness)
-        for best, worst in zip(best_rgb, worst_rgb)
-    )
-    return f"background-color: #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x};"
+    rgb = _interpolate_palette(normalized_worstness)
+    bg = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+    fg = _readable_text_color(rgb)
+    return f"background-color: {bg}; color: {fg};"
 
 
 def table_cell(text: str, class_name: str = "", style: str = "") -> str:
