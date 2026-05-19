@@ -59,7 +59,8 @@ class ModuleSpec:
     wman_in: int = 0
     wexp_out: int = 0
     wman_out: int = 0
-    extra_stages: int = 0
+    stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize: 0 or 1.
+    stage_product: int = 0   # zkf_mul: 0 or 1.
 
 
 @dataclass(frozen=True)
@@ -96,34 +97,34 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_mul_es1",
-        label="zkf_mul (EXTRA_STAGES=1)",
-        top="zkf_mul_es1_synth_top",
+        name="zkf_mul_sp1",
+        label="zkf_mul (STAGE_PRODUCT=1)",
+        top="zkf_mul_sp1_synth_top",
         kind="mul",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        extra_stages=1,
+        stage_product=1,
     ),
     ModuleSpec(
-        name="zkf_mul_w8m36_es1",
-        label="zkf_mul (WEXP=8, WMAN=36, EXTRA_STAGES=1 split DSP cascade)",
-        top="zkf_mul_w8m36_es1_synth_top",
+        name="zkf_mul_w8m36_sp1",
+        label="zkf_mul (WEXP=8, WMAN=36, STAGE_PRODUCT=1 split DSP cascade)",
+        top="zkf_mul_w8m36_sp1_synth_top",
         kind="mul",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        extra_stages=1,
+        stage_product=1,
     ),
     ModuleSpec(
-        name="zkf_mul_w8m25_es1",
-        label="zkf_mul (WEXP=8, WMAN=25, EXTRA_STAGES=1 asymmetric split WLO=13/WHI=12)",
-        top="zkf_mul_w8m25_es1_synth_top",
+        name="zkf_mul_w8m25_sp1",
+        label="zkf_mul (WEXP=8, WMAN=25, STAGE_PRODUCT=1 asymmetric split WLO=13/WHI=12)",
+        top="zkf_mul_w8m25_sp1_synth_top",
         kind="mul",
         wexp=8,
         wman=25,
         wexp_unbiased=0,
-        extra_stages=1,
+        stage_product=1,
     ),
     ModuleSpec(
         name="zkf_add",
@@ -133,16 +134,6 @@ MODULES = [
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_add_es1",
-        label="zkf_add (EXTRA_STAGES=1)",
-        top="zkf_add_es1_synth_top",
-        kind="add",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
     ),
     ModuleSpec(
         name="zkf_add_w8m36",
@@ -163,16 +154,6 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_addsub_es1",
-        label="zkf_addsub (EXTRA_STAGES=1)",
-        top="zkf_addsub_es1_synth_top",
-        kind="addsub",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
         name="_zkf_div_core",
         label="_zkf_div_core",
         top="_zkf_div_core_synth_top",
@@ -191,14 +172,14 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_div_es1",
-        label="zkf_div (EXTRA_STAGES=1)",
-        top="zkf_div_es1_synth_top",
+        name="zkf_div_si1",
+        label="zkf_div (STAGE_INPUT=1)",
+        top="zkf_div_si1_synth_top",
         kind="div",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        extra_stages=1,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_div_w8m36",
@@ -255,16 +236,6 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_mul_ilog2_const_es1",
-        label="zkf_mul_ilog2_const (K=+10, EXTRA_STAGES=1)",
-        top="zkf_mul_ilog2_const_es1_synth_top",
-        kind="mul_ilog2_const",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        extra_stages=1,
-    ),
-    ModuleSpec(
         name="zkf_mul_ilog2_const_w8m36",
         label="zkf_mul_ilog2_const (WEXP=8, WMAN=36, K=+10)",
         top="zkf_mul_ilog2_const_w8m36_synth_top",
@@ -284,15 +255,15 @@ MODULES = [
         wint=32,
     ),
     ModuleSpec(
-        name="zkf_from_int_es1",
-        label="zkf_from_int (WINT=32, EXTRA_STAGES=1)",
-        top="zkf_from_int_es1_synth_top",
+        name="zkf_from_int_si1",
+        label="zkf_from_int (WINT=32, STAGE_INPUT=1)",
+        top="zkf_from_int_si1_synth_top",
         kind="from_int",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         wint=32,
-        extra_stages=1,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_from_int_w8m36",
@@ -315,15 +286,15 @@ MODULES = [
         wint=32,
     ),
     ModuleSpec(
-        name="zkf_to_int_es1",
-        label="zkf_to_int (WINT=32, EXTRA_STAGES=1)",
-        top="zkf_to_int_es1_synth_top",
+        name="zkf_to_int_si1",
+        label="zkf_to_int (WINT=32, STAGE_INPUT=1)",
+        top="zkf_to_int_si1_synth_top",
         kind="to_int",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         wint=32,
-        extra_stages=1,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_to_int_w8m36",
@@ -349,9 +320,9 @@ MODULES = [
         wman_out=11,
     ),
     ModuleSpec(
-        name="zkf_resize_narrow_es1",
-        label="zkf_resize 6/18 -> 5/11 (narrowing, EXTRA_STAGES=1)",
-        top="zkf_resize_narrow_es1_synth_top",
+        name="zkf_resize_narrow_si1",
+        label="zkf_resize 6/18 -> 5/11 (narrowing, STAGE_INPUT=1)",
+        top="zkf_resize_narrow_si1_synth_top",
         kind="resize",
         wexp=6,
         wman=18,
@@ -360,7 +331,7 @@ MODULES = [
         wman_in=18,
         wexp_out=5,
         wman_out=11,
-        extra_stages=1,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_resize_widen",
@@ -376,9 +347,9 @@ MODULES = [
         wman_out=18,
     ),
     ModuleSpec(
-        name="zkf_resize_widen_es1",
-        label="zkf_resize 5/11 -> 6/18 (widening, EXTRA_STAGES=1)",
-        top="zkf_resize_widen_es1_synth_top",
+        name="zkf_resize_widen_si1",
+        label="zkf_resize 5/11 -> 6/18 (widening, STAGE_INPUT=1)",
+        top="zkf_resize_widen_si1_synth_top",
         kind="resize",
         wexp=5,
         wman=11,
@@ -387,7 +358,7 @@ MODULES = [
         wman_in=11,
         wexp_out=6,
         wman_out=18,
-        extra_stages=1,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_resize_narrow_w8m36",
@@ -419,8 +390,8 @@ MODULES = [
 
 
 def module_group(spec: ModuleSpec) -> str:
-    """Identifier for grouping baseline + EXTRA_STAGES variants of the same physical module."""
-    match = re.match(r"^(.+)_es\d+$", spec.name)
+    """Identifier for grouping a module with its STAGE_INPUT / STAGE_PRODUCT variants."""
+    match = re.match(r"^(.+)_(si|sp)\d+$", spec.name)
     return match.group(1) if match else spec.name
 
 
@@ -492,7 +463,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "add":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
-            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "_zkf_rshift_sticky.v",
             REPO / "float" / "hdl" / "zkf_add.v",
@@ -500,7 +470,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "addsub":
         return [
             REPO / "float" / "hdl" / "_zkf_pack.v",
-            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "_zkf_lod.v",
             REPO / "float" / "hdl" / "_zkf_rshift_sticky.v",
             REPO / "float" / "hdl" / "zkf_add.v",
@@ -527,7 +496,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         ]
     if spec.kind == "mul_ilog2_const":
         return [
-            REPO / "float" / "hdl" / "_zkf_pipe.v",
             REPO / "float" / "hdl" / "zkf_mul_ilog2_const.v",
         ]
     if spec.kind == "from_int":
@@ -565,25 +533,25 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "pack":
         return 2
     if spec.kind == "mul":
-        # ES=0 -> 3 stages; ES>=1 -> 4 stages (DSP cascade split). Values >1 clamp to 1.
-        return 3 + (1 if spec.extra_stages >= 1 else 0)
+        # zkf_mul: STAGE_PRODUCT=0 -> 3 stages; >=1 -> 4 stages (DSP cascade split). Cap at 1.
+        return 3 + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
-        return 6 + spec.extra_stages
+        return 6
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
-        return div_core_stages + 2 + spec.extra_stages
+        return div_core_stages + 2 + spec.stage_input
     if spec.kind in {"cmp", "sort"}:
         return 1
     if spec.kind == "mul_ilog2_const":
-        return 1 + spec.extra_stages
+        return 1
     if spec.kind in {"from_int", "to_int"}:
-        return 4 + spec.extra_stages
+        return 4 + spec.stage_input
     if spec.kind == "resize":
         # 1 stage on the widen-only fast path, 2 stages when _zkf_pack is involved.
         if spec.wman_out >= spec.wman_in and spec.wexp_out >= spec.wexp_in:
-            return 1 + spec.extra_stages
-        return 2 + spec.extra_stages
+            return 1 + spec.stage_input
+        return 2 + spec.stage_input
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -592,8 +560,12 @@ def format_register_stages(stages: int) -> str:
     return f"{stages} {suffix}"
 
 
-def _es_suffix(spec: ModuleSpec) -> str:
-    return f", EXTRA_STAGES={spec.extra_stages}" if spec.extra_stages else ""
+def _si_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_INPUT={spec.stage_input}" if spec.stage_input else ""
+
+
+def _sp_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_PRODUCT={spec.stage_product}" if spec.stage_product else ""
 
 
 def params(spec: ModuleSpec) -> str:
@@ -610,20 +582,24 @@ def params(spec: ModuleSpec) -> str:
     if spec.kind == "div":
         return (
             f"WEXP={spec.wexp}, WMAN={spec.wman}, "
-            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}{_es_suffix(spec)}"
+            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}{_si_suffix(spec)}"
         )
     if spec.kind == "mul_ilog2_const":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_es_suffix(spec)}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}"
     if spec.kind in {"from_int", "to_int"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_es_suffix(spec)}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
     if spec.kind == "resize":
         return (
             f"WEXP_IN={spec.wexp_in}, WMAN_IN={spec.wman_in}, "
-            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_es_suffix(spec)}"
+            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_si_suffix(spec)}"
         )
     if spec.kind in {"cmp", "sort"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}"
-    return f"WEXP={spec.wexp}, WMAN={spec.wman}{_es_suffix(spec)}"
+    if spec.kind == "mul":
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}"
+    if spec.kind in {"add", "addsub"}:
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+    return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -762,7 +738,7 @@ module {spec.top} (
     zkf_mul #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .STAGE_PRODUCT({spec.stage_product})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -829,8 +805,7 @@ module {spec.top} (
 
     zkf_add #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .WMAN({spec.wman})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -900,8 +875,7 @@ module {spec.top} (
 
     zkf_addsub #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .WMAN({spec.wman})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1107,7 +1081,7 @@ module {spec.top} (
     zkf_div #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1329,8 +1303,7 @@ module {spec.top} (
     zkf_mul_ilog2_const #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .K({MUL_ILOG2_CONST_K}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .K({MUL_ILOG2_CONST_K})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1394,7 +1367,7 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .WINT({wint}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1458,7 +1431,7 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .WINT({wint}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1523,7 +1496,7 @@ module {spec.top} (
         .WMAN_IN({spec.wman_in}),
         .WEXP_OUT({spec.wexp_out}),
         .WMAN_OUT({spec.wman_out}),
-        .EXTRA_STAGES({spec.extra_stages})
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),

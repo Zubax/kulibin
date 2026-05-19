@@ -1,14 +1,14 @@
 /// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 4+EXTRA_STAGES end-to-end.
+/// Register stages: 4+STAGE_INPUT end-to-end.
 
 `default_nettype none
 
 module zkf_from_int #(
-    parameter WEXP         = 6,
-    parameter WMAN         = 18,
-    parameter WINT         = 32,
-    parameter EXTRA_STAGES = 0     // optional extra register stages (zero-cost when 0)
+    parameter WEXP        = 6,
+    parameter WMAN        = 18,
+    parameter WINT        = 32,
+    parameter STAGE_INPUT = 0   // whether to add a stage at the input (shields inputs from combinational paths)
 ) (
     input wire clk,
     input wire rst,
@@ -36,10 +36,10 @@ module zkf_from_int #(
     localparam WEU_LOD = WIDX + 1;
     localparam WEU     = (WEU_LOD > (WEXP + 2)) ? WEU_LOD : (WEXP + 2);
 
-    // Optional extra register stages. Additional stages may be added down the pipeline later for EXTRA_STAGES>1.
+    // Optional input register stage.
     wire             in_valid_q;
     wire [WINT-1:0]  a_q;
-    _zkf_pipe #(.W(WINT), .N(EXTRA_STAGES)) u_input_pipe (
+    _zkf_pipe #(.W(WINT), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in(a), .out_valid(in_valid_q), .out(a_q)
     );
 

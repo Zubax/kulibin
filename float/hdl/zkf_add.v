@@ -1,13 +1,12 @@
 /// Streamed Zubax Kulibin float adder.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 6+EXTRA_STAGES end-to-end.
+/// Register stages: 6 end-to-end.
 
 `default_nettype none
 
 module zkf_add #(
-    parameter WEXP         = 6,    // exponent field width
-    parameter WMAN         = 18,   // significand precision including the hidden bit
-    parameter EXTRA_STAGES = 0     // optional extra register stages (zero-cost when 0)
+    parameter WEXP = 6,    // exponent field width
+    parameter WMAN = 18    // significand precision including the hidden bit
 ) (
     input wire clk,
     input wire rst,
@@ -43,28 +42,19 @@ module zkf_add #(
     localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
     localparam [WEXP-1:0]   EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
 
-    // Optional extra register stages. Additional stages may be added down the pipeline later for EXTRA_STAGES>1.
-    wire                in_valid_q;
-    wire [2*WFULL-1:0]  pipe_out;
-    _zkf_pipe #(.W(2*WFULL), .N(EXTRA_STAGES)) u_input_pipe (
-        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}), .out_valid(in_valid_q), .out(pipe_out)
-    );
-    wire [WFULL-1:0] a_q = pipe_out[WFULL-1:0];
-    wire [WFULL-1:0] b_q = pipe_out[2*WFULL-1:WFULL];
-
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
-    wire            a_sign    = a_q[WFULL-1];
-    wire            b_sign    = b_q[WFULL-1];
+    wire            a_sign    = a[WFULL-1];
+    wire            b_sign    = b[WFULL-1];
     wire            same_sign = ~(a_sign ^ b_sign);
-    wire [WEXP-1:0] a_exp     = a_q[WFULL-2:WFRAC];
-    wire [WEXP-1:0] b_exp     = b_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0] a_exp     = a[WFULL-2:WFRAC];
+    wire [WEXP-1:0] b_exp     = b[WFULL-2:WFRAC];
 
     wire             a_inf         = &a_exp;
     wire             b_inf         = &b_exp;
     wire             a_finite      = (|a_exp) && !a_inf;
     wire             b_finite      = (|b_exp) && !b_inf;
-    wire [WFRAC-1:0] a_fraction    = a_q[WFRAC-1:0];
-    wire [WFRAC-1:0] b_fraction    = b_q[WFRAC-1:0];
+    wire [WFRAC-1:0] a_fraction    = a[WFRAC-1:0];
+    wire [WFRAC-1:0] b_fraction    = b[WFRAC-1:0];
     wire [WMAN-1:0]  a_significand = {1'b1, a_fraction};
     wire [WMAN-1:0]  b_significand = {1'b1, b_fraction};
 
@@ -236,7 +226,7 @@ module zkf_add #(
             s2_valid <= 1'b0;
             s3_valid <= 1'b0;
         end else begin
-            s0_valid <= in_valid_q;
+            s0_valid <= in_valid;
             s1_valid <= s0_valid;
             s2_valid <= s1_valid;
             s3_valid <= s2_valid;

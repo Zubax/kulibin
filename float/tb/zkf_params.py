@@ -30,20 +30,25 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
-    extra_stages: int = 0
+    stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize
+    stage_product: int = 0   # zkf_mul
 
     @property
     def params(self) -> str:
-        es_suffix = f" ES={self.extra_stages}" if self.extra_stages else ""
+        knob_suffix = ""
+        if self.stage_input:
+            knob_suffix += f" SI={self.stage_input}"
+        if self.stage_product:
+            knob_suffix += f" SP={self.stage_product}"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
-                f"{self.wexp_out}/{self.wman_out}{es_suffix}"
+                f"{self.wexp_out}/{self.wman_out}{knob_suffix}"
             )
         if self.wint is not None:
-            return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}{es_suffix}"
+            return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}{knob_suffix}"
         if self.wexp is not None and self.wman is not None:
-            return f"{self.config} WEXP={self.wexp} WMAN={self.wman}{es_suffix}"
+            return f"{self.config} WEXP={self.wexp} WMAN={self.wman}{knob_suffix}"
         if self.pipe_w is not None and self.pipe_n is not None:
             return f"{self.config} W={self.pipe_w} N={self.pipe_n}"
         return self.config
@@ -99,10 +104,17 @@ def _kind() -> str:
     return kind
 
 
-def _extra_stages() -> int:
-    value = plusarg_int("ZKF_EXTRA_STAGES", 0)
+def _stage_input() -> int:
+    value = plusarg_int("ZKF_STAGE_INPUT", 0)
     if value < 0:
-        raise ValueError(f"ZKF_EXTRA_STAGES must be non-negative, got {value}")
+        raise ValueError(f"ZKF_STAGE_INPUT must be non-negative, got {value}")
+    return value
+
+
+def _stage_product() -> int:
+    value = plusarg_int("ZKF_STAGE_PRODUCT", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_PRODUCT must be non-negative, got {value}")
     return value
 
 
@@ -127,7 +139,8 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
-        extra_stages=_extra_stages(),
+        stage_input=_stage_input(),
+        stage_product=_stage_product(),
     )
 
 
@@ -150,7 +163,8 @@ def cast_context(suite: str) -> TestContext:
         wexp=wexp,
         wman=wman,
         wint=wint,
-        extra_stages=_extra_stages(),
+        stage_input=_stage_input(),
+        stage_product=_stage_product(),
     )
 
 
@@ -177,7 +191,8 @@ def resize_context(suite: str) -> TestContext:
         wman_in=wman_in,
         wexp_out=wexp_out,
         wman_out=wman_out,
-        extra_stages=_extra_stages(),
+        stage_input=_stage_input(),
+        stage_product=_stage_product(),
     )
 
 

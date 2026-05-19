@@ -62,47 +62,36 @@ They do not offer any of the guarantees that are valid for the public modules.
 | `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |
 | `zkf_resize`          | Cast between different float formats.                          |
 
-Many modules provide the optional `EXTRA_STAGES` knob that allows insertion of additional pipeline stages if timings get tight.
-The placement of these stages is module-dependent -- read the module docs for details.
-
 ## Notable sizes
 
-### WEXP=? WMAN=18
+### WMAN=18
 
-An FPGA-friendly format because modern DSP-enabled FPGAs usually implement 18x18 bit multipliers, which means that a
+An FPGA-friendly format because modern DSP-enabled FPGAs often implement 18x18 bit multipliers, which means that a
 narrower mantissa is unlikely to save much resources or nontrivially improve timings as long as hardware multipliers
-are used, while going a single bit higher may explode the footprint.
+are used.
 
 One can stay within 24 bits total by choosing WEXP=6:
 
     WEXP=6 WMAN=18 WFRAC=17 WFULL=24 BIAS=31
     lowest     = 1/1073741824 ≈ 9.313e-10
-    max        = 0xffff_c000  ≈ 4.295e+09
+    max        = 0xFFFF_C000  ≈ 4.295e+09
     ε          = 1/131072     ≈ 7.629e-06
 
-### WEXP=? WMAN=36
+### WMAN=36
 
 Similar to the above, WMAN=36 is efficient on common FPGAs because it maps multiplication to four 18x18 DSP slices.
-This is often a better fit for intermediate result representation to avoid error accumulation.
+This is often a better fit for intermediate result representation to avoid error accumulation --
+the precision lands halfway between IEEE 754 binary64 and binary32.
 
-Usually, on an 18x18 DSP chip, going even a single bit higher sees f_max tank dramatically while LUT usage explodes.
+Usually, on an 18x18 DSP chip, going even a single bit higher causes f_max to tank dramatically while area explodes.
 Thus this is likely to be the optimal choice for a large number of applications.
 
 Using binary32-compatible exponent WEXP=8, 44 bits total:
 
     WEXP=8 WMAN=36 WFRAC=35 WFULL=44 BIAS=127
     lowest     = 1/85070591730234615865843651857942052864 ≈ 1.175e-38
-    max        = 340282366915986703306233086332171714560  ≈ 3.403e+38
+    max        = 0xFFFFFFFF_F0000000_00000000_00000000    ≈ 3.403e+38
     ε          = 1/34359738368                            ≈ 2.910e-11
-
-### WEXP=7 WMAN=17
-
-An MCU-friendly format with clean byte alignment: 8 bits for the sign and the exponent, 16 bits for the fractional bits.
-
-    WEXP=7 WMAN=17 WFRAC=16 WFULL=24 BIAS=63
-    lowest     = 1/4611686018427387904 ≈ 2.168e-19
-    max        = 0xffff_8000_0000_0000 ≈ 1.845e+19
-    ε          = 1/65536               ≈ 1.526e-05
 
 ### IEEE 754-like
 

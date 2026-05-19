@@ -3,14 +3,14 @@
 /// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
 /// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 4+((WMAN+2+((WMAN+2)%2))/2)+EXTRA_STAGES end-to-end.
+/// Register stages: 4+((WMAN+2+((WMAN+2)%2))/2)+STAGE_INPUT end-to-end.
 
 `default_nettype none
 
 module zkf_div #(
-    parameter WEXP         = 6,    // exponent field width
-    parameter WMAN         = 18,   // significand precision including the hidden bit
-    parameter EXTRA_STAGES = 0     // optional extra register stages (zero-cost when 0)
+    parameter WEXP        = 6,    // exponent field width
+    parameter WMAN        = 18,   // significand precision including the hidden bit
+    parameter STAGE_INPUT = 0     // whether to add a stage at the input (shields inputs from combinational paths)
 ) (
     input wire clk,
     input wire rst,
@@ -26,11 +26,11 @@ module zkf_div #(
     localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
 
-    // Optional extra register stages. The divider is unlikely to require than 1 extra stage at the input because
-    // its pipeline depth already scales with the operand bit width.
+    // Optional input register stage. The divider's pipeline depth already scales with operand width, so
+    // a single extra stage is the only useful setting; anything beyond that is silently clamped to 1.
     wire                in_valid_q;
     wire [2*WFULL-1:0]  pipe_out;
-    _zkf_pipe #(.W(2*WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}), .out_valid(in_valid_q), .out(pipe_out)
     );
     wire [WFULL-1:0] a_q = pipe_out[WFULL-1:0];

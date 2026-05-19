@@ -1,6 +1,6 @@
 /// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 4+EXTRA_STAGES end-to-end.
+/// Register stages: 4+STAGE_INPUT end-to-end.
 ///
 /// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,
 /// zero produces zero, and finite in-range values are round-to-nearest, ties-to-even.
@@ -8,10 +8,10 @@
 `default_nettype none
 
 module zkf_to_int #(
-    parameter WEXP           = 6,
-    parameter WMAN           = 18,
-    parameter WINT           = 32,
-    parameter EXTRA_STAGES = 0     // optional extra register stages, placed module-internally (zero-cost when 0)
+    parameter WEXP        = 6,
+    parameter WMAN        = 18,
+    parameter WINT        = 32,
+    parameter STAGE_INPUT = 0   // whether to add a stage at the input (shields inputs from combinational paths)
 ) (
     input wire clk,
     input wire rst,
@@ -78,10 +78,10 @@ module zkf_to_int #(
     localparam signed [WEU-1:0] LEFT_SHIFT_BASE_EXT = $signed({1'b0, LEFT_SHIFT_BASE[WEU-2:0]});
     localparam signed [WEU-1:0] LEFT_SHIFT_OFFSET   = -LEFT_SHIFT_BASE_EXT;
 
-    // Optional extra register stages (placement is this module's choice; here we put them at the input via _zkf_pipe). When EXTRA_STAGES=0 the pipe collapses to wires (zero hardware cost).
+    // Optional input register stage.
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
-    _zkf_pipe #(.W(WFULL), .N(EXTRA_STAGES)) u_input_pipe (
+    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in(a),
         .out_valid(in_valid_q), .out(a_q)

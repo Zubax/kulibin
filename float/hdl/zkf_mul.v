@@ -1,11 +1,11 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 3 (EXTRA_STAGES=0) or 4 (EXTRA_STAGES>=1) end-to-end.
+/// Register stages: 3 (STAGE_PRODUCT=0) or 4 (STAGE_PRODUCT>=1) end-to-end.
 ///
-/// EXTRA_STAGES=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
+/// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
 ///   is one combinational hop into the s1_mag register. Use this when the inferred cascade closes timing in one cycle.
 ///
-/// EXTRA_STAGES>=1: split the product into a 2*2 grid of (ceil(WMAN/2)) wide partial products, register them,
+/// STAGE_PRODUCT>=1: split the product into a 2*2 grid of (ceil(WMAN/2)) wide partial products, register them,
 ///   then sum in the next cycle. Synthesis tools absorb the partial-product registers as DSP output registers and
 ///   the sum as the ALU54B-style cascade, splitting the chain across two clock periods. Costs one extra pipeline
 ///   cycle of latency. Values above 1 are treated as 1; further splits are reserved for future expansion.
@@ -13,9 +13,9 @@
 `default_nettype none
 
 module zkf_mul #(
-    parameter WEXP         = 6,    // exponent field width
-    parameter WMAN         = 18,   // significand precision including the hidden bit
-    parameter EXTRA_STAGES = 0     // 0 = single-cycle product; >=1 = split DSP cascade (+1 cycle)
+    parameter WEXP          = 6,    // exponent field width
+    parameter WMAN          = 18,   // significand precision including the hidden bit
+    parameter STAGE_PRODUCT = 0     // 0 = single-cycle product; >=1 = split DSP cascade (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -72,8 +72,8 @@ module zkf_mul #(
     wire pre_force_zero = result_zero;
     wire pre_force_inf  = result_inf;
 
-    // -- Magnitude source. ES=0 drives the combinational a*b straight into the s1 capture;
-    // ES>=1 registers a 2*2 grid of partial products and combines them in the next cycle.
+    // -- Magnitude source. STAGE_PRODUCT=0 drives the combinational a*b straight into the s1 capture;
+    // STAGE_PRODUCT>=1 registers a 2*2 grid of partial products and combines them in the next cycle.
     wire                            mag_src_valid;
     wire                            mag_src_sign;
     wire signed [WEXP_UNBIASED-1:0] mag_src_exp_base;
@@ -82,7 +82,7 @@ module zkf_mul #(
     wire                 [WMAG-1:0] mag_src;
 
     generate
-        if (EXTRA_STAGES == 0) begin : g_mul_unsplit
+        if (STAGE_PRODUCT == 0) begin : g_mul_unsplit
             assign mag_src            = a_significand * b_significand;
             assign mag_src_valid      = in_valid;
             assign mag_src_sign       = pre_sign;

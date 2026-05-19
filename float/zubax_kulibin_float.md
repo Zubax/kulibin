@@ -223,7 +223,7 @@ References:
 
 # Required Modules
 
-Results of all public (end-user) modules must be registered.
+Results of all public (end-user) sequential (non-combinational) modules must be registered.
 
 Arbitrary hardcoded widths are not allowed; all width parameters must be ultimately derived from WEXP and WMAN.
 
@@ -565,11 +565,27 @@ target overflow maps to signed infinity
 
 ---
 
-## 12. Sqrt/log2/exp2
+## 12. Sqrt/log2/exp2, integer detection
 
 These may be FSM-based instead of streaming, which would necessitate in_ready/out_ready; this remains to be seen.
 
+Specifically `zkf_log2` and `zkf_exp2` can be used later to build arbitrary log/exp.
+
 ```verilog
+// Check whether the floating point number is an exact integer; classify even/odd.
+// The output is one-hot for integers. For non-integers and non-finite numbers both are zero.
+module zkf_is_int #(parameter WEXP = 6, parameter WMAN = 18) (
+    input wire clk,
+    input wire rst,
+
+    input wire                 in_valid,
+    input wire [WEXP+WMAN-1:0] x,
+
+    output wire out_valid,
+    output wire is_odd,
+    output wire is_even
+);
+
 /// sqrt(+0)       = +0
 /// sqrt(finite>0) = correctly rounded sqrt(x)
 /// sqrt(+inf)     = +inf

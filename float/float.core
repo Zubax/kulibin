@@ -39,7 +39,6 @@ filesets:
   rtl_add:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -95,7 +94,6 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
       - hdl/_zkf_lod.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -109,7 +107,6 @@ filesets:
 
   rtl_mul_ilog2_const:
     files:
-      - hdl/_zkf_pipe.v
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
@@ -293,11 +290,19 @@ parameters:
     datatype: int
     default: 11
     paramtype: plusarg
-  EXTRA_STAGES:
+  STAGE_INPUT:
     datatype: int
     default: 0
     paramtype: vlogparam
-  ZKF_EXTRA_STAGES:
+  ZKF_STAGE_INPUT:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  STAGE_PRODUCT:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_PRODUCT:
     datatype: int
     default: 0
     paramtype: plusarg
@@ -365,17 +370,17 @@ targets:
       cocotb_module: test_mul
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: &float_binary_params_es
+    parameters: &float_binary_params_sp
       - WEXP
       - WMAN
-      - EXTRA_STAGES
+      - STAGE_PRODUCT
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
-      - ZKF_EXTRA_STAGES
+      - ZKF_STAGE_PRODUCT
 
   sim_mul_verilator:
     filesets: [rtl_mul, tb_cocotb]
@@ -394,7 +399,7 @@ targets:
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
-    parameters: *float_binary_params_es
+    parameters: *float_binary_params_sp
 
   sim_add_icarus:
     filesets: [rtl_add, tb_cocotb]
@@ -403,99 +408,6 @@ targets:
     flow_options:
       tool: icarus
       cocotb_module: test_add
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_add_verilator:
-    filesets: [rtl_add, tb_cocotb]
-    toplevel: zkf_add
-    flow: sim
-    flow_options:
-      <<: *verilator_binary_flow
-      cocotb_module: test_add
-    parameters: *float_binary_params_es
-
-  sim_div_icarus:
-    filesets: [rtl_div, tb_cocotb]
-    toplevel: zkf_div
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_div
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_div_verilator:
-    filesets: [rtl_div, tb_cocotb]
-    toplevel: zkf_div
-    flow: sim
-    flow_options:
-      <<: *verilator_binary_flow
-      cocotb_module: test_div
-    parameters: *float_binary_params_es
-
-  sim_addsub_icarus:
-    filesets: [rtl_addsub, tb_cocotb]
-    toplevel: zkf_addsub
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_addsub
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_addsub_verilator:
-    filesets: [rtl_addsub, tb_cocotb]
-    toplevel: zkf_addsub
-    flow: sim
-    flow_options:
-      <<: *verilator_binary_flow
-      cocotb_module: test_addsub
-    parameters: *float_binary_params_es
-
-  sim_properties_mul_icarus:
-    filesets: [rtl_mul, tb_cocotb]
-    toplevel: zkf_mul
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_properties
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_properties_add_icarus:
-    filesets: [rtl_add, tb_cocotb]
-    toplevel: zkf_add
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_properties
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_properties_addsub_icarus:
-    filesets: [rtl_addsub, tb_cocotb]
-    toplevel: zkf_addsub
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_properties
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
-
-  sim_abs_icarus:
-    filesets: [rtl_abs, tb_cocotb]
-    toplevel: zkf_abs
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_abs
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
     parameters: &float_binary_params
@@ -507,6 +419,109 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+
+  sim_add_verilator:
+    filesets: [rtl_add, tb_cocotb]
+    toplevel: zkf_add
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_add
+    parameters: *float_binary_params
+
+  sim_div_icarus:
+    filesets: [rtl_div, tb_cocotb]
+    toplevel: zkf_div
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_div
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_binary_params_si
+      - WEXP
+      - WMAN
+      - STAGE_INPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+
+  sim_div_verilator:
+    filesets: [rtl_div, tb_cocotb]
+    toplevel: zkf_div
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_div
+    parameters: *float_binary_params_si
+
+  sim_addsub_icarus:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_addsub
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_addsub_verilator:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_addsub
+    parameters: *float_binary_params
+
+  sim_properties_mul_icarus:
+    filesets: [rtl_mul, tb_cocotb]
+    toplevel: zkf_mul
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params_sp
+
+  sim_properties_add_icarus:
+    filesets: [rtl_add, tb_cocotb]
+    toplevel: zkf_add
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_properties_addsub_icarus:
+    filesets: [rtl_addsub, tb_cocotb]
+    toplevel: zkf_addsub
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_properties
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
+
+  sim_abs_icarus:
+    filesets: [rtl_abs, tb_cocotb]
+    toplevel: zkf_abs
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_abs
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: *float_binary_params
 
   sim_abs_verilator:
     filesets: [rtl_abs, tb_cocotb]
@@ -684,7 +699,7 @@ targets:
       cocotb_module: test_mul_ilog2_const
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params_es
+    parameters: *float_binary_params
 
   sim_mul_ilog2_const_verilator:
     filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
@@ -693,7 +708,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_mul_ilog2_const
-    parameters: *float_binary_params_es
+    parameters: *float_binary_params
 
   sim_from_int_icarus:
     filesets: [rtl_from_int, tb_cocotb]
@@ -708,7 +723,7 @@ targets:
       - WEXP
       - WMAN
       - WINT
-      - EXTRA_STAGES
+      - STAGE_INPUT
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_WINT
@@ -716,7 +731,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
-      - ZKF_EXTRA_STAGES
+      - ZKF_STAGE_INPUT
 
   sim_from_int_verilator:
     filesets: [rtl_from_int, tb_cocotb]
@@ -761,7 +776,7 @@ targets:
       - WMAN_IN
       - WEXP_OUT
       - WMAN_OUT
-      - EXTRA_STAGES
+      - STAGE_INPUT
       - ZKF_WEXP_IN
       - ZKF_WMAN_IN
       - ZKF_WEXP_OUT
@@ -770,7 +785,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
-      - ZKF_EXTRA_STAGES
+      - ZKF_STAGE_INPUT
 
   sim_resize_verilator:
     filesets: [rtl_resize, tb_cocotb]

@@ -142,7 +142,7 @@ async def mul_ilog2_const_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.a.value = 0
 
-    register_stages = 1 + context.extra_stages
+    register_stages = 1
     outputs = {port: (getattr(dut, port), fmt.wfull) for port in ports}
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, outputs)
 

@@ -353,7 +353,7 @@ async def add_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = 6 + context.extra_stages
+    register_stages = 6
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddCase) -> dict[str, int]:

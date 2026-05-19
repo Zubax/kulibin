@@ -142,7 +142,7 @@ async def resize_runtime_cases(dut) -> None:
     # dimensions) and 2 stages when the value must flow through _zkf_pack for rounding or
     # overflow handling.
     widen_only = (fmt_out.wman >= fmt_in.wman) and (fmt_out.wexp >= fmt_in.wexp)
-    register_stages = (1 if widen_only else 2) + context.extra_stages
+    register_stages = (1 if widen_only else 2) + context.stage_input
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt_out.wfull)})
 
     def drive_case(case: ResizeCase) -> dict[str, int]:

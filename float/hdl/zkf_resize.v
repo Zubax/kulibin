@@ -1,8 +1,8 @@
 /// Streamed cast between two Zubax Kulibin float formats.
 /// The outputs are latched and are only valid when out_valid is asserted.
 /// Register stages depend on the format relation:
-///   1+EXTRA_STAGES stages when WMAN_OUT >= WMAN_IN and WEXP_OUT >= WEXP_IN. The output format is a superset.
-///   2+EXTRA_STAGES stages otherwise (using _zkf_pack like other arithmetic modules do).
+///   1+STAGE_INPUT stages when WMAN_OUT >= WMAN_IN and WEXP_OUT >= WEXP_IN. The output format is a superset.
+///   2+STAGE_INPUT stages otherwise (using _zkf_pack like other arithmetic modules do).
 ///
 /// Behaviour:
 ///   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
@@ -14,11 +14,11 @@
 `default_nettype none
 
 module zkf_resize #(
-    parameter WEXP_IN        = 6,
-    parameter WMAN_IN        = 18,
-    parameter WEXP_OUT       = 5,
-    parameter WMAN_OUT       = 11,
-    parameter EXTRA_STAGES = 0    // optional extra register stages, placed module-internally (zero-cost when 0)
+    parameter WEXP_IN     = 6,
+    parameter WMAN_IN     = 18,
+    parameter WEXP_OUT    = 5,
+    parameter WMAN_OUT    = 11,
+    parameter STAGE_INPUT = 0
 ) (
     input wire clk,
     input wire rst,
@@ -42,10 +42,10 @@ module zkf_resize #(
     localparam WFULL_IN  = WEXP_IN  + WMAN_IN;
     localparam WFULL_OUT = WEXP_OUT + WMAN_OUT;
 
-    // Optional extra register stages (placement is this module's choice; here we put them at the input via _zkf_pipe). When EXTRA_STAGES=0 the pipe collapses to wires (zero hardware cost).
+    // Optional input register stage.
     wire                in_valid_q;
     wire [WFULL_IN-1:0] a_q;
-    _zkf_pipe #(.W(WFULL_IN), .N(EXTRA_STAGES)) u_input_pipe (
+    _zkf_pipe #(.W(WFULL_IN), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in(a),
         .out_valid(in_valid_q), .out(a_q)

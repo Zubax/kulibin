@@ -75,17 +75,17 @@ async def drive_and_capture(dut, a: int, b: int, stages: int) -> int:
     return int(dut.y.value)
 
 
-def infer_stages(dut, extra_stages: int = 0) -> int:
-    """Map module name → pipeline depth. Knobs are simply hardcoded here for the supported toplevels.
-    Adds the optional REGISTER_INPUT extension that every in-scope timing-tight module honours."""
+def infer_stages(dut, stage_product: int = 0) -> int:
+    """Map module name → pipeline depth. Knobs are hardcoded per supported toplevel.
+    zkf_add and zkf_addsub no longer take any pipeline knob; zkf_mul has STAGE_PRODUCT."""
     name = str(dut._name)
     if "mul" in name:
-        # zkf_mul: ES=0 -> 3 stages; ES>=1 -> 4 stages (DSP cascade split). Values >1 clamp.
-        return 3 + (1 if extra_stages >= 1 else 0)
+        # zkf_mul: STAGE_PRODUCT=0 -> 3 stages; >=1 -> 4 stages (DSP cascade split). Values >1 clamp.
+        return 3 + (1 if stage_product >= 1 else 0)
     if "addsub" in name:
-        return 6 + extra_stages
+        return 6
     if "add" in name:
-        return 6 + extra_stages
+        return 6
     raise RuntimeError(f"unknown toplevel for property test: {name}")
 
 
@@ -96,7 +96,7 @@ async def commutativity(dut) -> None:
     check_width("a", dut.a, fmt.wfull, context)
     check_width("b", dut.b, fmt.wfull, context)
     check_width("y", dut.y, fmt.wfull, context)
-    stages = infer_stages(dut, context.extra_stages)
+    stages = infer_stages(dut, context.stage_product)
 
     start_clock(dut)
     await reset_dut(dut, stages)
