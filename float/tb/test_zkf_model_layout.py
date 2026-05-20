@@ -24,10 +24,17 @@ from zkf_model import (  # noqa: E402
     _bits_to_numpy,
     _canonicalize_numpy_result,
     _numpy_to_bits,
+    add_reference,
     canonical_inf,
     decode,
+    div_reference,
+    hex_bits,
     mask,
+    mul_reference,
     normal,
+    numpy_add_reference,
+    numpy_div_reference,
+    numpy_mul_reference,
     pack_bits,
     pow2_fraction,
     round_fraction_to_zkf,
@@ -217,6 +224,58 @@ class ZkfModelLayoutTest(unittest.TestCase):
         for fmt, bits, expected in cases:
             with self.subTest(fmt=fmt, bits=f"0x{bits:0{fmt.wfull // 4}x}"):
                 self.assertEqual(_canonicalize_numpy_result(fmt, bits), expected)
+
+    def _canonical_operands(self, fmt: ZkfFormat, seed: int, n_random: int) -> list[int]:
+        """Canonical operands (the only kind numpy_*_reference accepts), biased toward the corners and
+        toward small magnitudes so products/quotients exercise the underflow/flush boundary."""
+        rng = random.Random(seed)
+        ops = [
+            zero(fmt),
+            normal(fmt, 0, 1, 0), normal(fmt, 1, 1, 0),                                  # +/- min_normal
+            normal(fmt, 0, 2, 0),                                                        # 2*min_normal
+            normal(fmt, 0, fmt.bias - 1, 0),                                             # 0.5
+            normal(fmt, 0, fmt.bias, 0), normal(fmt, 1, fmt.bias, 0),                    # +/- 1
+            normal(fmt, 0, fmt.bias + 1, fmt.frac_mask),                                 # ~3.99
+            normal(fmt, 0, fmt.exp_max_finite, fmt.frac_mask),
+            normal(fmt, 1, fmt.exp_max_finite, fmt.frac_mask),                           # +/- max_finite
+            canonical_inf(fmt, 0), canonical_inf(fmt, 1),
+        ]
+        for _ in range(n_random):
+            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.exp_max_finite),
+                              rng.getrandbits(fmt.wfrac)))
+        # Small-magnitude operands (exp <= bias) so pairwise products underflow into the flush region.
+        for _ in range(n_random):
+            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.bias),
+                              rng.getrandbits(fmt.wfrac)))
+        return ops
+
+    def test_model_operations_match_numpy(self) -> None:
+        """Cross-check the model's mul/add/div against the IEEE FPU (via NumPy) for the two formats
+        where ZKF coincides with IEEE 754. The model is the oracle for every other format, so a
+        disagreement here would mean the oracle itself is wrong - a high-severity finding."""
+        for fmt, seed in ((BINARY32, 0x32A11), (BINARY64, 0x64A11)):
+            w = fmt.wfull
+            ops = self._canonical_operands(fmt, seed, n_random=28)
+            for a in ops:
+                for b in ops:
+                    want_mul = numpy_mul_reference(fmt, a, b)
+                    if want_mul is not None:
+                        got = mul_reference(fmt, a, b)
+                        self.assertEqual(got, want_mul,
+                                         f"mul {hex_bits(a, w)}*{hex_bits(b, w)}: "
+                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_mul, w)}")
+                    want_add = numpy_add_reference(fmt, a, b)
+                    if want_add is not None:
+                        got = add_reference(fmt, a, b)
+                        self.assertEqual(got, want_add,
+                                         f"add {hex_bits(a, w)}+{hex_bits(b, w)}: "
+                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_add, w)}")
+                    want_div = numpy_div_reference(fmt, a, b)
+                    if want_div is not None:
+                        got = div_reference(fmt, a, b)
+                        self.assertEqual(got, want_div,
+                                         f"div {hex_bits(a, w)}/{hex_bits(b, w)}: "
+                                         f"model={got} numpy={want_div}")
 
     def test_random_binary32_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY32, np.float32, count=5000, seed=0x32F17A)

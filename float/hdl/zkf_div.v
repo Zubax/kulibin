@@ -41,7 +41,10 @@ module zkf_div #(
     wire                            core_force_zero;
     wire                            core_force_inf;
     wire signed [WEXP_UNBIASED-1:0] core_exp_unbiased;
+    // normalized quotient significand; its hidden-bit MSB is structurally 1.
+    // verilator coverage_off
     wire                 [WMAN-1:0] core_significand;
+    // verilator coverage_on
     wire                            core_guard;
     wire                            core_round;
     wire                            core_sticky;

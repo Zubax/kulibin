@@ -122,9 +122,10 @@ module zkf_mul_ilog2_const #(
 
     // Output candidate forms. Canonicalisation is implicit: zero has sign/frac cleared, infinity has frac cleared.
     // verilator coverage_off
+    // Constant special-value encodings: only the sign bit varies; exponent/fraction fields are constant.
     wire [WFULL-1:0] y_inf_w        = {a_sign, EXP_INF, {WFRAC{1'b0}}};
-    // verilator coverage_on
     wire [WFULL-1:0] y_min_normal_w = {a_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+    // verilator coverage_on
     wire [WFULL-1:0] y_normal_w     = {a_sign, new_exp, a_frac};
 
     // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
@@ -169,8 +170,11 @@ module zkf_mul_ilog2_const #(
                 r_frac                 <= a_frac;
             end
 
+            // verilator coverage_off
+            // Constant special-value encodings (registered): only the sign bit varies.
             wire [WFULL-1:0] r_y_inf_w        = {r_sign, EXP_INF, {WFRAC{1'b0}}};
             wire [WFULL-1:0] r_y_min_normal_w = {r_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+            // verilator coverage_on
             wire [WFULL-1:0] r_y_normal_w     = {r_sign, r_new_exp, r_frac};
 
             always @(posedge clk) begin

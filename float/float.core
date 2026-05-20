@@ -57,6 +57,16 @@ filesets:
       - hdl/_zkf_pipe.v
     file_type: verilogSource
 
+  rtl_lod:
+    files:
+      - hdl/_zkf_lod.v
+    file_type: verilogSource
+
+  rtl_rshift:
+    files:
+      - hdl/_zkf_rshift_sticky.v
+    file_type: verilogSource
+
   rtl_abs:
     files:
       - hdl/zkf_abs.v
@@ -319,6 +329,22 @@ parameters:
     default: 0
     paramtype: vlogparam
   ZKF_STAGE_DECODE:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  STAGE_SPLIT:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_LOD_W:
+    datatype: int
+    default: 8
+    paramtype: plusarg
+  ZKF_RSH_W:
+    datatype: int
+    default: 8
+    paramtype: plusarg
+  ZKF_RSH_SPLIT:
     datatype: int
     default: 0
     paramtype: plusarg
@@ -697,6 +723,80 @@ targets:
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
     parameters: *pipe_params
+
+  sim_lod_icarus:
+    filesets: [rtl_lod, tb_cocotb]
+    toplevel: _zkf_lod
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_lod
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &lod_params
+      - W
+      - ZKF_LOD_W
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_lod_verilator:
+    filesets: [rtl_lod, tb_cocotb]
+    toplevel: _zkf_lod
+    flow: sim
+    flow_options:
+      tool: verilator
+      cocotb_module: test_lod
+      verilator_options:
+        - --timing
+        - -Wno-TIMESCALEMOD
+        - -Wno-WIDTHEXPAND
+        - -Wno-WIDTHTRUNC
+        - -Wno-DECLFILENAME
+        - -Wno-UNOPTFLAT
+        - --coverage-line
+        - --coverage-toggle
+      run_options: [+verilator+coverage+file+coverage.dat]
+    parameters: *lod_params
+
+  sim_rshift_icarus:
+    filesets: [rtl_rshift, tb_cocotb]
+    toplevel: _zkf_rshift_sticky
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_rshift
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &rshift_params
+      - W
+      - STAGE_SPLIT
+      - ZKF_RSH_W
+      - ZKF_RSH_SPLIT
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_rshift_verilator:
+    filesets: [rtl_rshift, tb_cocotb]
+    toplevel: _zkf_rshift_sticky
+    flow: sim
+    flow_options:
+      tool: verilator
+      cocotb_module: test_rshift
+      verilator_options:
+        - --timing
+        - -Wno-TIMESCALEMOD
+        - -Wno-WIDTHEXPAND
+        - -Wno-WIDTHTRUNC
+        - -Wno-DECLFILENAME
+        - -Wno-UNOPTFLAT
+        - --coverage-line
+        - --coverage-toggle
+      run_options: [+verilator+coverage+file+coverage.dat]
+    parameters: *rshift_params
 
   sim_const_icarus:
     filesets: [rtl_const, tb_const_wrap, tb_cocotb]

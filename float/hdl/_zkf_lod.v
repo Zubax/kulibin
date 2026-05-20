@@ -30,6 +30,12 @@ module _zkf_lod #(
 );
     localparam WIDX = $clog2(W);
 
+    // verilator coverage_off
+    // The flat tree arrays carry position-determined CONSTANT shift amounts (each leaf slot is its compile-time
+    // LEAF_SHIFT) muxed by validity, and the array is intentionally over-allocated (see header) so most slots are
+    // undriven. Their bits are therefore structurally non-toggling. The detector's behaviour is verified end-to-end
+    // through the outputs (zero/shamt) by the sim_lod bench and by every caller, so toggle coverage is suppressed
+    // on the internal representation only.
     wire [((WIDX + 1) * W)-1:0]        valid_stage;
     wire [((WIDX + 1) * W * WIDX)-1:0] shamt_stage;
 
@@ -68,6 +74,7 @@ module _zkf_lod #(
             end
         end
     endgenerate
+    // verilator coverage_on
 
     wire [WIDX-1:0] shamt_root = shamt_stage[(WIDX * W * WIDX) +: WIDX];
 

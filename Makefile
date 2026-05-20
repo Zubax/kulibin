@@ -121,7 +121,7 @@ FLOAT_RESIZE_MATRIX = \
 .PHONY: \
 	verify verify-deep verify-float verify-float-fast verify-float-deep verify-float-extended \
 	verify-float-model verify-float-icarus verify-float-verilator verify-float-properties \
-	verify-synth coverage-float-report coverage-float-gate formal-float formal-float-clean \
+	verify-synth coverage-float-report coverage-float-gate coverage-float-gate-full formal-float formal-float-clean \
 	lint library synth-float synth-float-yosys-ecp5 synth-float-yosys-spartan7 synth-float-diamond-ecp5 clean
 
 verify: library
@@ -523,6 +523,20 @@ coverage-float-report:
 coverage-float-gate:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator --output-dir build/float/coverage --gate
 
+## Deep-tier-only extended sweep: fills the parity/relation/WINT parameter gaps (correctness, Icarus) and
+## drives a curated set of exhaustive small-format Verilator runs into build/float/verilator-toggle for
+## full line+branch+toggle coverage closure. Per-PR verify/verify-float never invoke this.
+verify-float-extended: library
+	@FUSESOC="$(FUSESOC)" PYTHON="$(PYTHON)" FLOAT_SEED="$(FLOAT_SEED)" PYTHONPATH="$(FLOAT_PYTHONPATH)" \
+		bash float/tb/run_extended.sh
+
+## Full coverage gate over the exhaustive coverage set: every line, branch, and toggle must be covered.
+## Genuinely-unreachable points are suppressed in the RTL with `// verilator coverage_off`/`coverage_on`
+## (no external waiver list). Deep-tier only.
+coverage-float-gate-full:
+	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator-toggle \
+		--output-dir build/float/coverage-full --full
+
 ## Minimal smoke suite intended for interactive use between edits. Runs in well under a minute on a workstation.
 ## Compiles every public module under Icarus at its smallest exhaustive configuration; modules with a pipeline knob
 ## also run the same configuration with their knob set (STAGE_PRODUCT=1 for mul, STAGE_INPUT=1 for div/cast/resize)
@@ -572,6 +586,8 @@ verify-float-fast: library
 
 verify-float-deep: library
 	@$(MAKE) verify-float
+	@$(MAKE) verify-float-extended
+	@$(MAKE) coverage-float-gate-full
 	@$(MAKE) verify-float-properties
 	@$(MAKE) formal-float
 
@@ -579,6 +595,8 @@ verify-float-deep: library
 ## This is what runs in CI on the main branch and on commits whose message contains "#ci-float".
 verify-deep: library
 	@$(MAKE) verify
+	@$(MAKE) verify-float-extended
+	@$(MAKE) coverage-float-gate-full
 	@$(MAKE) verify-float-properties
 	@$(MAKE) formal-float
 	@echo "Maximum-verification suite (project + float-properties + float-formal) passed."

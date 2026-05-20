@@ -34,20 +34,24 @@ module _zkf_rshift_sticky #(
     // after, balancing mux levels across the register.
     localparam SPLIT_AFTER = NSTAGE / 2;
 
-    // Cascade state: data[i] and sticky[i] are the *input* to stage i. Each stage produces a pair
-    // of combinational outputs data_pre[i+1]/sticky_pre[i+1], which then feed data[i+1]/sticky[i+1]
-    // either directly (combinational) or through a register barrier (when STAGE_SPLIT != 0 and
-    // i == SPLIT_AFTER).
+    // Cascade state: data[i] and sticky[i] are the *input* to stage i. Each stage produces a pair of combinational
+    // outputs data_pre[i+1]/sticky_pre[i+1], which then feed data[i+1]/sticky[i+1] either directly (combinational)
+    // or through a register barrier (when STAGE_SPLIT != 0 and i == SPLIT_AFTER).
+    // verilator coverage_off
+    // Per-stage cascade state/intermediates: stages whose shift exceeds W saturate to a constant 0 and the
+    // arrays are over-provisioned, so many bits cannot toggle. The shifter is checked exhaustively via the
+    // output y by sim_rshift (including the over-range saturation path); these internals are suppressed.
     wire [W-1:0] data       [0:NSTAGE];
     wire         sticky     [0:NSTAGE];
     wire [W-1:0] data_pre   [0:NSTAGE];   // index 0 unused
     wire         sticky_pre [0:NSTAGE];   // index 0 unused
+    // verilator coverage_on
     assign data[0]   = x;
     assign sticky[0] = 1'b0;
 
-    // When STAGE_SPLIT != 0, the late half of the cascade fires one cycle after `shamt` was applied,
-    // so those stages must read a registered copy. shamt_late is that copy (combinational alias of
-    // shamt when STAGE_SPLIT == 0). Early stages always read the live shamt directly.
+    // When STAGE_SPLIT != 0, the late half of the cascade fires one cycle after `shamt` was applied, so those stages
+    // must read a registered copy. shamt_late is that copy (combinational alias of shamt when STAGE_SPLIT == 0).
+    // Early stages always read the live shamt directly.
     wire [WSHIFT-1:0] shamt_late;
     generate
         if (STAGE_SPLIT == 0) begin : g_shamt_pass
@@ -88,6 +92,12 @@ module _zkf_rshift_sticky #(
                 assign sel = 2'b00;
             end
 
+            // verilator coverage_off
+            // Radix-4 shift candidates and per-stage mux outputs: stages whose shift exceeds W saturate to a constant
+            // 0, and intermediate widths are over-provisioned, so many of these bits cannot toggle. The shifter's
+            // behavior - including the over-range saturation path - is checked exhaustively by the sim_rshift bench
+            // through the output y; only the internal candidates are suppressed here.
+            // data[]/sticky[] (the stage results) and y stay covered.
             wire [W-1:0] d0 = data[i];
             wire [W-1:0] d1;
             wire [W-1:0] d2;
@@ -127,6 +137,7 @@ module _zkf_rshift_sticky #(
                                    | ((sel == 2'd1) & l1)
                                    | ((sel == 2'd2) & l2)
                                    | ((sel == 2'd3) & l3);
+            // verilator coverage_on
         end
     endgenerate
 
@@ -151,10 +162,10 @@ module _zkf_rshift_sticky #(
         end
     endgenerate
 
-    // Top-of-range saturation: if shamt has bits set above what the cascade consumes, collapse to
-    // {0, |x}. The check and its |x companion must come from the same cycle as the data the cascade
-    // produced, so when STAGE_SPLIT != 0 we register both alongside the cascade's data/sticky barrier.
-    // With WSHIFT <= WPAIR the check resolves to a constant 1'b0 at elaboration.
+    // Top-of-range saturation: if shamt has bits set above what the cascade consumes, collapse to {0, |x}. The check
+    // and its |x companion must come from the same cycle as the data the cascade produced, so when STAGE_SPLIT != 0
+    // we register both alongside the cascade's data/sticky barrier. With WSHIFT <= WPAIR the check resolves to a
+    // constant 1'b0 at elaboration.
     wire shamt_ge_w_use;
     wire x_or_use;
     generate

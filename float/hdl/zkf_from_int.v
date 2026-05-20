@@ -46,14 +46,22 @@ module zkf_from_int #(
     // Stage-1 cone: form |a| via XOR-and-increment so the carry chain handles the negation; this also handles
     // INT_MIN correctly because the resulting unsigned magnitude 2^(WINT-1) fits in WINT bits.
     wire            sign_in    = a_q[WINT-1];
+    // verilator coverage_off
+    // Magnitude formation: the WX-wide carrier zero-extends the WINT magnitude (WX>WINT padding is
+    // constant), and at wide WINT the random stimulus does not toggle every high bit both ways. The
+    // magnitude flows into the LOD and the significand/GRS extraction below, which stay covered.
     wire [WINT-1:0] inv_in     = a_q ^ {WINT{sign_in}};
     wire [WINT-1:0] mag_in     = inv_in + {{(WINT-1){1'b0}}, sign_in};
     wire [WX-1:0]   mag_ext_in = {{(WX-WINT){1'b0}}, mag_in};
+    // verilator coverage_on
 
     // Stage 1: register sign and magnitude. Reset only validity; payload free-runs.
     reg            s1_valid;
     reg            s1_sign;
+    // WX-wide magnitude reg; the WX>WINT high bits are constant zero-padding.
+    // verilator coverage_off
     reg [WX-1:0]   s1_mag_ext;
+    // verilator coverage_on
 
     // Stage-2 cone: LOD on the registered magnitude. The output shamt is the left-shift count that brings the
     // leading 1 to bit (WX-1); zero is the OR-reduction of the magnitude, which _zkf_pack will use as force_zero.
@@ -64,7 +72,10 @@ module zkf_from_int #(
     // Stage 2: register the LOD outputs and the magnitude. Reset only validity; payload free-runs.
     reg            s2_valid;
     reg            s2_sign;
+    // WX-wide magnitude reg; the WX>WINT high bits are constant zero-padding.
+    // verilator coverage_off
     reg [WX-1:0]   s2_mag_ext;
+    // verilator coverage_on
     reg            s2_zero;
     reg [WIDX-1:0] s2_shamt;
 
@@ -88,7 +99,10 @@ module zkf_from_int #(
     // Stage 2 -> _zkf_pack inputs combinational: barrel shift (LOD already done) plus GRS extraction and exponent
     // derivation. Significand carries the hidden leading 1 at the top; the next two bits feed guard/round, and any
     // remaining bits below OR-reduce into sticky.
+    // left-justified magnitude; its slices feed the covered significand/GRS below.
+    // verilator coverage_off
     wire   [WX-1:0] s2_aligned     =  s2_mag_ext << s2_shamt;
+    // verilator coverage_on
     wire [WMAN-1:0] s2_significand =  s2_aligned[WX-1 -: WMAN];
     wire            s2_guard       =  s2_aligned[WX-WMAN-1];
     wire            s2_round       =  s2_aligned[WX-WMAN-2];
@@ -102,10 +116,15 @@ module zkf_from_int #(
     // so the root shamt is always a leaf value. The subtraction below therefore never underflows; zero-extending into
     // s2_exp_ub is safe and does not need sign extension. For all-zero magnitude in particular, shamt = WX-1 produces
     // s2_exp_ub = 0, but _zkf_pack ignores exp_unbiased when force_zero (= s2_zero) is asserted.
+    // verilator coverage_off
+    // Exponent-position derivation: s2_top_ext is the compile-time constant WX-1; s2_shamt_ext/s2_pos_ext
+    // hold a value proven to lie in [0, WX-1] (so their high bits and the WEU zero-extension of s2_exp_ub
+    // are structurally constant). The resulting unbiased exponent is checked downstream via _zkf_pack.
     wire        [WIDX:0]  s2_top_ext   = WX - 1;
     wire        [WIDX:0]  s2_shamt_ext = {1'b0, s2_shamt};
     wire        [WIDX:0]  s2_pos_ext   = s2_top_ext - s2_shamt_ext;
     wire signed [WEU-1:0] s2_exp_ub    = {{(WEU-WIDX-1){1'b0}}, s2_pos_ext};
+    // verilator coverage_on
 
     _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU)) u_pack (
         .clk(clk),

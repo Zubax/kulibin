@@ -51,7 +51,10 @@ module _zkf_pack #(
 
     // Input combinational exponent classification. Values exactly one exponent below the normal range are at or above
     // the zero/MIN_NORMAL midpoint, so they round directly to MIN_NORMAL. Lower exponents round to canonical zero.
+    // bias_ext is a compile-time-constant bias widened with constant padding.
+    // verilator coverage_off
     wire signed [WEXP_BIASED_EXT-1:0] bias_ext            = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
+    // verilator coverage_on
     wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext    = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
     wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext      = exp_unbiased_ext + bias_ext;
     wire                   [WEXP-1:0] exp_biased          = exp_biased_ext[WEXP-1:0];
@@ -100,10 +103,13 @@ module _zkf_pack #(
     wire             s1_result_infinity   = !s1_result_zero && s1_infinity;
     wire             s1_result_min_normal = !s1_result_zero && !s1_force_inf && s1_one_below_min;
     // verilator coverage_off
+    // Constant special-value encodings: only the sign bit varies (exercised trivially); the exponent and fraction
+    // fields are compile-time constant so their bits cannot toggle. s1_normal_y below is the real datapath output
+    // and stays covered.
     wire [WFULL-1:0] s1_zero_y            = {WFULL{1'b0}};
-    // verilator coverage_on
     wire [WFULL-1:0] s1_infinity_y        = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
     wire [WFULL-1:0] s1_min_normal_y      = {s1_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+    // verilator coverage_on
     wire [WFULL-1:0] s1_normal_y          = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.

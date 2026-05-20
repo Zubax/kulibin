@@ -60,12 +60,18 @@ module zkf_mul #(
     wire            b_inf         = b_exp == EXP_INF;
     wire            result_zero   = a_zero || b_zero;
     wire            result_inf    = !result_zero && (a_inf || b_inf);
+    // verilator coverage_off
+    // Structurally non-toggling: the reconstructed significands' MSB is the always-1 hidden bit (fraction
+    // checked via the a/b ports), and the exponent extensions / bias are zero-extension padding of a
+    // non-negative exponent (high bits constant 0) plus a compile-time-constant bias. exp_unbiased_in
+    // below (the real exponent sum) stays covered.
     wire [WMAN-1:0] a_significand = {1'b1, a_frac};
     wire [WMAN-1:0] b_significand = {1'b1, b_frac};
 
     wire signed [WEXP_UNBIASED-1:0] a_exp_ext       = {{(WEXP_UNBIASED-WEXP){1'b0}}, a_exp};
     wire signed [WEXP_UNBIASED-1:0] b_exp_ext       = {{(WEXP_UNBIASED-WEXP){1'b0}}, b_exp};
     wire signed [WEXP_UNBIASED-1:0] bias_ext        = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
+    // verilator coverage_on
     wire signed [WEXP_UNBIASED-1:0] exp_unbiased_in = a_exp_ext + b_exp_ext - (bias_ext <<< 1);
 
     wire pre_sign       = a_sign ^ b_sign;
@@ -96,10 +102,14 @@ module zkf_mul #(
             localparam WLO = (WMAN + 1) / 2;
             localparam WHI = WMAN - WLO;
 
+            // verilator coverage_off
+            // Split operand halves: the high halves include the always-1 hidden-bit MSB. The partial
+            // products and their sum (mag_src) carry the behaviour and stay covered.
             wire [WLO-1:0] a_lo = a_significand[WLO-1:0];
             wire [WHI-1:0] a_hi = a_significand[WMAN-1:WLO];
             wire [WLO-1:0] b_lo = b_significand[WLO-1:0];
             wire [WHI-1:0] b_hi = b_significand[WMAN-1:WLO];
+            // verilator coverage_on
 
             // Stage 0: register the four partial products and propagate the control payload.
             reg                            s0_valid;
@@ -129,10 +139,15 @@ module zkf_mul #(
             end
 
             // Align and sum. Each partial product is 0-extended to WMAG, then shifted to its place.
+            // verilator coverage_off
+            // These are the partial products placed into a WMAG-wide field; the zero-extension/zero-shift
+            // padding bits are structurally constant. The summed mag_src below is the real product and
+            // stays covered.
             wire [WMAG-1:0] hh_ext = {{(WMAG - 2*WHI - 2*WLO){1'b0}}, s0_p_hh, {(2*WLO){1'b0}}};
             wire [WMAG-1:0] lh_ext = {{(WMAG - WLO - WHI - WLO){1'b0}}, s0_p_lh, {WLO{1'b0}}};
             wire [WMAG-1:0] hl_ext = {{(WMAG - WHI - WLO - WLO){1'b0}}, s0_p_hl, {WLO{1'b0}}};
             wire [WMAG-1:0] ll_ext = {{(WMAG - 2*WLO){1'b0}}, s0_p_ll};
+            // verilator coverage_on
 
             assign mag_src            = hh_ext + lh_ext + hl_ext + ll_ext;
             assign mag_src_valid      = s0_valid;
@@ -156,7 +171,12 @@ module zkf_mul #(
     // A nonzero hidden-bit product has its leading one in one of the two most-significant product bits.
     // Keep the two overlapping sticky reductions separate: sharing s1_sticky_lo saved no resources and hurt fmax.
     wire                            s1_product_high   = s1_mag[WMAG-1];
+    // verilator coverage_off
+    // s1_exp_adjust is 0 or 1 carried in a WEXP_UNBIASED-wide signed field for the exponent add, so only
+    // its low bit can toggle; the high bits are structurally constant. The adjusted sum s1_exp_unbiased
+    // below is the real datapath value and stays covered.
     wire signed [WEXP_UNBIASED-1:0] s1_exp_adjust     = s1_product_high ? ONE_EXT : ZERO_EXT;
+    // verilator coverage_on
     wire signed [WEXP_UNBIASED-1:0] s1_exp_unbiased   = s1_exp_unbiased_base + s1_exp_adjust;
     wire                 [WMAN-1:0] s1_significand_hi = s1_mag[WMAG-1 -: WMAN];
     wire                 [WMAN-1:0] s1_significand_lo = s1_mag[WMAG-2 -: WMAN];

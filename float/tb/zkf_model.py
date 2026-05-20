@@ -508,13 +508,31 @@ def _canonicalize_numpy_result(fmt: ZkfFormat, bits: int) -> int:
     return item.bits
 
 
+def _ieee_underflowed_to_subnormal(fmt: ZkfFormat, bits: int) -> bool:
+    """True if the raw IEEE result is a (nonzero) subnormal.
+
+    ZKF rounds the *exact* result against the 0.5*MIN_NORMAL flush boundary, whereas the FPU first
+    rounds the exact value to the nearest subnormal (gradual underflow) and we then canonicalize that
+    subnormal. Those are two roundings, and within ~1 ULP of the boundary they can disagree: e.g.
+    binary32 0x80800003 / 0x40000004 has an exact magnitude of 0.99999988*(0.5*MIN_NORMAL) -> ZKF
+    flushes to +0, but float32 rounds the quotient up to the subnormal 0x80400000 which canonicalizes
+    to -MIN_NORMAL. The NumPy result is therefore not a valid oracle for ZKF once it underflows to a
+    subnormal, so callers skip the cross-check there. The exact model itself still defines the value,
+    and the flush boundary is covered by the exhaustive small-format simulations and the formal proofs."""
+    item = decode(fmt, bits)
+    return item.exp == 0 and item.frac != 0
+
+
 def numpy_mul_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int | None:
     dtype = _numpy_dtype(fmt)
     if dtype is None or not is_canonical_numpy_operand(fmt, a_bits) or not is_canonical_numpy_operand(fmt, b_bits):
         return None
     with np.errstate(all="ignore"):
         result = dtype(_bits_to_numpy(a_bits, dtype)) * dtype(_bits_to_numpy(b_bits, dtype))
-    return _canonicalize_numpy_result(fmt, _numpy_to_bits(result, dtype))
+    raw = _numpy_to_bits(result, dtype)
+    if _ieee_underflowed_to_subnormal(fmt, raw):
+        return None
+    return _canonicalize_numpy_result(fmt, raw)
 
 
 def numpy_div_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, int] | None:
@@ -535,7 +553,10 @@ def numpy_div_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> tuple[int, 
 
     with np.errstate(all="ignore"):
         result = dtype(_bits_to_numpy(a_bits, dtype)) / dtype(_bits_to_numpy(b_bits, dtype))
-    return _canonicalize_numpy_result(fmt, _numpy_to_bits(result, dtype)), div0
+    raw = _numpy_to_bits(result, dtype)
+    if _ieee_underflowed_to_subnormal(fmt, raw):
+        return None
+    return _canonicalize_numpy_result(fmt, raw), div0
 
 
 def numpy_add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int | None:
@@ -556,7 +577,30 @@ def numpy_add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int | None:
     rhs = dtype(_bits_to_numpy(b_bits, dtype))
     with np.errstate(all="ignore"):
         result = dtype(lhs + rhs)
-    return _canonicalize_numpy_result(fmt, _numpy_to_bits(result, dtype))
+    raw = _numpy_to_bits(result, dtype)
+    if _ieee_underflowed_to_subnormal(fmt, raw):
+        return None
+    return _canonicalize_numpy_result(fmt, raw)
+
+
+def lod_reference(width: int, value: int) -> tuple[int, int]:
+    """Reference for _zkf_lod: returns (zero, shamt). shamt = (width-1) - leading_one_position, i.e. the
+    left-shift that brings the leading 1 to the MSB. shamt is don't-care when zero is asserted."""
+    value &= mask(width)
+    if value == 0:
+        return 1, 0
+    return 0, (width - 1) - (value.bit_length() - 1)
+
+
+def rshift_sticky_reference(width: int, value: int, shamt: int) -> int:
+    """Reference for _zkf_rshift_sticky: y = value >> shamt, with y[0] OR-collecting every dropped bit
+    (and the bit landing at position 0). For shamt >= width the result is {0, |value}."""
+    value &= mask(width)
+    if shamt >= width:
+        shifted, dropped = 0, value
+    else:
+        shifted, dropped = value >> shamt, value & mask(shamt)
+    return (shifted | (1 if dropped else 0)) & mask(width)
 
 
 def hex_bits(value: int, width: int) -> str:

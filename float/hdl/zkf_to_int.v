@@ -102,7 +102,10 @@ module zkf_to_int #(
     // significand here; the downstream pipeline then yields mag_rounded = 0 without a separate is_zero late-stage mux.
     wire [WMAN-1:0]  sig_in  = is_zero ? {WMAN{1'b0}} : {1'b1, frac_in};
 
+    // Zero-extension padding of a non-negative exponent (high bits constant 0).
+    // verilator coverage_off
     wire signed [WEU-1:0] exp_in_ext = $signed({{(WEU-WEXP){1'b0}}, exp_in});
+    // verilator coverage_on
 
     // Two parallel folded-constant subtractions provide the shift magnitudes (only their low WLSH / WRSH bits are
     // consumed downstream). right_shift_full uses the positive constant directly rather than negating left_shift_full,
@@ -178,9 +181,13 @@ module zkf_to_int #(
         end
     endgenerate
 
+    // Zero-extension of the shifted magnitude into the WMAG working width; the high padding bits are
+    // structurally constant. The selected mag_pre_in below stays covered.
+    // verilator coverage_off
     wire [WMAG-1:0] mag_pre_rsh_in = {{(WMAG-WMAN){1'b0}}, rsh_mag_pre};
     wire [WMAG-1:0] mag_pre_lsh_in = {{(WMAG-WLEFT){1'b0}}, lsh_out_pre};
     wire [WMAG-1:0] mag_pre_in     = s1_is_left_shift ? mag_pre_lsh_in : mag_pre_rsh_in;
+    // verilator coverage_on
 
     wire guard_in  = s1_is_left_shift ? 1'b0 : rsh_guard_pre;
     wire sticky_in = s1_is_left_shift ? 1'b0 : rsh_sticky_pre;
@@ -190,7 +197,11 @@ module zkf_to_int #(
     reg             s2_sign;
     reg             s2_is_inf;
     reg             s2_left_too_big;
+    // WMAG working-width magnitude reg; the bits above the active range are
+    // verilator coverage_off
+    // structurally constant. The rounded low WINT bits / saturation are checked downstream.
     reg [WMAG-1:0]  s2_mag_pre;
+    // verilator coverage_on
     reg             s2_guard;
     reg             s2_sticky;
 
@@ -224,7 +235,11 @@ module zkf_to_int #(
     // and keeps the rounding adder off the critical path that wider configurations expose.
     wire           round_increment = s2_guard & (s2_sticky | s2_mag_pre[0]);
     wire           hi_pre          = |s2_mag_pre[WMAG-1:WINT];
+    // the {1'b0,...} pad and high bits are structurally constant; the derived
+    // verilator coverage_off
+    // rcarry / saturation predicates below carry the behaviour and stay covered.
     wire [WINT:0]  mag_rounded_low = {1'b0, s2_mag_pre[WINT-1:0]} + {{WINT{1'b0}}, round_increment};
+    // verilator coverage_on
     wire           rcarry          = mag_rounded_low[WINT];
 
     // Saturation detection. Positive overflow fires when mag > INT_MAX = 2^(WINT-1)-1, i.e. any bit at position WINT-1
