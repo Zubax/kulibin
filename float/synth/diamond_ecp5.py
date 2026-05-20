@@ -15,13 +15,11 @@ import argparse
 import os
 import re
 import shlex
-import shutil
-
 from common import (
     REPO,
     artifact_link,
     clean_module_dir,
-    executable_from_env,
+    find_executable,
     format_mhz,
     generated_local_time,
     joined_links,
@@ -68,13 +66,13 @@ class DiamondReportPaths:
 
 
 def resolve_diamond() -> tuple[DiamondTools | None, str]:
-    diamond = executable_from_env("DIAMOND", "diamond")
+    diamond = find_executable("diamond")
     if diamond is None:
         return None, "diamond executable was not found"
 
     diamond = diamond.resolve()
     diamond_env = diamond.parent / "diamond_env"
-    pnmainc = shutil.which("pnmainc") or shutil.which(str(diamond.parent / "pnmainc"))
+    pnmainc = find_executable("pnmainc")
     if not diamond_env.is_file() and pnmainc is None:
         return None, f"neither {diamond_env} nor pnmainc is available"
 

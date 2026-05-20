@@ -122,7 +122,7 @@ FLOAT_RESIZE_MATRIX = \
 	verify verify-deep verify-float verify-float-fast verify-float-deep verify-float-extended \
 	verify-float-model verify-float-icarus verify-float-verilator verify-float-properties \
 	verify-synth coverage-float-report coverage-float-gate formal-float formal-float-clean \
-	lint library synth-float synth-float-yosys synth-float-diamond clean
+	lint library synth-float synth-float-yosys-ecp5 synth-float-yosys-spartan7 synth-float-diamond-ecp5 clean
 
 verify: library
 	@set -e; \
@@ -637,7 +637,7 @@ formal-float-clean:
 	rm -rf build/float/formal
 
 verify-synth: library
-	@$(MAKE) synth-float-yosys
+	@$(MAKE) synth-float-yosys-ecp5
 
 lint:
 	@find . -name '*.v' -not -path './build/*' -print0 | \
@@ -647,13 +647,17 @@ library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true
 
 synth-float:
-	@$(MAKE) synth-float-yosys
-	@$(MAKE) synth-float-diamond
+	@$(MAKE) synth-float-yosys-ecp5
+	@$(MAKE) synth-float-yosys-spartan7
+	@$(MAKE) synth-float-diamond-ecp5
 
-synth-float-yosys:
+synth-float-yosys-ecp5:
 	$(PYTHON) float/synth/yosys_ecp5.py
 
-synth-float-diamond:
+synth-float-yosys-spartan7:
+	$(PYTHON) float/synth/yosys_spartan.py
+
+synth-float-diamond-ecp5:
 	$(PYTHON) float/synth/diamond_ecp5.py
 
 clean:

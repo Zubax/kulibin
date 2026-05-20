@@ -44,9 +44,9 @@ To manually trigger deep verification of the float module, add `#ci-float` to th
 
 ### Synthesis evaluation
 
-The default verification path runs only the required Yosys/nextpnr synthesis flow:
+The default verification path runs only the required Yosys/nextpnr ECP5 synthesis flow:
 
-    make synth-float-yosys
+    make synth-float-yosys-ecp5
 
 This writes `build/float_synth_yosys/index.html` and exits nonzero if any configured float module fails synthesis or
 misses timing. The target frequency defaults to 100 MHz and can be overridden with `YOSYS_TARGET_FREQ_MHZ`.
@@ -55,9 +55,20 @@ To run all available synthesis flows manually:
 
     make synth-float
 
-This runs the required Yosys/nextpnr flow and also runs Diamond/LSE if the Diamond tools are available. Diamond can be
-run explicitly with `make synth-float-diamond`; its report is written to `build/float_synth_diamond/index.html` and it
-is intentionally not part of default verification because Diamond may be unavailable.
+This runs the required Yosys/nextpnr ECP5 flow and also runs Diamond/LSE if the Diamond tools are available. Diamond can
+be run explicitly with `make synth-float-diamond-ecp5`; its report is written to `build/float_synth_diamond/index.html`
+and it is intentionally not part of default verification because Diamond may be unavailable.
+
+An optional second open-source data point on AMD/Xilinx fabric is available via Yosys + nextpnr-xilinx, targeting the
+Spartan-7 `xc7s50csga324-1` (the smallest part the open prjxray/nextpnr-xilinx flow supports) at the slowest speed
+grade:
+
+    make synth-float-yosys-spartan7
+
+It writes `build/float_synth_yosys_spartan7/index.html`. On first use it builds and caches the nextpnr-xilinx chip
+database (pick another part with `SPARTAN7_DEVICE`). This flow is optional and non-fatal: it skips cleanly when
+nextpnr-xilinx / bbasm / the prjxray database are unavailable, and a synthesis or timing failure never fails the build.
+It is therefore excluded from the per-PR gate and runs only on the deep-verification path.
 
 <!-- hierarchy-start -->
 ## Module dependency graph

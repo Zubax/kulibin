@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from html import escape
 from pathlib import Path
+import functools
 import os
 import re
 import shlex
@@ -51,21 +52,44 @@ def clean_module_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def executable_from_env(env_name: str, fallback: str) -> Path | None:
-    configured = os.environ.get(env_name, fallback)
-    if os.sep in configured:
-        path = Path(configured)
-        return path if path.exists() else None
-    found = shutil.which(configured)
-    return Path(found) if found else None
+# Roots searched (recursively, in order) in addition to PATH when locating a tool or a bundled script.
+# Deliberately broad: toolchains land in assorted prefixes (/usr/bin, /usr/local/bin, /opt/<tool>/...),
+# a missing tool simply yields None, and results are cached, so over-searching costs little and spares
+# every flow a pile of "set X to override" environment knobs.
+_SEARCH_ROOTS = (Path("/opt"), Path("/usr"))
 
 
-def require_executable(env_name: str, fallback: str) -> Path:
-    path = executable_from_env(env_name, fallback)
+def _walk_for(name: str, require_exec: bool) -> Path | None:
+    for root in _SEARCH_ROOTS:
+        if not root.is_dir():
+            continue
+        for dirpath, _dirnames, filenames in os.walk(root, onerror=lambda _e: None, followlinks=False):
+            if name in filenames:
+                candidate = Path(dirpath) / name
+                if not require_exec or os.access(candidate, os.X_OK):
+                    return candidate
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def find_executable(name: str) -> Path | None:
+    """Locate an executable by name on PATH first, then by recursive search under /opt and /usr."""
+    found = shutil.which(name)
+    if found:
+        return Path(found)
+    return _walk_for(name, require_exec=True)
+
+
+@functools.lru_cache(maxsize=None)
+def find_file(name: str) -> Path | None:
+    """Locate a bundled (non-PATH) file by name via recursive search under /opt and /usr."""
+    return _walk_for(name, require_exec=False)
+
+
+def require_executable(name: str) -> Path:
+    path = find_executable(name)
     if path is None:
-        raise SystemExit(
-            f"required executable '{fallback}' was not found; set {env_name} to override"
-        )
+        raise SystemExit(f"required executable '{name}' was not found on PATH or under /opt, /usr")
     return path
 
 

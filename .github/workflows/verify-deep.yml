@@ -31,6 +31,34 @@ jobs:
       - name: Run maximum verification
         run: make verify-deep
 
+      # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis. The toolchain image bundles
+      # nextpnr-xilinx, bbasm, and the prjxray-db / nextpnr-xilinx-meta submodules under
+      # /opt/nextpnr-xilinx, so the chip database builds with no extra checkout. That build takes a
+      # few minutes, so cache it; it is keyed on the image tag because the database is not portable
+      # across nextpnr-xilinx versions. The step is non-fatal by design (the script never exits
+      # nonzero, and continue-on-error guards against an unexpected crash), so it never gates a push.
+      - name: Cache Spartan-7 chip database
+        uses: actions/cache@v4
+        with:
+          path: build/float_synth_yosys_spartan7/chipdb
+          key: spartan7-chipdb-2026-05-18-xc7s50csga324-1
+
+      - name: Run Spartan-7 synthesis (optional, non-fatal)
+        continue-on-error: true
+        run: make synth-float-yosys-spartan7
+
+      - name: Upload Spartan-7 synthesis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-spartan7-report
+          path: |
+            build/float_synth_yosys_spartan7/index.html
+            build/float_synth_yosys_spartan7/**/nextpnr.log
+            build/float_synth_yosys_spartan7/**/yosys.log
+            build/float_synth_yosys_spartan7/chipdb/*_build.log
+          retention-days: 30
+
       - name: Upload formal verification report
         if: always()
         uses: actions/upload-artifact@v4

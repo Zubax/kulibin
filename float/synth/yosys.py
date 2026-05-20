@@ -16,10 +16,12 @@ from pathlib import Path
 from typing import Callable
 import json
 import re
+import subprocess
 
 from common import (
     artifact_link,
     clean_module_dir,
+    find_executable,
     format_mhz,
     generated_local_time,
     joined_links,
@@ -36,14 +38,24 @@ from wrappers import write_wrapper
 
 
 @dataclass(frozen=True)
+class NextpnrPaths:
+    """The per-module file paths a nextpnr command line needs, handed to YosysTarget.nextpnr_args."""
+
+    name: str                                 # module name, e.g. "zkf_mul"; used to name device output files
+    module_dir: Path                          # per-module artifact directory (where outputs may be written)
+    netlist: Path                             # Yosys JSON netlist fed to nextpnr via --json
+    report: Path                              # JSON utilization/timing report nextpnr writes via --report
+    target_freq_mhz: float                    # clock target passed via --freq
+
+
+@dataclass(frozen=True)
 class YosysTarget:
     """Everything that distinguishes one nextpnr device from another within the shared flow."""
 
     name: str                                 # short label used in console progress, e.g. "ecp5"
     build_dir: Path                           # report + per-module artifact root
-    nextpnr_env: str                          # env var to override the nextpnr binary
-    nextpnr_fallback: str                     # default nextpnr binary name
-    device_args: tuple[str, ...]              # device/package/speed flags passed to nextpnr
+    nextpnr_tool: str                         # nextpnr executable name to locate (PATH, then /opt, /usr)
+    nextpnr_args: Callable[["YosysTarget", NextpnrPaths], list]  # full post-binary nextpnr argv for one module
     target_freq_mhz: float
     report_title: str                         # HTML <title>/<h1>
     flow_description_html: str                # "Flow: ..." sentence for the report header
@@ -54,6 +66,8 @@ class YosysTarget:
     resource_headers: str                     # device resource <th> cells (placed after Status)
     resource_row: Callable[[dict, "dict[str, tuple[float, float] | None]"], str]  # result, bounds -> <td> cells
     metric_keys: tuple[tuple[str, bool], ...]  # (result_key, higher_is_better) device columns that get a heatmap
+    area_key: str                             # result key ranked in the console area summary (e.g. "lut_placed")
+    area_label: str                           # human label for that area metric (e.g. "placed LUT4")
 
 
 def write_yosys_script(
@@ -298,7 +312,6 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
     wrapper = module_dir / f"{spec.name}_wrapper.v"
     yosys_script = module_dir / f"{spec.name}.ys"
     netlist = module_dir / f"{spec.name}.json"
-    textcfg = module_dir / f"{spec.name}.config"
     nextpnr_report = module_dir / f"{spec.name}_nextpnr.json"
     yosys_log = module_dir / "yosys.log"
     nextpnr_log = module_dir / "nextpnr.log"
@@ -308,24 +321,15 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
     write_wrapper(spec, wrapper)
     write_yosys_script(spec, target, wrapper, netlist, schematic_prefix, yosys_script)
 
-    run([yosys_bin, "-s", yosys_script], yosys_log)
-    run(
-        [
-            nextpnr_bin,
-            *target.device_args,
-            "--freq",
-            f"{target.target_freq_mhz:g}",
-            "--timing-allow-fail",
-            "--lpf-allow-unconstrained",
-            "--json",
-            netlist,
-            "--textcfg",
-            textcfg,
-            "--report",
-            nextpnr_report,
-        ],
-        nextpnr_log,
+    nextpnr_paths = NextpnrPaths(
+        name=spec.name,
+        module_dir=module_dir,
+        netlist=netlist,
+        report=nextpnr_report,
+        target_freq_mhz=target.target_freq_mhz,
     )
+    run([yosys_bin, "-s", yosys_script], yosys_log)
+    run([nextpnr_bin, *target.nextpnr_args(target, nextpnr_paths)], nextpnr_log)
 
     yosys_text = yosys_log.read_text()
     nextpnr_text = nextpnr_log.read_text()
@@ -464,18 +468,76 @@ module in a new tab.</p>
     )
 
 
-def run_flow(target: YosysTarget, modules: list[ModuleSpec]) -> None:
-    yosys_bin = require_executable("YOSYS", "yosys")
-    nextpnr_bin = require_executable(target.nextpnr_env, target.nextpnr_fallback)
+def failed_result(spec: ModuleSpec, target: YosysTarget, note: str, module_dir: Path) -> dict[str, str]:
+    """A FAIL result for a module whose toolchain run crashed, so one bad module cannot abort the flow.
+
+    Used only by the optional (non-gating) path; it links whatever logs were written before the crash and
+    fills the device resource columns with the extractor's empty-input defaults so write_html stays happy.
+    """
+    def rel(name: str) -> str:
+        path = module_dir / name
+        return str(path.relative_to(target.build_dir)) if path.is_file() else ""
+
+    result = {
+        "name": spec.name,
+        "label": spec.label,
+        "params": params(spec),
+        "register_stages": format_register_stages(register_stages(spec)),
+        "fmax": "not reported",
+        "target": format_mhz(target.target_freq_mhz),
+        "status": "FAIL",
+        "yosys_cells": "not reported",
+        "utilization": note,
+        "slack": note,
+        "json": note,
+        "yosys_log": rel("yosys.log"),
+        "nextpnr_log": rel("nextpnr.log"),
+        "nextpnr_json": rel(f"{spec.name}_nextpnr.json"),
+        "schematic": rel(f"{spec.name}_schematic.svg"),
+        "group": module_group(spec),
+    }
+    result.update(target.extract_resources({}, {}, ""))
+    return result
+
+
+def run_flow(target: YosysTarget, modules: list[ModuleSpec], *, gate: bool = True, optional: bool = False) -> None:
+    """Run the Yosys + nextpnr flow for one device target.
+
+    gate=True (default) exits nonzero if any module fails or misses timing. optional=True downgrades a
+    missing nextpnr binary to a graceful skip and turns a per-module toolchain crash into a FAIL row
+    instead of aborting; together gate=False, optional=True make the target safe to run in CI where the
+    toolchain may be absent and synthesis must never break the build.
+    """
+    yosys_bin = require_executable("yosys")
+    if optional:
+        nextpnr_bin = find_executable(target.nextpnr_tool)
+        if nextpnr_bin is None:
+            print(
+                f"skipping {target.name} synthesis: '{target.nextpnr_tool}' was not found on PATH or under /opt, /usr"
+            )
+            return
+    else:
+        nextpnr_bin = require_executable(target.nextpnr_tool)
+
+    def synthesize_module(spec: ModuleSpec) -> dict[str, str]:
+        if not optional:
+            return synthesize(spec, target, yosys_bin, nextpnr_bin)
+        try:
+            return synthesize(spec, target, yosys_bin, nextpnr_bin)
+        except subprocess.CalledProcessError as exc:
+            note = f"toolchain command failed (exit {exc.returncode}); see logs"
+            return failed_result(spec, target, note, target.build_dir / spec.name)
+        except Exception as exc:  # noqa: BLE001 -- optional flow must survive any single-module failure
+            return failed_result(spec, target, f"synthesis raised {type(exc).__name__}: {exc}", target.build_dir / spec.name)
+
     target.build_dir.mkdir(parents=True, exist_ok=True)
-    results = synthesize_with_progress(
-        "yosys", modules, lambda spec: synthesize(spec, target, yosys_bin, nextpnr_bin)
-    )
+    results = synthesize_with_progress("yosys", modules, synthesize_module)
     write_html(target, results)
     report_path = target.build_dir / "index.html"
     print(f"wrote {report_path}")
-    print_run_summary("yosys", results, "lut_placed", "placed LUT4")
-    require_passing_results("Yosys", results, report_path)
+    print_run_summary("yosys", results, target.area_key, target.area_label)
+    if gate:
+        require_passing_results("Yosys", results, report_path)
 
 
 if __name__ == "__main__":

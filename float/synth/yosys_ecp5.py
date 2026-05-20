@@ -41,8 +41,27 @@ _RESOURCE_HEADERS = (
 )
 
 
+DEVICE_ARGS = ("--12k", "--package", DEVICE_PACKAGE, "--speed", DEVICE_SPEED_GRADE)
+
+
 def _synth_command(spec: ModuleSpec, netlist) -> str:
     return f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -dff -json {netlist}"
+
+
+def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
+    return [
+        *DEVICE_ARGS,
+        "--freq",
+        f"{paths.target_freq_mhz:g}",
+        "--timing-allow-fail",
+        "--lpf-allow-unconstrained",
+        "--json",
+        paths.netlist,
+        "--textcfg",
+        paths.module_dir / f"{paths.name}.config",
+        "--report",
+        paths.report,
+    ]
 
 
 def _extract_resources(cells: dict, report_data: dict, nextpnr_text: str) -> dict[str, str]:
@@ -101,9 +120,8 @@ _NOTES = (
 ECP5_TARGET = yosys.YosysTarget(
     name="ecp5",
     build_dir=BUILD_DIR,
-    nextpnr_env="NEXTPNR_ECP5",
-    nextpnr_fallback="nextpnr-ecp5",
-    device_args=("--12k", "--package", DEVICE_PACKAGE, "--speed", DEVICE_SPEED_GRADE),
+    nextpnr_tool="nextpnr-ecp5",
+    nextpnr_args=_nextpnr_args,
     target_freq_mhz=TARGET_FREQ_MHZ,
     report_title="Kulibin Float Yosys Synthesis Report",
     flow_description_html=_FLOW_DESCRIPTION,
@@ -114,6 +132,8 @@ ECP5_TARGET = yosys.YosysTarget(
     resource_headers=_RESOURCE_HEADERS,
     resource_row=_resource_row,
     metric_keys=(("lut_placed", False),),
+    area_key="lut_placed",
+    area_label="placed LUT4",
 )
 
 
