@@ -16,7 +16,7 @@ from common import REPO, format_mhz, metric_cell, table_cell
 from modules import ModuleSpec, flow_modules
 
 
-BUILD_DIR = REPO / "build" / "float_synth_yosys"
+BUILD_DIR = REPO / "build" / "float_synth_yosys_ecp5"
 DEVICE_SPEED_GRADE = os.environ.get("ECP5_SPEED_GRADE", "6")
 DEVICE_PACKAGE = os.environ.get("ECP5_PACKAGE", "CABGA381")
 TARGET_FREQ_MHZ = float(os.environ.get("YOSYS_TARGET_FREQ_MHZ", "100"))

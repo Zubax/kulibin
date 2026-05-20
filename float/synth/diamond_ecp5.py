@@ -44,7 +44,7 @@ from modules import (
 from wrappers import write_wrapper
 
 
-DIAMOND_BUILD = REPO / "build" / "float_synth_diamond"
+DIAMOND_BUILD = REPO / "build" / "float_synth_diamond_ecp5"
 DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-12F-6BG381C")
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
 DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "3"))
