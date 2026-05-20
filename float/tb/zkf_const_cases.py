@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Test inputs for zkf_const. Source of truth shared by gen_zkf_const_wrap.py and test_const.py.
 
-Every value in FINITE_VALUES must fit in the smallest format covered by the test matrix (w3_m4:
-|v| in [0.25, 15)); larger or smaller magnitudes would trip STATUS_OVERFLOW or STATUS_UNDERFLOW
-at elaboration which halts the build. After editing this list, regenerate zkf_const_wrap.v by
-running ``python3 float/tb/gen_zkf_const_wrap.py`` (or ``make gen-const-wrap``).
+Every value in FINITE_VALUES must fit or boundary-round in the smallest format covered by the test matrix (w3_m4:
+|v| in [0.125, 15), where [0.125, 0.25) rounds to MIN_NORMAL); larger or smaller magnitudes would trip
+STATUS_OVERFLOW or STATUS_UNDERFLOW at elaboration which halts the build. After editing this list, regenerate
+zkf_const_wrap.v by running ``python3 float/tb/gen_zkf_const_wrap.py`` (or ``make gen-const-wrap``).
 """
 
 from __future__ import annotations
@@ -20,6 +20,10 @@ FINITE_VALUES: list[float] = [
     #      against $ln's rounded result at exact-power-of-two inputs.
     0.25, 0.5, 1.0, 2.0, 4.0, 8.0,
     -0.25, -0.5, -1.0, -2.0, -4.0, -8.0,
+
+    # ---- Zero/MIN_NORMAL boundary for the smallest tested format (w3_m4): exact half-min ties and
+    #      values above the midpoint encode as signed MIN_NORMAL instead of underflowing.
+    0.125, -0.125, 0.1875, -0.1875,
 
     # ---- Math constants and irrationals; non-trivial mantissa bit patterns at every WMAN.
     math.pi, -math.pi,

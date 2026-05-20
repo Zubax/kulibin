@@ -6,7 +6,7 @@
 /// canonicalized at the output. No rounding is required: the operation is exact in the format's normal range.
 ///
 /// Elaboration fails when K is so extreme that every normal input either overflows to signed infinity or underflows
-/// to zero, since the module is then provably useless. Concretely, K must satisfy -EXP_MAX_FINITE < K < EXP_MAX_FINITE
+/// to zero, since the module is then provably useless. Concretely, K must satisfy -EXP_MAX_FINITE <= K < EXP_MAX_FINITE
 /// where EXP_MAX_FINITE = 2**WEXP-2. This bound preserves at least one exponent value that maps to a normal output.
 ///
 /// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
@@ -30,7 +30,7 @@ module zkf_mul_ilog2_const #(
     input wire [WEXP+WMAN-1:0] a,
 
     output reg                 out_valid,
-    output reg [WEXP+WMAN-1:0] y           // y = a * 2^K, where -(2**WEXP-2) < K < (2**WEXP-2)
+    output reg [WEXP+WMAN-1:0] y           // y = a * 2^K, where -(2**WEXP-2) <= K < (2**WEXP-2)
 );
     localparam WFRAC    = WMAN - 1;
     localparam WFULL    = WEXP + WMAN;
@@ -57,8 +57,8 @@ module zkf_mul_ilog2_const #(
         if (K >= K_LIMIT_OVERFLOW) begin : g_invalid_k_always_overflow
             _zkf_invalid_mul_ilog2_const_k_always_overflow u_invalid();
         end
-        // K = -EXP_MAX_FINITE forces underflow (new_biased_exp <= 0 for old_biased_exp <= EXP_MAX_FINITE).
-        if (K <= K_LIMIT_UNDERFLOW) begin : g_invalid_k_always_underflow
+        // K < -EXP_MAX_FINITE forces zero underflow for every normal input.
+        if (K < K_LIMIT_UNDERFLOW) begin : g_invalid_k_always_underflow
             _zkf_invalid_mul_ilog2_const_k_always_underflow u_invalid();
         end
     endgenerate
@@ -71,33 +71,50 @@ module zkf_mul_ilog2_const #(
     wire             a_zero = ~|a_exp;
     wire             a_inf  =  &a_exp;
 
-    // The biased exponent of the result is a_exp + K. Two boolean conditions on it drive the output mux:
-    //   overflow  = (a_exp + K) > EXP_MAX_FINITE   iff   (a_exp + K - EXP_MAX_FINITE - 1) >= 0
-    //   underflow = (a_exp + K) < 1                iff   (a_exp + K - 1)                  <  0
-    // Both right-hand sides are signed expressions whose sign bit decides the flag. Folding K with its constant
-    // companion into a single offset removes the chained add-then-compare carry path the synthesiser would otherwise
-    // place on the critical path.
-    //
-    // Several nets below are wrapped with `// verilator coverage_off`. Per-instance toggle coverage on this module
-    // is intrinsically incomplete: each parameter specialization (one per distinct K) holds these signals at a
-    // constant or single-direction value -- the of_acc / uf_acc offsets are pinned by K, underflow is identically
-    // zero whenever K >= 0, overflow is identically zero whenever K <= 0, and the EXP_INF / zero-fraction slots of
-    // y_inf_w never see both polarities in a single instance. Across the wrap's seven K instances the full range is
-    // exercised, but verilator scores toggle per instance, so the suppressions silence the unattainable transitions.
-
-    // Folded constants. K - EXP_MAX_FINITE - 1 for overflow, K - 1 for underflow.
-    localparam signed [WEXP_EXT-1:0] K_OF_OFFSET = K - ((1 << WEXP) - 2) - 1;
-    localparam signed [WEXP_EXT-1:0] K_UF_OFFSET = K - 1;
-
-    // Two parallel signed adds. The sign bit of each result encodes the flag directly.
-    // verilator coverage_off
-    wire signed [WEXP_EXT-1:0] of_acc    = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_OF_OFFSET;
-    wire signed [WEXP_EXT-1:0] uf_acc    = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_UF_OFFSET;
-    wire                       overflow  = ~of_acc[WEXP_EXT-1];
-    wire                       underflow =  uf_acc[WEXP_EXT-1];
-    // verilator coverage_on
-    wire result_is_zero = a_zero || underflow;
-    wire result_is_inf  = a_inf  || overflow;
+    // The biased exponent of the result is a_exp + K. Because K is a parameter, its sign chooses which boundary can
+    // be reached: positive shifts can only overflow, negative shifts can only underflow or round to MIN_NORMAL.
+    // Splitting the cases lets synthesis remove the unused boundary logic instead of building generic add/compare
+    // cones and then proving most of them constant.
+    wire overflow;
+    wire underflow;
+    wire min_normal;
+    generate
+        if (STAGE_DECODE == 0) begin : g_boundary_single_cycle
+            localparam signed [WEXP_EXT-1:0] K_OF_OFFSET  = K - ((1 << WEXP) - 2) - 1;
+            localparam signed [WEXP_EXT-1:0] K_EXP_OFFSET = K;
+            // verilator coverage_off
+            wire signed [WEXP_EXT-1:0] of_acc      = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_OF_OFFSET;
+            wire signed [WEXP_EXT-1:0] new_exp_acc = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_EXP_OFFSET;
+            assign overflow   = ~of_acc[WEXP_EXT-1];
+            assign underflow  =  new_exp_acc[WEXP_EXT-1];
+            assign min_normal = ~|new_exp_acc;
+            // verilator coverage_on
+        end else if (K > 0) begin : g_boundary_positive_shift
+            localparam signed [WEXP_EXT-1:0] K_OF_OFFSET = K - ((1 << WEXP) - 2) - 1;
+            wire signed [WEXP_EXT-1:0] of_acc = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_OF_OFFSET;
+            // verilator coverage_off
+            assign overflow   = ~of_acc[WEXP_EXT-1];
+            assign underflow  = 1'b0;
+            assign min_normal = 1'b0;
+            // verilator coverage_on
+        end else if (K < 0) begin : g_boundary_negative_shift
+            localparam [WEXP-1:0] EXP_MIN_NORMAL_THRESHOLD = -K;
+            // verilator coverage_off
+            assign overflow   = 1'b0;
+            assign underflow  = a_exp < EXP_MIN_NORMAL_THRESHOLD;
+            assign min_normal = a_exp == EXP_MIN_NORMAL_THRESHOLD;
+            // verilator coverage_on
+        end else begin : g_boundary_zero_shift
+            // verilator coverage_off
+            assign overflow   = 1'b0;
+            assign underflow  = 1'b0;
+            assign min_normal = 1'b0;
+            // verilator coverage_on
+        end
+    endgenerate
+    wire result_is_zero       = a_zero || underflow;
+    wire result_is_inf        = a_inf  || overflow;
+    wire result_is_min_normal = !a_zero && !a_inf && min_normal;
 
     // Normal-output exponent: low WEXP bits of (a_exp + K). The truncating add wraps, which is fine because the
     // normal-output mux is suppressed whenever result_is_zero or result_is_inf is asserted.
@@ -105,12 +122,13 @@ module zkf_mul_ilog2_const #(
 
     // Output candidate forms. Canonicalisation is implicit: zero has sign/frac cleared, infinity has frac cleared.
     // verilator coverage_off
-    wire [WFULL-1:0] y_inf_w    = {a_sign, EXP_INF, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] y_inf_w        = {a_sign, EXP_INF, {WFRAC{1'b0}}};
     // verilator coverage_on
-    wire [WFULL-1:0] y_normal_w = {a_sign, new_exp, a_frac};
+    wire [WFULL-1:0] y_min_normal_w = {a_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] y_normal_w     = {a_sign, new_exp, a_frac};
 
     // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
-    // but the 2'b11 row is listed so the priority is explicit and the case is full.
+    // but the overlapping rows are listed so the priority is explicit and the case is full.
     // Reset only stream validity. Payload register intentionally free-runs (project Reset strategy).
     generate
         if (STAGE_DECODE == 0) begin : g_decode_combinational
@@ -120,10 +138,11 @@ module zkf_mul_ilog2_const #(
                 end else begin
                     out_valid <= in_valid;
                 end
-                case ({result_is_zero, result_is_inf})
-                    2'b10, 2'b11: y <= {WFULL{1'b0}};
-                    2'b01:        y <= y_inf_w;
-                    default:      y <= y_normal_w;
+                case ({result_is_zero, result_is_inf, result_is_min_normal})
+                    3'b100, 3'b101, 3'b110, 3'b111: y <= {WFULL{1'b0}};
+                    3'b010, 3'b011:                 y <= y_inf_w;
+                    3'b001:                         y <= y_min_normal_w;
+                    default:                        y <= y_normal_w;
                 endcase
             end
         end else begin : g_decode_registered
@@ -133,6 +152,7 @@ module zkf_mul_ilog2_const #(
             reg                 r_sign;
             reg                 r_result_is_zero;
             reg                 r_result_is_inf;
+            reg                 r_result_is_min_normal;
             reg [WEXP-1:0]      r_new_exp;
             reg [WFRAC-1:0]     r_frac;
             always @(posedge clk) begin
@@ -141,15 +161,17 @@ module zkf_mul_ilog2_const #(
                 end else begin
                     r_in_valid <= in_valid;
                 end
-                r_sign           <= a_sign;
-                r_result_is_zero <= result_is_zero;
-                r_result_is_inf  <= result_is_inf;
-                r_new_exp        <= new_exp;
-                r_frac           <= a_frac;
+                r_sign                 <= a_sign;
+                r_result_is_zero       <= result_is_zero;
+                r_result_is_inf        <= result_is_inf;
+                r_result_is_min_normal <= result_is_min_normal;
+                r_new_exp              <= new_exp;
+                r_frac                 <= a_frac;
             end
 
-            wire [WFULL-1:0] r_y_inf_w    = {r_sign, EXP_INF, {WFRAC{1'b0}}};
-            wire [WFULL-1:0] r_y_normal_w = {r_sign, r_new_exp, r_frac};
+            wire [WFULL-1:0] r_y_inf_w        = {r_sign, EXP_INF, {WFRAC{1'b0}}};
+            wire [WFULL-1:0] r_y_min_normal_w = {r_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+            wire [WFULL-1:0] r_y_normal_w     = {r_sign, r_new_exp, r_frac};
 
             always @(posedge clk) begin
                 if (rst) begin
@@ -157,10 +179,11 @@ module zkf_mul_ilog2_const #(
                 end else begin
                     out_valid <= r_in_valid;
                 end
-                case ({r_result_is_zero, r_result_is_inf})
-                    2'b10, 2'b11: y <= {WFULL{1'b0}};
-                    2'b01:        y <= r_y_inf_w;
-                    default:      y <= r_y_normal_w;
+                case ({r_result_is_zero, r_result_is_inf, r_result_is_min_normal})
+                    3'b100, 3'b101, 3'b110, 3'b111: y <= {WFULL{1'b0}};
+                    3'b010, 3'b011:                 y <= r_y_inf_w;
+                    3'b001:                         y <= r_y_min_normal_w;
+                    default:                        y <= r_y_normal_w;
                 endcase
             end
         end

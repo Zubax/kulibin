@@ -4,8 +4,9 @@
 /// The significand input includes the hidden bit. The guard/round/sticky inputs carry the discarded tail bits.
 /// force_zero and force_inf override the finite value; force_zero wins if both are asserted.
 ///
-/// The output is canonical zero for zero or post-round underflow, round-to-nearest ties-to-even for normal values,
-/// and canonical signed infinity for exponent overflow. Subnormals are not generated.
+/// The output is canonical zero for zero or finite magnitudes below 0.5*MIN_NORMAL, signed MIN_NORMAL for finite
+/// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
+/// canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
 /// Two register stages. Inputs are not latched directly, but the outputs are.
 
@@ -42,33 +43,41 @@ module _zkf_pack #(
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
+    localparam WEXP_BIASED_EXT = WEXP_UNBIASED + 1;
 
     localparam [WEXP-1:0] EXP_BIAS       = {1'b0, {WEXP-1{1'b1}}};
     localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
     localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
-    // Input combinational exponent classification. Underflow is finalized after rounding so a carry from
-    // exactly one exponent below the normal range can produce the minimum normal value.
-    wire signed [WEXP_UNBIASED-1:0] bias_ext           = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
-    wire signed [WEXP_UNBIASED-1:0] exp_max_finite_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_MAX_FINITE};
-    wire signed [WEXP_UNBIASED-1:0] one_ext            = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
-    wire signed [WEXP_UNBIASED-1:0] min_exp_unbiased   = one_ext - bias_ext;
-    wire signed [WEXP_UNBIASED-1:0] max_exp_unbiased   = exp_max_finite_ext - bias_ext;
-    wire signed [WEXP_UNBIASED-1:0] exp_biased_ext     = exp_unbiased + bias_ext;
-    wire                 [WEXP-1:0] exp_biased         = exp_biased_ext[WEXP-1:0];
-    wire                            exp_underflow      = exp_unbiased < min_exp_unbiased;
-    wire                            exp_one_below_min  = exp_unbiased == (min_exp_unbiased - one_ext);
-    wire                            exp_overflow       = exp_unbiased > max_exp_unbiased;
+    // Input combinational exponent classification. Values exactly one exponent below the normal range are at or above
+    // the zero/MIN_NORMAL midpoint, so they round directly to MIN_NORMAL. Lower exponents round to canonical zero.
+    wire signed [WEXP_BIASED_EXT-1:0] bias_ext            = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext    = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
+    wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext      = exp_unbiased_ext + bias_ext;
+    wire                   [WEXP-1:0] exp_biased          = exp_biased_ext[WEXP-1:0];
+    wire                   [WEXP-1:0] exp_biased_plus_one = exp_biased + {{(WEXP-1){1'b0}}, 1'b1};
+    wire                              exp_underflow_zero  = exp_biased_ext[WEXP_BIASED_EXT-1];
+    wire                              exp_one_below_min   = ~|exp_biased_ext;
+    wire                              exp_biased_high_nonzero;
+    generate
+        if (WEXP_UNBIASED > WEXP) begin : g_biased_overflow_wide
+            assign exp_biased_high_nonzero = |exp_biased_ext[WEXP_UNBIASED-1:WEXP];
+        end else begin : g_biased_overflow_min_width
+            assign exp_biased_high_nonzero = 1'b0;
+        end
+    endgenerate
+    wire exp_overflow = !exp_underflow_zero && (exp_biased_high_nonzero || (&exp_biased));
 
     // Stage 1: pre-round normalized value.
     reg            s1_valid;
     reg            s1_sign;
     reg            s1_force_zero;
     reg            s1_force_inf;
-    reg            s1_underflow;
+    reg            s1_underflow_zero;
     reg            s1_one_below_min;
     reg            s1_overflow;
     reg [WEXP-1:0] s1_exp_biased;
+    reg [WEXP-1:0] s1_exp_biased_plus_one;
     reg [WMAN-1:0] s1_significand;
     reg            s1_guard;
     reg            s1_round;
@@ -80,21 +89,22 @@ module _zkf_pack #(
     wire            s1_round_carry         = s1_rounded_ext[WMAN];
     wire            s1_infinity            = s1_force_inf || s1_overflow;
     wire [WMAN-1:0] s1_rounded_significand = s1_round_carry ? s1_rounded_ext[WMAN:1] : s1_rounded_ext[WMAN-1:0];
-    wire [WEXP-1:0] s1_exp_rounded         = s1_exp_biased + {{(WEXP-1){1'b0}}, s1_round_carry};
+    wire [WEXP-1:0] s1_exp_rounded         = s1_round_carry ? s1_exp_biased_plus_one : s1_exp_biased;
 
     // Round-carry at exp_biased == EXP_MAX_FINITE bumps the exponent to EXP_INF and forces the rounded significand
     // to 1.000...0 (the carry-out path on s1_rounded_ext). The resulting s1_normal_y encoding is then bit-identical
     // to s1_infinity_y, so the normal-output path produces canonical infinity without an explicit overflow flag.
 
     // Final packing is deliberately outside the reset branch; only validity is reset.
-    wire             s1_underflow_after_round = s1_underflow && !(s1_one_below_min && s1_round_carry);
-    wire             s1_result_zero           = s1_force_zero || (!s1_force_inf && s1_underflow_after_round);
-    wire             s1_result_infinity       = !s1_result_zero && s1_infinity;
+    wire             s1_result_zero       = s1_force_zero || (!s1_force_inf && s1_underflow_zero);
+    wire             s1_result_infinity   = !s1_result_zero && s1_infinity;
+    wire             s1_result_min_normal = !s1_result_zero && !s1_force_inf && s1_one_below_min;
     // verilator coverage_off
-    wire [WFULL-1:0] s1_zero_y                = {WFULL{1'b0}};
+    wire [WFULL-1:0] s1_zero_y            = {WFULL{1'b0}};
     // verilator coverage_on
-    wire [WFULL-1:0] s1_infinity_y            = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
-    wire [WFULL-1:0] s1_normal_y              = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
+    wire [WFULL-1:0] s1_infinity_y        = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] s1_min_normal_y      = {s1_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+    wire [WFULL-1:0] s1_normal_y          = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
@@ -107,20 +117,24 @@ module _zkf_pack #(
         end
 
         // Stage 1 capture: pre-round normalized value.
-        s1_sign          <= sign;
-        s1_force_zero    <= force_zero;
-        s1_force_inf     <= force_inf;
-        s1_underflow     <= exp_underflow;
-        s1_one_below_min <= exp_one_below_min;
-        s1_overflow      <= exp_overflow;
-        s1_exp_biased    <= exp_biased;
-        s1_significand   <= significand;
-        s1_guard         <= guard;
-        s1_round         <= round;
-        s1_sticky        <= sticky;
+        s1_sign                <= sign;
+        s1_force_zero          <= force_zero;
+        s1_force_inf           <= force_inf;
+        s1_underflow_zero      <= exp_underflow_zero;
+        s1_one_below_min       <= exp_one_below_min;
+        s1_overflow            <= exp_overflow;
+        s1_exp_biased          <= exp_biased;
+        s1_exp_biased_plus_one <= exp_biased_plus_one;
+        s1_significand         <= significand;
+        s1_guard               <= guard;
+        s1_round               <= round;
+        s1_sticky              <= sticky;
 
         // Output capture.
-        y <= s1_result_zero ? s1_zero_y : (s1_result_infinity ? s1_infinity_y : s1_normal_y);
+        y <= s1_result_zero       ? s1_zero_y :
+             s1_result_infinity   ? s1_infinity_y :
+             s1_result_min_normal ? s1_min_normal_y :
+                                    s1_normal_y;
     end
 endmodule
 

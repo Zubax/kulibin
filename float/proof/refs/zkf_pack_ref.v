@@ -34,7 +34,7 @@ module zkf_pack_ref #(
 
     reg signed [WEXP_UNBIASED-1:0] exp_biased_ext;
     reg            [WEXP-1:0]      exp_biased;
-    reg                            exp_underflow;
+    reg                            exp_underflow_zero;
     reg                            exp_one_below_min;
     reg                            exp_overflow;
     reg                            round_increment;
@@ -44,14 +44,13 @@ module zkf_pack_ref #(
     reg            [WEXP-1:0]      exp_rounded;
     reg                            exp_round_overflow;
     reg                            infinity_flag;
-    reg                            underflow_after_round;
     reg                            result_zero;
     reg                            result_infinity;
 
     always @(*) begin
         exp_biased_ext        = exp_unbiased + bias_ext;
         exp_biased            = exp_biased_ext[WEXP-1:0];
-        exp_underflow         = exp_unbiased < min_exp_unbiased;
+        exp_underflow_zero    = exp_unbiased < (min_exp_unbiased - one_ext);
         exp_one_below_min     = exp_unbiased == (min_exp_unbiased - one_ext);
         exp_overflow          = exp_unbiased > max_exp_unbiased;
 
@@ -63,14 +62,15 @@ module zkf_pack_ref #(
         exp_round_overflow    = (exp_biased == EXP_MAX_FINITE) && round_carry;
         infinity_flag         = force_inf || exp_overflow || exp_round_overflow;
 
-        underflow_after_round = exp_underflow && !(exp_one_below_min && round_carry);
-        result_zero           = force_zero || (!force_inf && underflow_after_round);
+        result_zero           = force_zero || (!force_inf && exp_underflow_zero);
         result_infinity       = !result_zero && infinity_flag;
 
         if (result_zero)
             y = {WFULL{1'b0}};
         else if (result_infinity)
             y = {sign, EXP_INF, {WFRAC{1'b0}}};
+        else if (!force_inf && exp_one_below_min)
+            y = {sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
         else
             y = {sign, exp_rounded, rounded_significand[WFRAC-1:0]};
     end

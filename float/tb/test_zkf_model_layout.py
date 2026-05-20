@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from zkf_model import (  # noqa: E402
     ZkfFormat,
     _bits_to_numpy,
+    _canonicalize_numpy_result,
     _numpy_to_bits,
     canonical_inf,
     decode,
@@ -185,6 +186,37 @@ class ZkfModelLayoutTest(unittest.TestCase):
         for value, bits in binary64_values:
             with self.subTest(dtype="float64", bits=f"0x{bits:016x}"):
                 self.assertEqual(numpy_to_bits(value, np.float64), bits)
+
+    def test_zero_min_normal_boundary_rounding(self) -> None:
+        for fmt in (BINARY32, BINARY64, ZkfFormat(3, 4)):
+            min_normal = pow2_fraction(fmt.min_exp_unbiased)
+            half_min = min_normal / 2
+            cases = [
+                ("below_half_pos", 0, half_min * Fraction(3, 4), zero(fmt)),
+                ("below_half_neg", 1, half_min * Fraction(3, 4), zero(fmt)),
+                ("exact_half_pos", 0, half_min, normal(fmt, 0, 1, 0)),
+                ("exact_half_neg", 1, half_min, normal(fmt, 1, 1, 0)),
+                ("three_quarters_pos", 0, min_normal * Fraction(3, 4), normal(fmt, 0, 1, 0)),
+                ("three_quarters_neg", 1, min_normal * Fraction(3, 4), normal(fmt, 1, 1, 0)),
+            ]
+            for label, sign, value, expected in cases:
+                with self.subTest(fmt=fmt, case=label):
+                    self.assertEqual(round_fraction_to_zkf(fmt, sign, value), expected)
+
+    def test_numpy_subnormal_canonicalization_uses_zkf_boundary(self) -> None:
+        cases = [
+            (BINARY32, 0x003FFFFF, zero(BINARY32)),
+            (BINARY32, 0x00400000, normal(BINARY32, 0, 1, 0)),
+            (BINARY32, 0x00600000, normal(BINARY32, 0, 1, 0)),
+            (BINARY32, 0x80400000, normal(BINARY32, 1, 1, 0)),
+            (BINARY64, 0x0007FFFFFFFFFFFF, zero(BINARY64)),
+            (BINARY64, 0x0008000000000000, normal(BINARY64, 0, 1, 0)),
+            (BINARY64, 0x000C000000000000, normal(BINARY64, 0, 1, 0)),
+            (BINARY64, 0x8008000000000000, normal(BINARY64, 1, 1, 0)),
+        ]
+        for fmt, bits, expected in cases:
+            with self.subTest(fmt=fmt, bits=f"0x{bits:0{fmt.wfull // 4}x}"):
+                self.assertEqual(_canonicalize_numpy_result(fmt, bits), expected)
 
     def test_random_binary32_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY32, np.float32, count=5000, seed=0x32F17A)

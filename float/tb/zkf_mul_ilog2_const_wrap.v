@@ -1,11 +1,12 @@
 /// Testbench harness for zkf_mul_ilog2_const. Each output port is the result of a separate DUT instance with a
 /// distinct K. The set is chosen to span identity (K=0), small shifts (K=±1), midrange shifts, and the boundary
-/// values K=±(EXP_MAX_FINITE-1). The K values are derived from WEXP so that every instance stays inside the
-/// allowed parameter range, and so the same wrap module can be elaborated at every (WEXP, WMAN) the test matrix uses.
+/// values K=EXP_MAX_FINITE-1 and K=-EXP_MAX_FINITE. The K values are derived from WEXP so that every instance stays
+/// inside the allowed parameter range, and so the same wrap module can be elaborated at every (WEXP, WMAN) the test
+/// matrix uses.
 ///
-/// At WEXP=2 the valid K range collapses to {-1, 0, 1}, which causes the midrange and boundary instances to coincide
-/// with the identity and unit-shift instances. The Python test computes the same K values and checks every port, so
-/// the duplication is harmless.
+/// At WEXP=2 the valid K range collapses to {-2, -1, 0, 1}, which causes the midrange instances to coincide with the
+/// identity and unit-shift instances. The Python test computes the same K values and checks every port, so the
+/// duplication is harmless.
 
 `default_nettype none
 
@@ -29,7 +30,7 @@ module zkf_mul_ilog2_const_wrap #(
 );
     localparam EXP_MAX_FINITE = (1 << WEXP) - 2;
     localparam K_MAX_POS      = EXP_MAX_FINITE - 1;
-    localparam K_MAX_NEG      = -(EXP_MAX_FINITE - 1);
+    localparam K_MAX_NEG      = -EXP_MAX_FINITE;
     localparam K_MID_POS      = (EXP_MAX_FINITE - 1) / 2;
     localparam K_MID_NEG      = -((EXP_MAX_FINITE - 1) / 2);
 

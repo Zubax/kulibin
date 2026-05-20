@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, mask, resize_reference
+from zkf_model import ZkfFormat, hex_bits, mask, normal, resize_reference
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -68,6 +68,23 @@ def directed_case_inputs(fmt_in: ZkfFormat) -> list[tuple[str, int]]:
     return cases
 
 
+def output_boundary_inputs(fmt_in: ZkfFormat, fmt_out: ZkfFormat) -> list[tuple[str, int]]:
+    cases: list[tuple[str, int]] = []
+    half_min_exp = fmt_out.min_exp_unbiased - 1
+    if fmt_in.min_exp_unbiased <= half_min_exp <= fmt_in.max_exp_unbiased:
+        exp = half_min_exp + fmt_in.bias
+        cases.append(("output_half_min_pos", normal(fmt_in, 0, exp, 0)))
+        cases.append(("output_half_min_neg", normal(fmt_in, 1, exp, 0)))
+        cases.append(("output_three_quarters_min_pos", normal(fmt_in, 0, exp, 1 << (fmt_in.wfrac - 1))))
+        cases.append(("output_three_quarters_min_neg", normal(fmt_in, 1, exp, 1 << (fmt_in.wfrac - 1))))
+
+    below_half_exp = fmt_out.min_exp_unbiased - 2
+    if fmt_in.min_exp_unbiased <= below_half_exp <= fmt_in.max_exp_unbiased:
+        exp = below_half_exp + fmt_in.bias
+        cases.append(("output_below_half_min", normal(fmt_in, 0, exp, fmt_in.frac_mask)))
+    return cases
+
+
 def random_case(fmt_in: ZkfFormat, rng: np.random.Generator) -> int:
     mode = int(rng.integers(0, 9))
     if mode == 0:
@@ -111,6 +128,8 @@ def cases_for(
         return cases
 
     for label, a in directed_case_inputs(fmt_in):
+        add_unique(cases, seen, label, fmt_in, fmt_out, a)
+    for label, a in output_boundary_inputs(fmt_in, fmt_out):
         add_unique(cases, seen, label, fmt_in, fmt_out, a)
 
     if kind == "directed":

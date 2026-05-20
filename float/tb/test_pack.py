@@ -85,9 +85,10 @@ def directed_cases(fmt: ZkfFormat) -> list[PackCase]:
     return [
         make_case(fmt, "force_zero_wins_over_force_inf", 1, 1, 1, max_exp + 2, max_sig, 1, 1, 1),
         make_case(fmt, "force_inf_overrides_underflow", 1, 0, 1, min_exp - 3, one, 0, 0, 0),
-        make_case(fmt, "underflow_flush", 0, 0, 0, min_exp - 2, max_sig, 0, 0, 0),
-        make_case(fmt, "one_below_min_no_promotion", 0, 0, 0, min_exp - 1, max_sig - 1, 1, 0, 0),
-        make_case(fmt, "one_below_min_round_carry_to_min", 0, 0, 0, min_exp - 1, max_sig, 1, 0, 0),
+        make_case(fmt, "below_half_min_flush", 0, 0, 0, min_exp - 2, max_sig, 1, 1, 1),
+        make_case(fmt, "half_min_hidden_one_to_min", 0, 0, 0, min_exp - 1, one, 0, 0, 0),
+        make_case(fmt, "one_below_min_one_and_half_to_min", 0, 0, 0, min_exp - 1, one + (one >> 1), 0, 0, 0),
+        make_case(fmt, "negative_one_below_min_to_min", 1, 0, 0, min_exp - 1, max_sig - 1, 1, 0, 0),
         make_case(fmt, "negative_min_normal", 1, 0, 0, min_exp, one, 0, 0, 0),
         make_case(fmt, "tie_retained_even", 0, 0, 0, 0, one, 1, 0, 0),
         make_case(fmt, "tie_rounds_odd_up", 0, 0, 0, 0, one + 1, 1, 0, 0),
@@ -103,8 +104,9 @@ def manual_w5_m8_cases() -> list[PackCase]:
     fmt = ZkfFormat(5, 8)
     manual = [
         ("manual_zero_is_canonical", 1, 0, 31, 0x0000),
-        ("manual_below_min_flush", 0, 1, -15, 0x0000),
-        ("manual_one_below_min_no_carry", 0, 255, -22, 0x0000),
+        ("manual_below_half_min_flush", 0, 511, -24, 0x0000),
+        ("manual_half_min_to_min", 0, 1, -15, 0x0080),
+        ("manual_one_below_min_no_carry", 0, 255, -22, 0x0080),
         ("manual_one_below_min_carry", 0, 511, -23, 0x0080),
         ("manual_negative_one_below_min_carry", 1, 511, -23, 0x1080),
         ("manual_min_normal", 0, 1, -14, 0x0080),

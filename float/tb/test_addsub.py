@@ -77,6 +77,16 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
     return cases
 
 
+def binary32_manual_cases() -> list[tuple[str, int, int, int, int]]:
+    return [
+        ("manual_sub_just_below_half_min", 0x01000000, 0x00C00001, 1, 0x00000000),
+        ("manual_sub_exact_half_min", 0x01000000, 0x00C00000, 1, 0x00800000),
+        ("manual_sub_three_quarters_min", 0x01000000, 0x00A00000, 1, 0x00800000),
+        ("manual_sub_negative_exact_half_min", 0x81000000, 0x80C00000, 1, 0x80800000),
+        ("manual_sub_negative_three_quarters_min", 0x81000000, 0x80A00000, 1, 0x80800000),
+    ]
+
+
 def random_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int]:
     mode = int(rng.integers(0, 8))
     if mode <= 4:
@@ -107,6 +117,13 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddSubCa
 
     for label, a, b, op_sub in directed_case_operands(fmt):
         add_unique(cases, seen, label, fmt, a, b, op_sub)
+
+    if (fmt.wexp, fmt.wman) == (8, 24):
+        for label, a, b, op_sub, expected in binary32_manual_cases():
+            actual = addsub_reference(fmt, a, b, op_sub)
+            if actual != expected:
+                raise AssertionError(f"{label}: expected {expected:08x}, model returned {actual:08x}")
+            add_unique(cases, seen, label, fmt, a, b, op_sub)
 
     if kind == "directed":
         return cases

@@ -9,8 +9,9 @@ See `zkf.py` for the encoding rules and range/precision limits.
 
 ## Semantics
 
-Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0, post-round underflow flushes to +0),
-no −0, no exceptions, overflow produces signed ±∞.
+Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
+round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no −0, no exceptions,
+overflow produces ±∞.
 
 Infinity cases that would be NaN in IEEE 754:
 
@@ -30,6 +31,12 @@ Non-NaN infinity cases (same intent as IEEE 754):
 | finite ÷ ±∞         | +0                             |
 | ±∞ · ±∞             | ±∞  (sign = signs XOR)         |
 | finite≠0 · ±∞       | ±∞  (sign = signs XOR)         |
+
+The subnormal round-to-nearest behavior is illustrated below, compared against the basic flush to zero for any value
+below the min normal. The timing/area cost of both approaches is approximately equivalent while the rounding method
+halves the worst-case error.
+
+<img src="zkf_underflow_rounding.svg">
 
 ## Usage
 

@@ -11,7 +11,7 @@ no NaN
 no subnormals
 no exception flags
 one rounding mode only: round-to-nearest, ties-to-even
-post-round underflow-to-zero
+explicit zero/MIN_NORMAL boundary rounding
 overflow-to-signed-infinity
 canonical positive zero
 canonical signed infinities
@@ -113,14 +113,17 @@ if exact finite result is zero:
 normalize:
     abs(result) = m * 2^e, where 1 <= m < 2
 
+if 0 < abs(result) < 0.5 * MIN_NORMAL:
+    return canonical +0       // subnormals are not encoded
+
+if 0.5 * MIN_NORMAL <= abs(result) < MIN_NORMAL:
+    return signed MIN_NORMAL  // exact half-minimum ties round to MIN_NORMAL
+
 round m to WMAN bits using round-to-nearest, ties-to-even
 
 if rounding overflows significand:
     shift right by 1
     increment exponent
-
-if rounded exponent is below the minimum normal exponent:
-    return canonical +0       // post-round flush-to-zero; subnormals are not encoded
 
 if exponent overflows into the all-ones exponent code:
     return canonical signed infinity
@@ -129,8 +132,9 @@ otherwise:
     return packed normal number
 ```
 
-Underflow is determined after rounding. Therefore, a finite exact result with magnitude below `MIN_NORMAL` may still
-produce `MIN_NORMAL` if round-to-nearest ties-to-even promotes it into the normal range.
+Subnormal encodings are never produced. The boundary between zero and the minimum normal is the exact midpoint:
+finite nonzero magnitudes below `0.5 * MIN_NORMAL` round to canonical +0; magnitudes at or above that boundary and
+below `MIN_NORMAL` round to signed `MIN_NORMAL`.
 
 Rounding uses normal guard/round/sticky logic:
 
@@ -295,7 +299,7 @@ significands are unsigned WMAN-bit values with hidden leading 1
 multiply significands using FPGA DSP blocks, provide 2 dummy retiming stages after multiplication
 normalize product
 round-to-nearest ties-to-even
-flush underflow to zero after rounding
+apply the zero/MIN_NORMAL boundary rule for tiny finite products
 map overflow to signed infinity
 ```
 
@@ -559,7 +563,7 @@ output zero must be canonical
 output infinity must be canonical
 narrowing rounds to nearest ties-to-even
 widening is exact unless exponent range changes
-target underflow flushes to zero after rounding
+target tiny finite results use the zero/MIN_NORMAL boundary rule
 target overflow maps to signed infinity
 ```
 
@@ -622,7 +626,7 @@ module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18) (
 /// exp2(-inf)       = +0
 /// exp2(finite)     = 2^x
 /// exp2(+inf)       = +inf
-/// post-round underflow = +0
+/// tiny finite results use the zero/MIN_NORMAL boundary rule
 /// overflow             = +inf
 module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18) (
     input wire clk,
@@ -710,7 +714,7 @@ exponent==0 always decodes as zero
 exponent==all_ones always decodes as signed infinity
 zero output is always {0,0,0}
 floating-point overflow always produces signed infinity
-rounded underflow always produces +0
+finite tiny results follow the zero/MIN_NORMAL boundary rule
 rounding is ties-to-even
 undefined infinity cases produce +0
 division by zero asserts div0

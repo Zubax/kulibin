@@ -4,7 +4,8 @@
 /// VALUE is an IEEE 754 binary64 literal (Verilog `real`). Special cases:
 ///   - +0.0 and -0.0 produce canonical +0.
 ///   - NaN triggers an elaboration error.
-///   - |VALUE| above the format max or below the smallest normal triggers an elaboration error.
+///   - |VALUE| above the format max or below 0.5 times the smallest normal triggers an elaboration error.
+///   - 0.5*MIN_NORMAL <= |VALUE| < MIN_NORMAL encodes as signed MIN_NORMAL.
 ///
 /// Infinity is requested via the INF parameter, not via VALUE: INF > 0 emits +inf, INF < 0 emits -inf, and the
 /// default INF = 0 selects the VALUE path. The reason for the separate parameter is a Verilator constant-folding bug
@@ -12,7 +13,8 @@
 /// encode +0 under Verilator, and possibly some other tools. The integer INF parameter is unaffected.
 ///
 /// Precision: `real` carries at most 53 significand bits, so WMAN > 53 is rejected at elaboration. For WMAN <= 53
-/// the encoded value is bit-exact under round-to-nearest, ties-to-even.
+/// the encoded value is bit-exact under round-to-nearest, ties-to-even. WEXP cannot exceed 11 (the binary64 limit)
+/// due to the construction of the generator.
 ///
 /// Implementation note: the bit pattern is built from real arithmetic rather than $realtobits because some tools refuse
 /// to fold $realtobits in constant context. The math helpers below are hand-rolled to work around several gaps in
@@ -33,8 +35,8 @@ module zkf_const #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wm
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        if (WMAN > 53) begin : g_invalid_wide
-            _zkf_invalid_const_wman_exceeds_real_precision u_invalid();
+        if ((WEXP > 11) || (WMAN > 53)) begin : g_invalid_wide
+            _zkf_invalid_const_wexp_or_wman_exceeds_real_precision u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -195,7 +197,11 @@ module zkf_const #(
                 if (eu_final > EMAX) begin
                     status = STATUS_OVERFLOW;
                 end else if (eu_final < EMIN) begin
-                    status = STATUS_UNDERFLOW;
+                    if (absv < f_pow2(EMIN - 1)) begin
+                        status = STATUS_UNDERFLOW;
+                    end else begin
+                        packed_bits = {sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
+                    end
                 end else begin
                     exp_biased  = eu_final + BIAS;
                     exp_field   = exp_biased[WEXP-1:0];

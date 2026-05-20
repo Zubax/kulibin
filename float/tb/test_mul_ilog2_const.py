@@ -24,7 +24,7 @@ def k_for_port(fmt: ZkfFormat) -> dict[str, int]:
         "y_kp_mid": emax_minus_one // 2,
         "y_kn_mid": -(emax_minus_one // 2),
         "y_kp_max": emax_minus_one,
-        "y_kn_max": -emax_minus_one,
+        "y_kn_max": -fmt.exp_max_finite,
     }
 
 
@@ -76,6 +76,8 @@ def binary32_manual_cases() -> list[tuple[str, int]]:
         ("manual_half",                    0x3F000000),
         ("manual_min_normal",              0x00800000),
         ("manual_neg_min_normal",          0x80800000),
+        ("manual_one_and_half_min_normal", 0x00C00000),
+        ("manual_neg_one_and_half_min_normal", 0x80C00000),
         ("manual_just_above_min_normal",   0x00800001),
         ("manual_max_finite",              0x7F7FFFFF),
         ("manual_neg_max_finite",          0xFF7FFFFF),

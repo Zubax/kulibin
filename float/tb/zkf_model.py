@@ -148,6 +148,9 @@ def round_fraction_to_zkf(fmt: ZkfFormat, sign: int, value: Fraction) -> int:
         return zero(fmt)
 
     exp_unbiased = floor_log2_fraction(value)
+    if exp_unbiased < fmt.min_exp_unbiased:
+        return normal(fmt, sign, 1, 0) if value >= pow2_fraction(fmt.min_exp_unbiased - 1) else zero(fmt)
+
     scaled = value / pow2_fraction(exp_unbiased) * (1 << fmt.wfrac)
     quotient = scaled.numerator // scaled.denominator
     remainder = scaled.numerator % scaled.denominator
@@ -161,8 +164,6 @@ def round_fraction_to_zkf(fmt: ZkfFormat, sign: int, value: Fraction) -> int:
         quotient >>= 1
         exp_unbiased += 1
 
-    if exp_unbiased < fmt.min_exp_unbiased:
-        return zero(fmt)
     if exp_unbiased > fmt.max_exp_unbiased:
         return canonical_inf(fmt, sign)
 
@@ -181,7 +182,7 @@ def pack_reference(
     sticky: int,
 ) -> int:
     exp_biased = exp_unbiased + fmt.bias
-    exp_underflow = exp_unbiased < fmt.min_exp_unbiased
+    exp_underflow_zero = exp_unbiased < (fmt.min_exp_unbiased - 1)
     exp_one_below_min = exp_unbiased == (fmt.min_exp_unbiased - 1)
     exp_overflow = exp_unbiased > fmt.max_exp_unbiased
 
@@ -192,14 +193,16 @@ def pack_reference(
     exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
     infinity = bool(force_inf or exp_overflow or exp_round_overflow)
 
-    underflow_after_round = exp_underflow and not (exp_one_below_min and bool(round_carry))
-    result_zero = bool(force_zero or ((not force_inf) and underflow_after_round))
+    result_zero = bool(force_zero or ((not force_inf) and exp_underflow_zero))
     result_infinity = (not result_zero) and infinity
+    result_min_normal = (not result_zero) and (not result_infinity) and (not force_inf) and exp_one_below_min
 
     if result_zero:
         return zero(fmt)
     if result_infinity:
         return canonical_inf(fmt, sign)
+    if result_min_normal:
+        return normal(fmt, sign, 1, 0)
 
     exp_rounded = (exp_biased + round_carry) & mask(fmt.wexp)
     return pack_bits(fmt, sign, exp_rounded, rounded_significand & fmt.frac_mask)
@@ -304,8 +307,10 @@ def mul_ilog2_const_reference(fmt: ZkfFormat, a_bits: int, k: int) -> int:
     if a.is_inf:
         return canonical_inf(fmt, a.sign)
     new_exp = a.exp + k
-    if new_exp < 1:
+    if new_exp < 0:
         return zero(fmt)
+    if new_exp == 0:
+        return normal(fmt, a.sign, 1, 0)
     if new_exp > fmt.exp_max_finite:
         return canonical_inf(fmt, a.sign)
     return normal(fmt, a.sign, new_exp, a.frac)
@@ -495,6 +500,8 @@ def _numpy_dtype(fmt: ZkfFormat) -> type[np.float32] | type[np.float64] | None:
 def _canonicalize_numpy_result(fmt: ZkfFormat, bits: int) -> int:
     item = decode(fmt, bits)
     if item.exp == 0:
+        if item.frac >= (1 << (fmt.wfrac - 1)):
+            return normal(fmt, item.sign, 1, 0)
         return zero(fmt)
     if item.exp == fmt.exp_inf:
         return zero(fmt) if item.frac != 0 else canonical_inf(fmt, item.sign)

@@ -7,7 +7,8 @@
 /// Behaviour:
 ///   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
 ///   Narrowing WMAN (WMAN_OUT < WMAN_IN): round-to-nearest, ties-to-even on the discarded fraction bits.
-///   Narrowing WEXP (WEXP_OUT < WEXP_IN): output overflow maps to signed inf, output post-round underflow to +0.
+///   Narrowing WEXP (WEXP_OUT < WEXP_IN): output overflow maps to signed inf;
+///                                        tiny finite outputs use the zero/MIN_NORMAL boundary rule.
 ///   Zero (exp_in == 0): canonicalises to +0 in the output format.
 ///   Infinity (exp_in == all-ones): canonicalises to signed infinity in the output format.
 
