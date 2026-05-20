@@ -22,6 +22,7 @@ argument defaults locate them and no separate database checkout is needed.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -65,8 +66,13 @@ _RESOURCE_HEADERS = (
 def _synth_command(spec: ModuleSpec, netlist) -> str:
     # synth_xilinx's own netlist writer is -edif; emit JSON for nextpnr with a separate write_json so
     # the line works regardless of whether this Yosys build accepts synth_xilinx -json. The engine
-    # joins script lines with newlines, so returning a two-line string is fine.
-    return f"synth_xilinx -flatten -family xc7 -top {spec.top}\nwrite_json {netlist}"
+    # joins script lines with newlines, so returning a multi-line string is fine.
+    # delete t:$scopeinfo strips Yosys scope-metadata cells that nextpnr-xilinx cannot place.
+    return (
+        f"synth_xilinx -flatten -family xc7 -top {spec.top}\n"
+        "delete t:$scopeinfo\n"
+        f"write_json {netlist}"
+    )
 
 
 def _sum_cells(cells: dict, keys: tuple[str, ...]) -> int:
@@ -107,25 +113,51 @@ _FLOW_DESCRIPTION = (
 _NOTES = (
     '<p class="note"><strong>Note:</strong> the open nextpnr-xilinx / prjxray Spartan-7 database covers '
     "<code>xc7s50</code> only, so this is the smallest <em>supported</em> Spartan-7 rather than the smallest "
-    "in the family. It is run without an XDC, so top-level harness ports are auto-placed; an occasional "
-    "placement miss surfaces as a FAIL row, which is expected for this optional, non-gating flow.</p>"
+    "in the family. Every top-level harness port is given an <code>IOSTANDARD</code> (but no fixed pin) so the "
+    "placer can route the registered harness; reported f max is the post-route, register-to-register limit. "
+    "A few DSP-heavy multipliers can trip a nextpnr-xilinx DSP-packing assertion and surface as FAIL rows, "
+    "which is tolerated by this optional, non-gating flow.</p>"
 )
 
 
+def _write_port_xdc(netlist: Path, xdc_path: Path) -> None:
+    """Write an XDC giving every top-level port an IOSTANDARD so nextpnr-xilinx will place its IOBs.
+
+    nextpnr-xilinx refuses to run unless every top port carries an IOSTANDARD (and, unlike nextpnr-ecp5,
+    has no --lpf-allow-unconstrained escape hatch). We assign IOSTANDARD but no package pin, leaving the
+    placer free to pick IOB sites. The measurement harness registers every DUT input and output, so the
+    reported f max is a register-to-register limit and is unaffected by which pads the ports land on.
+    """
+    data = json.loads(netlist.read_text())
+    modules = data.get("modules", {})
+    top = next((m for m in modules.values() if str(m.get("attributes", {}).get("top", "0")).strip("0")), None)
+    lines = []
+    if isinstance(top, dict):
+        for name, port in top.get("ports", {}).items():
+            width = len(port.get("bits", []))
+            bits = [name] if width <= 1 else [f"{name}[{i}]" for i in range(width)]
+            lines += [f"set_property IOSTANDARD LVCMOS33 [get_ports {{{bit}}}]" for bit in bits]
+    xdc_path.write_text("\n".join(lines) + "\n")
+
+
 def _make_nextpnr_args(chipdb: Path):
+    # nextpnr-xilinx (openXC7 fork) has no --report, so fmax/timing are recovered from the log. The
+    # clock target comes from --freq (timing is allowed to miss so the run still completes), and a
+    # generated per-port IOSTANDARD XDC satisfies nextpnr's requirement that every top port be
+    # constrained without pinning the harness to a board.
     def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
+        xdc = paths.module_dir / f"{paths.name}.xdc"
+        _write_port_xdc(paths.netlist, xdc)
         return [
             "--chipdb",
             chipdb,
+            "--xdc",
+            xdc,
             "--json",
             paths.netlist,
             "--freq",
             f"{paths.target_freq_mhz:g}",
             "--timing-allow-fail",
-            "--report",
-            paths.report,
-            "--fasm",
-            paths.module_dir / f"{paths.name}.fasm",
         ]
 
     return _nextpnr_args

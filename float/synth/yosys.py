@@ -156,26 +156,46 @@ def parse_yosys_fmax(nextpnr_log: str, report: dict[str, object]) -> str:
         if achieved:
             return f"{min(achieved):.2f} MHz"
 
+    # Log fallback (nextpnr-xilinx has no JSON report). nextpnr prints "Max frequency for clock 'X':
+    # Y MHz" once after placement and again after routing; the post-route value is the authoritative
+    # one, so keep the last seen per clock and report the slowest clock among them.
+    per_clock: dict[str, float] = {}
+    for clock_name, value in re.findall(r"Max frequency for clock\s+'([^']+)':\s*([0-9.]+)\s*MHz", nextpnr_log):
+        per_clock[clock_name] = float(value)
+    if per_clock:
+        return f"{min(per_clock.values()):.2f} MHz"
+
     matches = re.findall(r"Max frequency[^:]*:\s*([0-9.]+)\s*MHz", nextpnr_log)
     if matches:
         return f"{min(float(item) for item in matches):.2f} MHz"
     return "not reported"
 
 
-def yosys_timing_met(report: dict[str, object]) -> bool:
+def yosys_timing_met(nextpnr_log: str, report: dict[str, object]) -> bool:
+    # Report path (nextpnr-ecp5): authoritative per-clock achieved vs constraint from the JSON report.
     fmax = report.get("fmax")
-    if not isinstance(fmax, dict) or not fmax:
-        return False
-    for clock in fmax.values():
-        if not isinstance(clock, dict):
-            return False
-        achieved = clock.get("achieved")
-        constraint = clock.get("constraint")
-        if not isinstance(achieved, (int, float)) or not isinstance(constraint, (int, float)):
-            return False
-        if float(achieved) < float(constraint):
-            return False
-    return True
+    if isinstance(fmax, dict) and fmax:
+        for clock in fmax.values():
+            if not isinstance(clock, dict):
+                return False
+            achieved = clock.get("achieved")
+            constraint = clock.get("constraint")
+            if not isinstance(achieved, (int, float)) or not isinstance(constraint, (int, float)):
+                return False
+            if float(achieved) < float(constraint):
+                return False
+        return True
+    # Log path (nextpnr-xilinx / openXC7 has no --report): nextpnr prints
+    # "Max frequency for clock 'X': ... (PASS|FAIL at Y MHz)" after placement and again after routing.
+    # Keep the post-route (last) verdict per clock and require every clock to pass.
+    per_clock: dict[str, str] = {}
+    for clock_name, verdict in re.findall(
+        r"Max frequency for clock\s+'([^']+)':[^()]*\((PASS|FAIL) at", nextpnr_log
+    ):
+        per_clock[clock_name] = verdict
+    if per_clock:
+        return all(verdict == "PASS" for verdict in per_clock.values())
+    return False
 
 
 def parse_yosys_slack(nextpnr_log: str, report: dict[str, object]) -> str:
@@ -343,7 +363,7 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
         "register_stages": format_register_stages(register_stages(spec)),
         "fmax": parse_yosys_fmax(nextpnr_text, report_data),
         "target": format_mhz(target.target_freq_mhz),
-        "status": "PASS" if yosys_timing_met(report_data) else "FAIL",
+        "status": "PASS" if yosys_timing_met(nextpnr_text, report_data) else "FAIL",
         "yosys_cells": format_yosys_cell_counts(cells),
         "utilization": parse_nextpnr_utilization(nextpnr_text, report_data, target.util_resources),
         "slack": parse_yosys_slack(nextpnr_text, report_data),

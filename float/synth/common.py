@@ -56,7 +56,7 @@ def clean_module_dir(path: Path) -> None:
 # Deliberately broad: toolchains land in assorted prefixes (/usr/bin, /usr/local/bin, /opt/<tool>/...),
 # a missing tool simply yields None, and results are cached, so over-searching costs little and spares
 # every flow a pile of "set X to override" environment knobs.
-_SEARCH_ROOTS = (Path("/opt"), Path("/usr"))
+_SEARCH_ROOTS = (Path("/opt"), Path("/usr"), Path("/home"))
 
 
 def _walk_for(name: str, require_exec: bool) -> Path | None:
@@ -73,7 +73,7 @@ def _walk_for(name: str, require_exec: bool) -> Path | None:
 
 @functools.lru_cache(maxsize=None)
 def find_executable(name: str) -> Path | None:
-    """Locate an executable by name on PATH first, then by recursive search under /opt and /usr."""
+    """Locate an executable by name on PATH first, then by recursive search under /opt, /usr, and so on."""
     found = shutil.which(name)
     if found:
         return Path(found)
@@ -82,14 +82,14 @@ def find_executable(name: str) -> Path | None:
 
 @functools.lru_cache(maxsize=None)
 def find_file(name: str) -> Path | None:
-    """Locate a bundled (non-PATH) file by name via recursive search under /opt and /usr."""
+    """Locate a bundled (non-PATH) file by name via recursive search under /opt, /usr, and so on."""
     return _walk_for(name, require_exec=False)
 
 
 def require_executable(name: str) -> Path:
     path = find_executable(name)
     if path is None:
-        raise SystemExit(f"required executable '{name}' was not found on PATH or under /opt, /usr")
+        raise SystemExit(f"required executable '{name}' was not found")
     return path
 
 

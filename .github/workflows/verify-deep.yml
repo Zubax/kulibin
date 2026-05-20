@@ -15,9 +15,9 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      # 2026-05-18 is the first toolchain image that bundles sby, yices2, and bitwuzla; nothing
-      # else needs to be installed in the job. Bump this date when the toolchain image is updated.
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-18
+      # 2026-05-20 bundles sby/yices2/bitwuzla plus nextpnr-xilinx (openXC7 fork) with Spartan-7
+      # support, so nothing else needs installing in the job. Bump this date when the image updates.
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
       # See verify.yml for why root is needed.
       options: --user root
     timeout-minutes: 180
@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/float_synth_yosys_spartan7/chipdb
-          key: spartan7-chipdb-2026-05-18-xc7s50csga324-1
+          key: spartan7-chipdb-2026-05-20-xc7s50csga324-1
 
       - name: Run Spartan-7 synthesis (optional, non-fatal)
         if: always()
