@@ -35,15 +35,19 @@ jobs:
       # nextpnr-xilinx, bbasm, and the prjxray-db / nextpnr-xilinx-meta submodules under
       # /opt/nextpnr-xilinx, so the chip database builds with no extra checkout. That build takes a
       # few minutes, so cache it; it is keyed on the image tag because the database is not portable
-      # across nextpnr-xilinx versions. The step is non-fatal by design (the script never exits
-      # nonzero, and continue-on-error guards against an unexpected crash), so it never gates a push.
+      # across nextpnr-xilinx versions. These steps run with `if: always()` so the Spartan flow is
+      # exercised and its report produced even when the upstream verification step fails, and they are
+      # non-fatal by design (the script never exits nonzero, continue-on-error guards a hard crash), so
+      # they never gate a push.
       - name: Cache Spartan-7 chip database
+        if: always()
         uses: actions/cache@v4
         with:
           path: build/float_synth_yosys_spartan7/chipdb
           key: spartan7-chipdb-2026-05-18-xc7s50csga324-1
 
       - name: Run Spartan-7 synthesis (optional, non-fatal)
+        if: always()
         continue-on-error: true
         run: make synth-float-yosys-spartan7
 
