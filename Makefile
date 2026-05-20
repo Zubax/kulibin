@@ -647,13 +647,14 @@ library:
 	@$(FUSESOC) library add kulibin . 2>/dev/null || true
 
 synth-float:
-	$(PYTHON) float/synth_float.py
+	@$(MAKE) synth-float-yosys
+	@$(MAKE) synth-float-diamond
 
 synth-float-yosys:
-	$(PYTHON) float/synth_float.py --flow yosys
+	$(PYTHON) float/synth/yosys_ecp5.py
 
 synth-float-diamond:
-	$(PYTHON) float/synth_float.py --flow diamond
+	$(PYTHON) float/synth/diamond_ecp5.py
 
 clean:
 	rm -rf build
