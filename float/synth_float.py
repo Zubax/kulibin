@@ -25,7 +25,7 @@ DIAMOND_BUILD = REPO / "build" / "float_synth_diamond"
 
 DEVICE_SPEED_GRADE = "6"
 YOSYS_TARGET_FREQ_MHZ = float(os.environ.get("YOSYS_TARGET_FREQ_MHZ", "100"))
-DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-85F-6BG381C")
+DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-12F-6BG381C")
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
 DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "3"))
 DIAMOND_PAR_EFFORT = int(os.environ.get("DIAMOND_PAR_EFFORT", "3"))
@@ -1955,7 +1955,7 @@ def synthesize_yosys(spec: ModuleSpec, yosys: Path, nextpnr: Path) -> dict[str, 
     run(
         [
             nextpnr,
-            "--85k",
+            "--12k",
             "--package",
             "CABGA381",
             "--speed",
@@ -2097,6 +2097,8 @@ tbody tr.group-start td { border-top: 3px solid #555; }
 .status.pass { background: #11823b; color: #fff; }
 .status.fail { background: #c82424; color: #fff; }
 pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: auto; }
+.note { background: #fff7e0; border: 1px solid #e3c75a; border-radius: 6px; padding: 0.6rem 0.9rem; max-width: 72rem; }
+.note code { background: #f0e6c0; padding: 0 0.25rem; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -2104,8 +2106,13 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
         + "<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 -dff, "
-        + "nextpnr-ecp5 for LFE5U-85F CABGA381 speed grade "
+        + "nextpnr-ecp5 for LFE5U-12F CABGA381 speed grade "
         + f"{DEVICE_SPEED_GRADE} at {format_mhz(YOSYS_TARGET_FREQ_MHZ)}.</p>"
+        + "<p class=\"note\"><strong>Note on LUT4 counts:</strong> nextpnr-ecp5 <code>--12k</code> targets the "
+        + "LFE5U-25F fabric &mdash; the LFE5U-12F is the same silicon die, marketed with a reduced capacity. "
+        + "All LUT4, slice, and utilization figures below (including the <code>/24288</code> denominators) therefore "
+        + "reflect the 25F array, not the 12F&rsquo;s 12096-LUT4 marketing limit, and nextpnr will not enforce the "
+        + "smaller limit. For true 12F fit/capacity, use the Lattice Diamond report.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
 every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
