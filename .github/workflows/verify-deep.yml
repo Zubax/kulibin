@@ -1,22 +1,29 @@
-## Maximum-verification CI: every simulation testbench, every algebraic property test, every
+## Maximum-verification CI for float/: every simulation testbench, every algebraic property test, every
 ## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure
-## (verify-float-extended + coverage-float-gate-full). Slow (a few hours wall-clock on the Zubax
-## toolchain container), so it runs only on pushes that modify float/ AND are either on `main` or
-## carry the "#ci-float" marker in the commit message. The cheap `verify.yml` workflow gates every PR.
+## (verify-float-extended + coverage-float-gate-full). Runs in the `verify-deep` job. The optional
+## Spartan-7 synthesis runs as a separate, non-fatal `spartan7-synth` job so its multi-hour openXC7
+## place-and-route can't consume verify-deep's budget (GitHub caps a job at 6h).
+##
+## Slow, so it runs only on pushes that modify float/ AND are either on `main` or carry the "#ci-float"
+## marker in the commit message. The cheap `verify.yml` workflow gates every PR.
 
 name: verify-deep
 
 on:
   push:
     # Everything this workflow runs is float/ verification, so don't spend hours of CI on pushes that
-    # don't touch it. The job's main-branch / #ci-float gate below still applies on top of this.
+    # don't touch it. The per-job main-branch / #ci-float gate below still applies on top of this.
     paths:
       - 'float/**'
+  # Manual trigger, so the deep suite can be run on demand (and changes to this workflow itself can be
+  # tested) without a float/ push: `gh workflow run verify-deep.yml --ref <branch>`.
+  workflow_dispatch:
 
 jobs:
   verify-deep:
     if: |
       github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
@@ -32,36 +39,6 @@ jobs:
 
       - name: Run maximum verification
         run: make verify-deep
-
-      # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis. The toolchain image bundles nextpnr-xilinx,
-      # bbasm, and the prjxray-db / nextpnr-xilinx-meta submodules, so the chip database builds with no extra checkout.
-      # That build takes a few minutes, so cache it; it is keyed on the image tag because the database is not portable
-      # across nextpnr-xilinx versions. These steps run with `if: always()` so the Spartan flow is exercised and its
-      # report produced even when the upstream verification step fails, and they are non-fatal by design (the script
-      # never exits nonzero, continue-on-error guards a hard crash), so they never gate a push.
-      - name: Cache Spartan-7 chip database
-        if: always()
-        uses: actions/cache@v4
-        with:
-          path: build/float_synth_yosys_spartan7/chipdb
-          key: spartan7-chipdb-2026-05-20-xc7s50csga324-1
-
-      - name: Run Spartan-7 synthesis (optional, non-fatal)
-        if: always()
-        continue-on-error: true
-        run: make synth-float-yosys-spartan7
-
-      - name: Upload Spartan-7 synthesis report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: float-spartan7-report
-          path: |
-            build/float_synth_yosys_spartan7/index.html
-            build/float_synth_yosys_spartan7/**/nextpnr.log
-            build/float_synth_yosys_spartan7/**/yosys.log
-            build/float_synth_yosys_spartan7/chipdb/*_build.log
-          retention-days: 30
 
       - name: Upload formal verification report
         if: always()
@@ -80,4 +57,47 @@ jobs:
         with:
           name: float-coverage-report
           path: build/float/coverage/
+          retention-days: 30
+
+  # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis, in its own job so its multi-hour
+  # openXC7 place-and-route can't eat the verify-deep job's 6h budget. Non-fatal by design
+  # (continue-on-error): it runs and uploads its report but never gates a push, and a failure here
+  # leaves verify-deep's result untouched.
+  spartan7-synth:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The toolchain image bundles nextpnr-xilinx, bbasm, and the prjxray-db / nextpnr-xilinx-meta
+      # submodules, so the chip database builds with no extra checkout. That build takes a few minutes,
+      # so cache it; it is keyed on the image tag because the database is not portable across versions.
+      - name: Cache Spartan-7 chip database
+        uses: actions/cache@v4
+        with:
+          path: build/float_synth_yosys_spartan7/chipdb
+          key: spartan7-chipdb-2026-05-20-xc7s50csga324-1
+
+      - name: Run Spartan-7 synthesis (optional, non-fatal)
+        continue-on-error: true
+        run: make synth-float-yosys-spartan7
+
+      - name: Upload Spartan-7 synthesis report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-spartan7-report
+          path: |
+            build/float_synth_yosys_spartan7/index.html
+            build/float_synth_yosys_spartan7/**/nextpnr.log
+            build/float_synth_yosys_spartan7/**/yosys.log
+            build/float_synth_yosys_spartan7/chipdb/*_build.log
           retention-days: 30
