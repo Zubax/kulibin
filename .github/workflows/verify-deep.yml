@@ -1,7 +1,8 @@
-## Maximum-verification CI: every simulation testbench, every algebraic property test, and every
-## formal-equivalence proof under float/proof/. Slow (~45 minutes wall-clock on the Zubax toolchain
-## container), so it runs only on commits pushed to `main` or commits whose message includes the
-## "#ci-float" marker. The cheap `verify.yml` workflow continues to gate every PR.
+## Maximum-verification CI: every simulation testbench, every algebraic property test, every
+## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure
+## (verify-float-extended + coverage-float-gate-full). Slow (a few hours wall-clock on the Zubax
+## toolchain container), so it runs only on commits pushed to `main` or commits whose message
+## includes the "#ci-float" marker. The cheap `verify.yml` workflow continues to gate every PR.
 
 name: verify-deep
 
@@ -20,7 +21,7 @@ jobs:
       image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
       # See verify.yml for why root is needed.
       options: --user root
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     steps:
       - uses: actions/checkout@v6
