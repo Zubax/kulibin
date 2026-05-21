@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Pytest orchestrator for the float verification matrix.
+
+This is NOT a cocotb test - it is a thin driver that turns every entry of `zkf_matrix.build_matrix()`
+into a pytest test case, runs it through FuseSoC, and checks the cocotb results.xml. Each case is tagged
+with its tier (pr/deep/properties/fast) and simulator (icarus/verilator) as markers; pytest.ini
+deselects deep/properties/fast by default, so a bare `pytest` (or `make verify-float`) runs only the
+per-PR set and the heavy work skips unless explicitly selected (`pytest -m deep`, `-m properties`, ...).
+
+The Makefile targets are thin wrappers around marker selections; this file plus zkf_matrix.py replace
+the former Makefile recipe loops and run_extended.sh, which duplicated the fusesoc invocation in bash.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from zkf_matrix import CORE, build_matrix  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TB_DIR = str(REPO_ROOT / "float" / "tb")
+FUSESOC = os.environ.get("FUSESOC", "fusesoc")
+PYTHON = os.environ.get("PYTHON", sys.executable)
+
+
+def _subprocess_env() -> dict:
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = TB_DIR + (os.pathsep + existing if existing else "")
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"   # keep cocotb's pytest plugin out of the inner sim run
+    env["COCOTB_REWRITE_ASSERTION_FILES"] = ""
+    return env
+
+
+def _run_fusesoc(run) -> None:
+    """Build + run one sim via FuseSoC, then validate its results.xml. Fails the test on either error."""
+    root = REPO_ROOT / run.root
+    if root.exists():
+        shutil.rmtree(root)
+    cmd = [FUSESOC, "run", f"--build-root={run.root}", f"--target={run.target}", CORE]
+    for name, value in run.vlog:
+        cmd += [f"--{name}", str(value)]
+    for name, value in run.plus:
+        cmd += [f"--{name}", str(value)]
+    env = _subprocess_env()
+    # stdout/stderr inherit -> pytest's capture shows them only when the test fails.
+    sim = subprocess.run(cmd, cwd=REPO_ROOT, env=env)
+    results = subprocess.run([PYTHON, "float/tb/zkf_results.py", run.root], cwd=REPO_ROOT, env=env)
+    assert sim.returncode == 0 and results.returncode == 0, (
+        f"{run.id}: FuseSoC rc={sim.returncode}, results rc={results.returncode} "
+        f"(target={run.target}, root={run.root})"
+    )
+
+
+def _parametrized():
+    for run in build_matrix():
+        marks = [getattr(pytest.mark, run.tier), getattr(pytest.mark, run.sim)]
+        yield pytest.param(run, id=run.id, marks=marks)
+
+
+@pytest.mark.parametrize("run", list(_parametrized()))
+def test_float(run) -> None:
+    _run_fusesoc(run)

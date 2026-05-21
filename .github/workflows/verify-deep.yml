@@ -1,13 +1,17 @@
 ## Maximum-verification CI: every simulation testbench, every algebraic property test, every
 ## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure
 ## (verify-float-extended + coverage-float-gate-full). Slow (a few hours wall-clock on the Zubax
-## toolchain container), so it runs only on commits pushed to `main` or commits whose message
-## includes the "#ci-float" marker. The cheap `verify.yml` workflow continues to gate every PR.
+## toolchain container), so it runs only on pushes that modify float/ AND are either on `main` or
+## carry the "#ci-float" marker in the commit message. The cheap `verify.yml` workflow gates every PR.
 
 name: verify-deep
 
 on:
   push:
+    # Everything this workflow runs is float/ verification, so don't spend hours of CI on pushes that
+    # don't touch it. The job's main-branch / #ci-float gate below still applies on top of this.
+    paths:
+      - 'float/**'
 
 jobs:
   verify-deep:
