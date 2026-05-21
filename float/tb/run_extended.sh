@@ -116,7 +116,7 @@ for spec in $UNARY_EXT; do IFS=: read -r w m k c <<<"$spec"
   run_unary_sd icarus mul_ilog2_const "w${w}m${m}_${k}" $w $m $k $c 1
 done
 # pack: parity + WEXP_UNBIASED min/typ/wide   "wexp:wman:wunb:kind:count"
-for spec in 2:5:3:exhaustive:0 2:5:5:exhaustive:0 3:5:5:exhaustive:0 4:5:6:random:768 6:17:8:random:1024 4:4:8:random:512; do
+for spec in 2:5:3:exhaustive:0 2:5:5:exhaustive:0 3:5:5:exhaustive:0 4:5:8:random:768 6:17:10:random:1024 4:4:8:random:512; do
   IFS=: read -r w m u k c <<<"$spec"; run_pack icarus "w${w}m${m}u${u}_${k}" $w $m $u $k $c; done
 # casts: odd WINT + WINT<,=,> WMAN   "wexp:wman:wint:kind:count"
 for spec in 3:5:5:exhaustive:0 2:5:3:exhaustive:0 4:5:7:exhaustive:0 4:6:5:exhaustive:0 5:11:9:random:512 6:17:33:random:512 8:24:17:random:512; do

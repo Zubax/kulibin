@@ -8,6 +8,7 @@ smtbmc yices
 
 [script]
 read -formal _zkf_lod.v
+read -formal _zkf_rshift_sticky.v
 read -formal _zkf_pack.v
 read -formal _zkf_pipe.v
 read -formal zkf_add.v
@@ -19,6 +20,7 @@ prep -top zkf_add_eq
 
 [files]
 float/hdl/_zkf_lod.v
+float/hdl/_zkf_rshift_sticky.v
 float/hdl/_zkf_pack.v
 float/hdl/_zkf_pipe.v
 float/hdl/zkf_add.v
