@@ -39,7 +39,9 @@ jobs:
       # across nextpnr-xilinx versions. These steps run with `if: always()` so the Spartan flow is
       # exercised and its report produced even when the upstream verification step fails, and they are
       # non-fatal by design (the script never exits nonzero, continue-on-error guards a hard crash), so
-      # they never gate a push.
+      # they never gate a push. The synth step also has its own timeout-minutes: openXC7 P&R can run for
+      # hours, and without a step-level cap a slow synth would burn the whole job's budget and trip the
+      # JOB-level timeout (which overrides continue-on-error), turning a passing verification run red.
       - name: Cache Spartan-7 chip database
         if: always()
         uses: actions/cache@v4
@@ -50,6 +52,7 @@ jobs:
       - name: Run Spartan-7 synthesis (optional, non-fatal)
         if: always()
         continue-on-error: true
+        timeout-minutes: 75
         run: make synth-float-yosys-spartan7
 
       - name: Upload Spartan-7 synthesis report
