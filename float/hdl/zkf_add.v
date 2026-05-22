@@ -1,6 +1,6 @@
 /// Streamed Zubax Kulibin float adder.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 6+STAGE_DECODE+STAGE_ALIGN end-to-end.
+/// Register stages: 5+STAGE_DECODE+STAGE_ALIGN end-to-end.
 ///
 /// STAGE_DECODE=0: per-operand decode (sign, exponent classification, significand extraction, exponent compare)
 /// feeds the s0 capture combinationally — input flop → decode → mux/subtract → s0 register sits in one clock period.

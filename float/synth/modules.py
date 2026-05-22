@@ -429,27 +429,29 @@ def register_stages(spec: ModuleSpec) -> int:
     div_core_stages = 2 + (qfrac // 2)
 
     if spec.kind == "pack":
-        return 2
+        return 1
     if spec.kind == "mul":
-        # zkf_mul: STAGE_PRODUCT=0 -> 3 stages; >=1 -> 4 stages (DSP cascade split). Cap at 1.
-        return 3 + (1 if spec.stage_product >= 1 else 0)
+        # zkf_mul: STAGE_PRODUCT=0 -> 2 stages; >=1 -> 3 stages (DSP cascade split). Cap at 1.
+        return 2 + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
-        return 6 + spec.stage_decode + spec.stage_align
+        return 5 + spec.stage_decode + spec.stage_align
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
-        return div_core_stages + 2 + spec.stage_input
+        return div_core_stages + 1 + spec.stage_input
     if spec.kind in {"cmp", "sort"}:
         return 1
     if spec.kind == "mul_ilog2_const":
         return 1 + spec.stage_decode
-    if spec.kind in {"from_int", "to_int"}:
-        return 4 + spec.stage_input
+    if spec.kind == "from_int":
+        return 3 + spec.stage_input          # 2 front stages + 1-stage _zkf_pack
+    if spec.kind == "to_int":
+        return 4 + spec.stage_input          # does not use _zkf_pack; unaffected by the packer pipeline
     if spec.kind == "resize":
-        # 1 stage on the widen-only fast path, 2 stages when _zkf_pack is involved.
+        # 1 stage on the widen-only fast path; 1 stage when the value flows through the single-stage _zkf_pack.
         if spec.wman_out >= spec.wman_in and spec.wexp_out >= spec.wexp_in:
             return 1 + spec.stage_input
-        return 2 + spec.stage_input
+        return 1 + spec.stage_input
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 

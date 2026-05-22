@@ -14,7 +14,7 @@ module zkf_div_eq #(parameter WEXP = 4, parameter WMAN = 6) (
     localparam QFRAC_BASE  = WMAN + 2;
     localparam QFRAC       = QFRAC_BASE + (QFRAC_BASE % 2);
     localparam QSTAGES     = QFRAC / 2;
-    localparam PIPE_STAGES = 4 + QSTAGES;
+    localparam PIPE_STAGES = 3 + QSTAGES;
     localparam T_RESULT    = 1 + PIPE_STAGES;
     localparam CYCLE_W     = 6;
 

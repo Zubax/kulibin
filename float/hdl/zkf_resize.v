@@ -2,7 +2,7 @@
 /// The outputs are latched and are only valid when out_valid is asserted.
 /// Register stages depend on the format relation:
 ///   1+STAGE_INPUT stages when WMAN_OUT >= WMAN_IN and WEXP_OUT >= WEXP_IN. The output format is a superset.
-///   2+STAGE_INPUT stages otherwise (using _zkf_pack like other arithmetic modules do).
+///   1+STAGE_INPUT stages otherwise too (using the single-stage _zkf_pack like other arithmetic modules do).
 ///
 /// Behaviour:
 ///   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
@@ -124,7 +124,7 @@ module zkf_resize #(
             assign y         = s_y;
         end else begin : g_pack
             // Slow path: at least one dimension narrows, so rounding and/or overflow detection are needed and
-            // _zkf_pack handles them. Latency = 2 cycles (the two pack stages). Output-side accumulator width for the
+            // _zkf_pack handles them. Latency = 1 cycle (the single pack stage). Output-side accumulator width for the
             // unbiased exponent. Must hold the input format's full signed exp_unbiased range (WEXP_IN + 1 signed bits)
             // and also _zkf_pack's internal range requirement of at least WEXP_OUT + 2 signed bits.
             localparam WEU_PACK_MIN = WEXP_OUT + 2;

@@ -55,7 +55,7 @@ class DivObservation:
 def div_register_stages(wman: int) -> int:
     qfrac_base = wman + 2
     qfrac = qfrac_base + (qfrac_base % 2)
-    return (qfrac // 2) + 4
+    return (qfrac // 2) + 3
 
 
 def add_unique(

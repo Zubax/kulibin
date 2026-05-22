@@ -158,10 +158,10 @@ async def resize_runtime_cases(dut) -> None:
     drive_unsigned(dut.a, 0)
 
     # zkf_resize uses 1 stage on the widen-only fast path (output covers input in both
-    # dimensions) and 2 stages when the value must flow through _zkf_pack for rounding or
-    # overflow handling.
+    # dimensions) and 1 stage when the value must flow through the single-stage _zkf_pack for
+    # rounding or overflow handling - so the stage count is the same either way.
     widen_only = (fmt_out.wman >= fmt_in.wman) and (fmt_out.wexp >= fmt_in.wexp)
-    register_stages = (1 if widen_only else 2) + context.stage_input
+    register_stages = (1 if widen_only else 1) + context.stage_input
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt_out.wfull)})
 
     def drive_case(case: ResizeCase) -> dict[str, int]:

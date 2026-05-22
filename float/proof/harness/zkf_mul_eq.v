@@ -10,7 +10,7 @@ module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11) (
     input wire [WEXP+WMAN-1:0] b
 );
     localparam WFULL    = WEXP + WMAN;
-    localparam T_RESULT = 4;     // 3 stage pipeline → result at cycle 1+3 = 4
+    localparam T_RESULT = 3;     // 2 stage pipeline → result at cycle 1+2 = 3
 
     reg [3:0] cycle = 4'd0;
     always @(posedge clk) cycle <= (cycle == 4'd15) ? cycle : cycle + 4'd1;

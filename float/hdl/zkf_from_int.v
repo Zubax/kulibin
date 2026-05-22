@@ -1,6 +1,6 @@
 /// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 4+STAGE_INPUT end-to-end.
+/// Register stages: 3+STAGE_INPUT end-to-end.
 
 `default_nettype none
 
@@ -107,32 +107,29 @@ module zkf_from_int #(
     wire            s2_round       =  s2_aligned[WX-WMAN-2];
     wire            s2_sticky      = |s2_aligned[WX-WMAN-3:0];
 
-    // exp_unbiased = position of the leading 1 = (WX-1) - shamt. The subtraction sits on the carry chain and is the
-    // same shape as the bias subtraction inside _zkf_pack, avoiding a separate comparator.
+    // Biased exponent = leading-one position + BIAS = ((WX-1) - shamt) + BIAS = (WX-1 + BIAS) - shamt, formed as a
+    // single subtraction so _zkf_pack can skip its own bias add (EXP_IS_BIASED). Folding the bias in here keeps the
+    // pre-pack cone short enough for the single-stage packer; the value is always >= BIAS (positive). For all-zero
+    // input the result is don't-care because force_zero (= s2_zero) overrides it.
     //
-    // Invariant: shamt is in [0, WX-1] for every input, including all-zero.
-    // The LOD's leaves store LEAF_SHIFT = WX-1-i in [0, WX-1] and the tree only propagates leaf values (no arithmetic),
-    // so the root shamt is always a leaf value. The subtraction below therefore never underflows; zero-extending into
-    // s2_exp_ub is safe and does not need sign extension. For all-zero magnitude in particular, shamt = WX-1 produces
-    // s2_exp_ub = 0, but _zkf_pack ignores exp_unbiased when force_zero (= s2_zero) is asserted.
+    // shamt is the radix-4 normalize count; for nonzero input it is in [0, WX-1], so s2_exp_biased is in
+    // [BIAS, WX-1+BIAS] and never underflows. WEU >= WEXP+2 holds (WX-1+BIAS) and gives _zkf_pack the headroom its
+    // overflow detection needs.
+    localparam [WEU-1:0] EXP_BIASED_TOP = (WX - 1) + ((1 << (WEXP - 1)) - 1);
     // verilator coverage_off
-    // Exponent-position derivation: s2_top_ext is the compile-time constant WX-1; s2_shamt_ext/s2_pos_ext
-    // hold a value proven to lie in [0, WX-1] (so their high bits and the WEU zero-extension of s2_exp_ub
-    // are structurally constant). The resulting unbiased exponent is checked downstream via _zkf_pack.
-    wire        [WIDX:0]  s2_top_ext   = WX - 1;
-    wire        [WIDX:0]  s2_shamt_ext = {1'b0, s2_shamt};
-    wire        [WIDX:0]  s2_pos_ext   = s2_top_ext - s2_shamt_ext;
-    wire signed [WEU-1:0] s2_exp_ub    = {{(WEU-WIDX-1){1'b0}}, s2_pos_ext};
+    // s2_shamt zero-extended to WEU; the pad bits and (for valid inputs) the top of s2_exp_biased are constant.
+    wire        [WEU-1:0] s2_shamt_ext  = {{(WEU-WIDX){1'b0}}, s2_shamt};
+    wire signed [WEU-1:0] s2_exp_biased = EXP_BIASED_TOP - s2_shamt_ext;
     // verilator coverage_on
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU)) u_pack (
+    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1)) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s2_valid),
         .sign(s2_sign),
         .force_zero(s2_zero),
         .force_inf(1'b0),
-        .exp_unbiased(s2_exp_ub),
+        .exp_unbiased(s2_exp_biased),
         .significand(s2_significand),
         .guard(s2_guard),
         .round(s2_round),

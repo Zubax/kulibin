@@ -18,7 +18,7 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
     input wire                            sticky
 );
     localparam WFULL    = WEXP + WMAN;
-    localparam T_RESULT = 3;     // 2 stage pipeline → result at cycle 1+2 = 3
+    localparam T_RESULT = 2;     // 1 stage pipeline → result at cycle 1+1 = 2
 
     reg [3:0] cycle = 4'd0;
     always @(posedge clk) cycle <= (cycle == 4'd15) ? cycle : cycle + 4'd1;
@@ -81,7 +81,7 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
             assert(dut_valid == 1'b1);
             assert(dut_y == ref_y);
         end
-        if (cycle == 4'd1 || cycle == 4'd2) assert(dut_valid == 1'b0);
+        if (cycle == 4'd1) assert(dut_valid == 1'b0);
     end
 endmodule
 
