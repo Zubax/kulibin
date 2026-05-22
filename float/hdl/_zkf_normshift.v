@@ -58,29 +58,31 @@ module _zkf_normshift #(
     genvar s;
     generate
         for (s = 0; s < NL4; s = s + 1) begin : g_lvl
-            localparam integer K   = NL4 - 1 - s;      // this level resolves count digit K (weight 4^K)
-            localparam integer G   = 1 << (2 * K);     // 4^K
-            // Zero-detect group widths and shift distances, clamped to W (groups/shifts past W only matter for x==0).
-            localparam integer G1  = (G     < W) ? G     : W;
-            localparam integer G2  = (2 * G  < W) ? 2 * G : W;
-            localparam integer G3  = (3 * G  < W) ? 3 * G : W;
+            localparam integer K = NL4 - 1 - s;      // this level resolves count digit K (weight 4^K)
+            localparam integer G = 1 << (2 * K);     // 4^K
 
-            wire z1 = ~|data[s][W-1 -: G1];   // top G bits all zero  -> shift at least G
-            wire z2 = ~|data[s][W-1 -: G2];   // top 2G bits all zero -> shift at least 2G
-            wire z3 = ~|data[s][W-1 -: G3];   // top 3G bits all zero -> shift 3G
-            // Radix-4 digit: number of all-zero leading G-groups (z3 => z2 => z1), 0..3.
-            wire [1:0] dig = z1 ? (z2 ? (z3 ? 2'd3 : 2'd2) : 2'd1) : 2'd0;
-            assign dig_pre[2*K +: 2] = dig;
+            // Zero-detect each leading G-group. The top group (G) always fits (G < W). A wider group (2G or 3G >= W)
+            // can be all-zero only for x == 0, whose count is don't-care (force_zero downstream), so tie that detect
+            // off instead of emitting a redundant full-width OR-reduction - this is what shortens the critical path on
+            // the widest top levels, where 2G/3G spill past the MSB.
+            wire z1 = ~|data[s][W-1 -: G];
+            wire z2;
+            wire z3;
+            if (2 * G < W) begin : g_z2  assign z2 = ~|data[s][W-1 -: (2 * G)]; end
+            else           begin : g_z2z assign z2 = 1'b0;                      end
+            if (3 * G < W) begin : g_z3  assign z3 = ~|data[s][W-1 -: (3 * G)]; end
+            else           begin : g_z3z assign z3 = 1'b0;                      end
+
+            // Radix-4 count digit: number of leading all-zero G-groups (z3 => z2 => z1), 0..3.
+            assign dig_pre[2*K +: 2] = z1 ? (z2 ? (z3 ? 2'd3 : 2'd2) : 2'd1) : 2'd0;
 
             // verilator coverage_off
-            // Shift candidates; those that would over-shift past W are constant 0 and only selectable for x==0.
+            // Shift candidates; an over-shoot past W is a constant 0 (selectable only for x==0). The shift mux is
+            // driven directly by the zero-detects in priority order, so it does not wait on the digit encoding.
             wire [W-1:0] sh1 = (G     < W) ? (data[s] << G)     : {W{1'b0}};
             wire [W-1:0] sh2 = (2 * G < W) ? (data[s] << (2*G)) : {W{1'b0}};
             wire [W-1:0] sh3 = (3 * G < W) ? (data[s] << (3*G)) : {W{1'b0}};
-            assign data_pre[s+1] = (dig == 2'd0) ? data[s]
-                                 : (dig == 2'd1) ? sh1
-                                 : (dig == 2'd2) ? sh2
-                                 :                 sh3;
+            assign data_pre[s+1] = z3 ? sh3 : (z2 ? sh2 : (z1 ? sh1 : data[s]));
             // verilator coverage_on
         end
     endgenerate

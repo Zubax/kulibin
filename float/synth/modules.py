@@ -147,12 +147,13 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_div_w8m36",
-        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18)",
+        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18, STAGE_INPUT=1 shields the wide input decode cone)",
         top="zkf_div_w8m36_synth_top",
         kind="div",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
+        stage_input=1,
     ),
     ModuleSpec(
         name="zkf_cmp",
