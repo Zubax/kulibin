@@ -54,7 +54,6 @@ module zkf_add #(
     localparam WEXP_UNBIASED = (WEXP_SIGNED > WSHIFT_SIGNED) ? WEXP_SIGNED : WSHIFT_SIGNED;
 
     localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
-    localparam [WEXP-1:0]   EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
 
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
     wire            a_sign        = a[WFULL-1];
@@ -180,7 +179,7 @@ module zkf_add #(
     reg                            s0_same_sign;
     reg                            s0_force_zero;
     reg                            s0_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s0_exp_unbiased;
+    reg signed [WEXP_UNBIASED-1:0] s0_exp_biased;
     reg                 [WEXP-1:0] s0_exp_diff;
     reg                 [WMAN-1:0] s0_large_sig_exp;
     reg                 [WMAN-1:0] s0_small_sig_exp;
@@ -205,19 +204,19 @@ module zkf_add #(
     wire                            s0b_same_sign;
     wire                            s0b_force_zero;
     wire                            s0b_force_inf;
-    wire signed [WEXP_UNBIASED-1:0] s0b_exp_unbiased;
+    wire signed [WEXP_UNBIASED-1:0] s0b_exp_biased;
     wire                 [WMAN-1:0] s0b_large_sig_exp;
 
     generate
         if (STAGE_ALIGN == 0) begin : g_no_align_register
-            assign s0b_valid             = s0_valid;
-            assign s0b_finite_sign       = s0_finite_sign;
-            assign s0b_inf_sign          = s0_inf_sign;
-            assign s0b_same_sign         = s0_same_sign;
-            assign s0b_force_zero        = s0_force_zero;
-            assign s0b_force_inf         = s0_force_inf;
-            assign s0b_exp_unbiased      = s0_exp_unbiased;
-            assign s0b_large_sig_exp     = s0_large_sig_exp;
+            assign s0b_valid         = s0_valid;
+            assign s0b_finite_sign   = s0_finite_sign;
+            assign s0b_inf_sign      = s0_inf_sign;
+            assign s0b_same_sign     = s0_same_sign;
+            assign s0b_force_zero    = s0_force_zero;
+            assign s0b_force_inf     = s0_force_inf;
+            assign s0b_exp_biased    = s0_exp_biased;
+            assign s0b_large_sig_exp = s0_large_sig_exp;
         end else begin : g_align_register
             reg                            r_valid;
             reg                            r_finite_sign;
@@ -225,7 +224,7 @@ module zkf_add #(
             reg                            r_same_sign;
             reg                            r_force_zero;
             reg                            r_force_inf;
-            reg signed [WEXP_UNBIASED-1:0] r_exp_unbiased;
+            reg signed [WEXP_UNBIASED-1:0] r_exp_biased;
             reg                 [WMAN-1:0] r_large_sig_exp;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
@@ -235,17 +234,17 @@ module zkf_add #(
                 r_same_sign         <= s0_same_sign;
                 r_force_zero        <= s0_force_zero;
                 r_force_inf         <= s0_force_inf;
-                r_exp_unbiased      <= s0_exp_unbiased;
+                r_exp_biased        <= s0_exp_biased;
                 r_large_sig_exp     <= s0_large_sig_exp;
             end
-            assign s0b_valid             = r_valid;
-            assign s0b_finite_sign       = r_finite_sign;
-            assign s0b_inf_sign          = r_inf_sign;
-            assign s0b_same_sign         = r_same_sign;
-            assign s0b_force_zero        = r_force_zero;
-            assign s0b_force_inf         = r_force_inf;
-            assign s0b_exp_unbiased      = r_exp_unbiased;
-            assign s0b_large_sig_exp     = r_large_sig_exp;
+            assign s0b_valid         = r_valid;
+            assign s0b_finite_sign   = r_finite_sign;
+            assign s0b_inf_sign      = r_inf_sign;
+            assign s0b_same_sign     = r_same_sign;
+            assign s0b_force_zero    = r_force_zero;
+            assign s0b_force_inf     = r_force_inf;
+            assign s0b_exp_biased    = r_exp_biased;
+            assign s0b_large_sig_exp = r_large_sig_exp;
         end
     endgenerate
 
@@ -256,7 +255,7 @@ module zkf_add #(
     reg                            s1_same_sign;
     reg                            s1_force_zero;
     reg                            s1_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s1_exp_unbiased;
+    reg signed [WEXP_UNBIASED-1:0] s1_exp_biased;
     // the larger operand's extended significand carries the always-1 hidden bit
     // verilator coverage_off
     // and fixed GRS pad in its upper bits; its low fraction bits are exercised via the inputs and result.
@@ -283,14 +282,14 @@ module zkf_add #(
     reg                            s2_same_sign;
     reg                            s2_force_zero;
     reg                            s2_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s2_exp_unbiased;
+    reg signed [WEXP_UNBIASED-1:0] s2_exp_biased;
     reg                 [WRAW-1:0] s2_raw_result;
 
     // Same-sign addition never left-normalizes, so a jammed LSB remains sticky. For subtraction, close
     // cancellation only occurs with small exact alignment shifts; far cancellation cannot require a full-width
     // discarded tail, and the compact GRS representation supplies the packer with sufficient rounding state.
-    wire                            s2_add_carry        = s2_raw_result[WRAW-1];
-    wire signed [WEXP_UNBIASED-1:0] s2_add_exp_unbiased = s2_exp_unbiased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
+    wire                            s2_add_carry      = s2_raw_result[WRAW-1];
+    wire signed [WEXP_UNBIASED-1:0] s2_add_exp_biased = s2_exp_biased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
     wire [WMAN-1:0] s2_add_significand = s2_add_carry ? s2_raw_result[WRAW-1 -: WMAN] : s2_raw_result[NORM_TOP -: WMAN];
     wire s2_add_guard  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-1]    :   s2_raw_result[NORM_TOP-WMAN];
     wire s2_add_round  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-2]    :   s2_raw_result[NORM_TOP-WMAN-1];
@@ -311,8 +310,8 @@ module zkf_add #(
     reg                            s3_same_sign;
     reg                            s3_force_zero;
     reg                            s3_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s3_exp_unbiased;       // base (large-operand) exponent, for the sub-path correction
-    reg signed [WEXP_UNBIASED-1:0] s3_add_exp_unbiased;   // add-path exponent, resolved in the s2 cone
+    reg signed [WEXP_UNBIASED-1:0] s3_exp_biased;       // base (large-operand) exponent, for the sub-path correction
+    reg signed [WEXP_UNBIASED-1:0] s3_add_exp_biased;   // add-path exponent, resolved in the s2 cone
     reg                 [WMAN-1:0] s3_add_significand;
     reg                            s3_add_guard;
     reg                            s3_add_round;
@@ -345,8 +344,8 @@ module zkf_add #(
     // zero-extension padding of the normalize shift amount (high bits constant 0).
     wire signed [WEXP_UNBIASED-1:0] s3_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s3_sub_shift};
     // verilator coverage_on
-    wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_unbiased  = s3_exp_unbiased - s3_sub_shift_ext;
-    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_unbiased = s3_same_sign ? s3_add_exp_unbiased : s3_sub_exp_unbiased;
+    wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_biased  = s3_exp_biased - s3_sub_shift_ext;
+    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_biased = s3_same_sign ? s3_add_exp_biased : s3_sub_exp_biased;
 
     wire s3_finite_zero = s3_same_sign ? (~|{s3_add_significand, s3_add_guard, s3_add_round, s3_add_sticky})
                                        : s3_sub_zero;
@@ -356,14 +355,14 @@ module zkf_add #(
     wire            s3_pack_round       = s3_same_sign ? s3_add_round        : s3_sub_round;
     wire            s3_pack_sticky      = s3_same_sign ? s3_add_sticky       : s3_sub_sticky;
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED)) u_pack (
+    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .EXP_IS_BIASED(1)) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s3_valid),
         .sign(s3_sign),
         .force_zero(s3_pack_force_zero),
         .force_inf(s3_force_inf),
-        .exp_unbiased(s3_pack_exp_unbiased),
+        .exp_unbiased(s3_pack_exp_biased),
         .significand(s3_pack_significand),
         .guard(s3_pack_guard),
         .round(s3_pack_round),
@@ -393,7 +392,11 @@ module zkf_add #(
         s0_same_sign         <= d_same_sign;
         s0_force_zero        <= d_a_inf && d_b_inf && !d_same_sign;
         s0_force_inf         <= d_a_inf || d_b_inf;
-        s0_exp_unbiased      <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp} - {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
+        // Carry the larger operand's biased exponent directly (no -BIAS here): the result's biased exponent is then
+        // large_exp + add_carry (add path) or large_exp - normalize_shift (sub path), and _zkf_pack is told the value
+        // is already biased (EXP_IS_BIASED). This folds away the former -BIAS/+BIAS round trip, removing pack's bias
+        // add from the adder's exponent critical path.
+        s0_exp_biased        <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp};
         s0_exp_diff          <= large_exp - small_exp;
         s0_large_sig_exp     <= large_sig_exp;
         s0_small_sig_exp     <= small_sig_exp;
@@ -405,7 +408,7 @@ module zkf_add #(
         s1_same_sign         <= s0b_same_sign;
         s1_force_zero        <= s0b_force_zero;
         s1_force_inf         <= s0b_force_inf;
-        s1_exp_unbiased      <= s0b_exp_unbiased;
+        s1_exp_biased        <= s0b_exp_biased;
         s1_large_ext_exp     <= {s0b_large_sig_exp, {WGRS{1'b0}}};
         s1_small_aligned     <= s0_small_aligned;
 
@@ -415,7 +418,7 @@ module zkf_add #(
         s2_same_sign         <= s1_same_sign;
         s2_force_zero        <= s1_force_zero;
         s2_force_inf         <= s1_force_inf;
-        s2_exp_unbiased      <= s1_exp_unbiased;
+        s2_exp_biased        <= s1_exp_biased;
         s2_raw_result        <= s1_raw_result;
 
         // Stage 3 capture: add-path normalization and subtract-path shift metadata.
@@ -423,8 +426,8 @@ module zkf_add #(
         s3_same_sign         <= s2_same_sign;
         s3_force_zero        <= s2_force_zero;
         s3_force_inf         <= s2_force_inf;
-        s3_exp_unbiased      <= s2_exp_unbiased;
-        s3_add_exp_unbiased  <= s2_add_exp_unbiased;
+        s3_exp_biased        <= s2_exp_biased;
+        s3_add_exp_biased    <= s2_add_exp_biased;
         s3_add_significand   <= s2_add_significand;
         s3_add_guard         <= s2_add_guard;
         s3_add_round         <= s2_add_round;

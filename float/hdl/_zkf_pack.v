@@ -9,13 +9,19 @@
 /// canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
 /// Two register stages. Inputs are not latched directly, but the outputs are.
+///
+/// EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
+/// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
+///     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. zkf_add:
+///     large_exp - normalize_shift is already the biased exponent, avoiding a -BIAS/+BIAS round trip).
 
 `default_nettype none
 
 module _zkf_pack #(
     parameter WEXP          = 6,          // exponent field width
     parameter WMAN          = 18,         // significand precision including the hidden bit
-    parameter WEXP_UNBIASED = WEXP + 2    // signed unbiased exponent width
+    parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
+    parameter EXP_IS_BIASED = 0           // see above
 )(
     input  wire clk,
     input  wire rst,
@@ -53,13 +59,15 @@ module _zkf_pack #(
     // the zero/MIN_NORMAL midpoint, so they round directly to MIN_NORMAL. Lower exponents round to canonical zero.
     // bias_ext is a compile-time-constant bias widened with constant padding.
     // verilator coverage_off
-    wire signed [WEXP_BIASED_EXT-1:0] bias_ext            = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
+    wire signed [WEXP_BIASED_EXT-1:0] bias_ext         = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
     // verilator coverage_on
-    wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext    = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
-    wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext      = exp_unbiased_ext + bias_ext;
-    wire                   [WEXP-1:0] exp_biased          = exp_biased_ext[WEXP-1:0];
-    wire                              exp_underflow_zero  = exp_biased_ext[WEXP_BIASED_EXT-1];
-    wire                              exp_one_below_min   = ~|exp_biased_ext;
+    wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
+    // EXP_IS_BIASED callers pass the signed biased exponent directly (already sign-extended by the wider field), so the
+    // bias add is skipped; the parameter is constant so this is a compile-time select, not a runtime mux.
+    wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext = EXP_IS_BIASED ? exp_unbiased_ext : (exp_unbiased_ext + bias_ext);
+    wire                   [WEXP-1:0] exp_biased         = exp_biased_ext[WEXP-1:0];
+    wire                              exp_underflow_zero = exp_biased_ext[WEXP_BIASED_EXT-1];
+    wire                              exp_one_below_min  = ~|exp_biased_ext;
     wire                              exp_biased_high_nonzero;
     generate
         if (WEXP_UNBIASED > WEXP) begin : g_biased_overflow_wide
