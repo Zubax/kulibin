@@ -1,6 +1,9 @@
 /// Streamed Zubax Kulibin float multiplier.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 2+STAGE_PRODUCT end-to-end.
+/// Register stages: 1+STAGE_OUTPUT+STAGE_PRODUCT end-to-end (default 2+STAGE_PRODUCT).
+///
+/// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths.
+/// STAGE_OUTPUT=0: the result is combinational, shedding one cycle.
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
 ///   is one combinational hop into the s1_mag register. Use this when the inferred cascade closes timing in one cycle.
@@ -15,7 +18,8 @@
 module zkf_mul #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
-    parameter STAGE_PRODUCT = 0     // 0 = single-cycle product; >=1 = split DSP cascade (+1 cycle)
+    parameter STAGE_PRODUCT = 0,    // 0 = single-cycle product; >=1 = split DSP cascade (+1 cycle)
+    parameter STAGE_OUTPUT  = 1     // 1 = registered output; 0 = combinational output, shorter latency
 ) (
     input wire clk,
     input wire rst,
@@ -187,7 +191,7 @@ module zkf_mul #(
     wire                            s1_sticky_hi      = |s1_mag[WMAN-3:0];
     wire                            s1_sticky_lo      = |s1_mag[WMAN-4:0];
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN)) u_pack (
+    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s1_valid),

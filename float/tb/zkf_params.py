@@ -34,6 +34,7 @@ class TestContext:
     stage_product: int = 0   # zkf_mul
     stage_align: int = 0     # zkf_add / zkf_addsub (alignment shifter split)
     stage_decode: int = 0    # zkf_mul_ilog2_const (decoded-signal pipeline register)
+    stage_output: int = 1    # zkf_mul: 1 = registered output (default); 0 = combinational output (-1 cycle)
 
     @property
     def params(self) -> str:
@@ -46,6 +47,8 @@ class TestContext:
             knob_suffix += f" SA={self.stage_align}"
         if self.stage_decode:
             knob_suffix += f" SD={self.stage_decode}"
+        if self.stage_output == 0:
+            knob_suffix += " SO=0"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
@@ -138,6 +141,13 @@ def _stage_decode() -> int:
     return value
 
 
+def _stage_output() -> int:
+    value = plusarg_int("ZKF_STAGE_OUTPUT", 1)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_STAGE_OUTPUT must be 0 or 1, got {value}")
+    return value
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -163,6 +173,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_product=_stage_product(),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
+        stage_output=_stage_output(),
     )
 
 
@@ -189,6 +200,7 @@ def cast_context(suite: str) -> TestContext:
         stage_product=_stage_product(),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
+        stage_output=_stage_output(),
     )
 
 
@@ -219,6 +231,7 @@ def resize_context(suite: str) -> TestContext:
         stage_product=_stage_product(),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
+        stage_output=_stage_output(),
     )
 
 

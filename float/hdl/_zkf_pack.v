@@ -8,7 +8,8 @@
 /// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
 /// canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
-/// One register stage at the output (reg ports).
+/// STAGE_OUTPUT=1: one register stage at the output.
+/// STAGE_OUTPUT=0: the output is combinational, zero cycle latency.
 ///
 /// EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
 /// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
@@ -21,7 +22,8 @@ module _zkf_pack #(
     parameter WEXP          = 6,          // exponent field width
     parameter WMAN          = 18,         // significand precision including the hidden bit
     parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
-    parameter EXP_IS_BIASED = 0           // see above
+    parameter EXP_IS_BIASED = 0,          // see above
+    parameter STAGE_OUTPUT  = 1           // 1 = registered output (one register stage); 0 = combinational output
 )(
     input  wire clk,
     input  wire rst,
@@ -36,8 +38,8 @@ module _zkf_pack #(
     input  wire                            round,
     input  wire                            sticky,
 
-    output reg                 out_valid,
-    output reg [WEXP+WMAN-1:0] y
+    output wire                 out_valid,
+    output wire [WEXP+WMAN-1:0] y
 );
     // verilator coverage_off
     generate
@@ -109,14 +111,26 @@ module _zkf_pack #(
                                                     exp_rounded;
     wire [WFRAC-1:0] out_frac = frac_rounded & {WFRAC{result_normal}};
 
-    // Reset only stream validity. The payload register intentionally free-runs so reset is not on the datapath.
-    always @(posedge clk) begin
-        if (rst) out_valid <= 1'b0;
-        else     out_valid <= in_valid;
-
-        // Output capture. Special-value canonicalization is folded into out_sign/out_exp/out_frac above.
-        y <= {out_sign, out_exp, out_frac};
-    end
+    // Output stage. STAGE_OUTPUT=1 registers the packed result (one register stage; reset only touches validity, the
+    // payload register free-runs so reset is not on the datapath). STAGE_OUTPUT=0 drives it combinationally so the
+    // consumer provides the register, letting a caller shed the packer's output cycle. Special-value canonicalization
+    // is folded into out_sign/out_exp/out_frac above.
+    generate
+        if (STAGE_OUTPUT != 0) begin : g_out_reg
+            reg             out_valid_r;
+            reg [WFULL-1:0] y_r;
+            always @(posedge clk) begin
+                if (rst) out_valid_r <= 1'b0;
+                else     out_valid_r <= in_valid;
+                y_r <= {out_sign, out_exp, out_frac};
+            end
+            assign out_valid = out_valid_r;
+            assign y         = y_r;
+        end else begin : g_out_comb
+            assign out_valid = in_valid;
+            assign y         = {out_sign, out_exp, out_frac};
+        end
+    endgenerate
 endmodule
 
 /// Delay a sideband payload through the single register stage of _zkf_pack.

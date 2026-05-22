@@ -2,7 +2,7 @@
 
 `default_nettype none
 
-module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11) (
+module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11, parameter STAGE_OUTPUT = 1) (
     input wire clk,
     input wire rst,
     input wire in_valid,
@@ -10,7 +10,9 @@ module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11) (
     input wire [WEXP+WMAN-1:0] b
 );
     localparam WFULL    = WEXP + WMAN;
-    localparam T_RESULT = 3;     // 2 stage pipeline → result at cycle 1+2 = 3
+    // 1 product stage + STAGE_OUTPUT (registered pack output) -> result at cycle 1 + (1+STAGE_OUTPUT). STAGE_OUTPUT=0
+    // makes the packed result combinational (the consumer registers it), so it is valid one cycle earlier.
+    localparam T_RESULT = 2 + STAGE_OUTPUT;
 
     reg [3:0] cycle = 4'd0;
     always @(posedge clk) cycle <= (cycle == 4'd15) ? cycle : cycle + 4'd1;
@@ -36,7 +38,7 @@ module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11) (
 
     wire             dut_valid;
     wire [WFULL-1:0] dut_y;
-    zkf_mul #(.WEXP(WEXP), .WMAN(WMAN)) u_dut (
+    zkf_mul #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_OUTPUT(STAGE_OUTPUT)) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(a), .b(b),
         .out_valid(dut_valid), .y(dut_y)

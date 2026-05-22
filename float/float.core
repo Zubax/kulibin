@@ -316,6 +316,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_OUTPUT:
+    datatype: int
+    default: 1
+    paramtype: vlogparam
+  ZKF_STAGE_OUTPUT:
+    datatype: int
+    default: 1
+    paramtype: plusarg
   STAGE_ALIGN:
     datatype: int
     default: 0
@@ -420,6 +428,7 @@ targets:
       - WEXP
       - WMAN
       - STAGE_PRODUCT
+      - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
@@ -427,6 +436,7 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_OUTPUT
 
   sim_mul_verilator:
     filesets: [rtl_mul, tb_cocotb]

@@ -149,7 +149,8 @@ module {spec.top} (
     zkf_mul #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .STAGE_PRODUCT({spec.stage_product})
+        .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),
