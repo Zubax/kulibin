@@ -38,12 +38,19 @@ def generated_local_time() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z (%z)")
 
 
-def run(command: list[str | Path], log_path: Path, cwd: Path = REPO) -> None:
+def run(command: list[str | Path], log_path: Path, cwd: Path = REPO, timeout: float | None = None) -> None:
     rendered = [str(item) for item in command]
     with log_path.open("w") as log:
         log.write("$ " + " ".join(shlex.quote(item) for item in rendered) + "\n\n")
         log.flush()
-        subprocess.run(rendered, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, check=True)
+        try:
+            subprocess.run(rendered, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Killed for running too long (e.g. a diverging nextpnr place-and-route). Note it in the log
+            # and re-raise; flows that tolerate per-module failure (the optional synth) turn it into a
+            # FAIL row instead of letting one module stall the whole run.
+            log.write(f"\n\n[run] command exceeded {timeout:g}s timeout and was killed\n")
+            raise
 
 
 def clean_module_dir(path: Path) -> None:

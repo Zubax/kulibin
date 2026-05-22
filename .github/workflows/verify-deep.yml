@@ -88,6 +88,11 @@ jobs:
 
       - name: Run Spartan-7 synthesis (optional, non-fatal)
         continue-on-error: true
+        # Bound the step well under the 6h job ceiling: openXC7 nextpnr place-and-route runtime is
+        # non-deterministic and can diverge. Combined with continue-on-error, a cap means a slow run is
+        # killed and reported as a non-fatal step failure instead of cancelling the job at the ceiling.
+        # The flow also bounds each module's nextpnr individually (YOSYS_NEXTPNR_TIMEOUT_S).
+        timeout-minutes: 120
         run: make synth-float-yosys-spartan7
 
       - name: Upload Spartan-7 synthesis report

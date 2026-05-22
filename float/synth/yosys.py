@@ -15,6 +15,7 @@ from html import escape
 from pathlib import Path
 from typing import Callable
 import json
+import os
 import re
 import subprocess
 
@@ -35,6 +36,14 @@ from common import (
 )
 from modules import ModuleSpec, format_register_stages, module_group, params, register_stages, rtl_sources
 from wrappers import write_wrapper
+
+
+# Per-invocation wall-clock limits. nextpnr place-and-route runtime is workload- and seed-dependent and
+# can occasionally diverge (especially the openXC7 nextpnr-xilinx router); yosys synthesis is usually
+# quick. Bounding each means one stuck module fails fast - a non-fatal FAIL row in the optional flow -
+# instead of stalling the whole run until the CI job ceiling. Override via env for slow hosts / huge designs.
+NEXTPNR_TIMEOUT_S = float(os.environ.get("YOSYS_NEXTPNR_TIMEOUT_S", "1200"))
+YOSYS_TIMEOUT_S = float(os.environ.get("YOSYS_SYNTH_TIMEOUT_S", "900"))
 
 
 @dataclass(frozen=True)
@@ -348,8 +357,8 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
         report=nextpnr_report,
         target_freq_mhz=target.target_freq_mhz,
     )
-    run([yosys_bin, "-s", yosys_script], yosys_log)
-    run([nextpnr_bin, *target.nextpnr_args(target, nextpnr_paths)], nextpnr_log)
+    run([yosys_bin, "-s", yosys_script], yosys_log, timeout=YOSYS_TIMEOUT_S)
+    run([nextpnr_bin, *target.nextpnr_args(target, nextpnr_paths)], nextpnr_log, timeout=NEXTPNR_TIMEOUT_S)
 
     yosys_text = yosys_log.read_text()
     nextpnr_text = nextpnr_log.read_text()
