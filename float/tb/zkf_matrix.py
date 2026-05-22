@@ -286,9 +286,10 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
-    for cfg, w, kind in [("w8", 8, "exhaustive"), ("w9", 9, "exhaustive"), ("w32", 32, "directed")]:
-        out.append(_run("lod", s, "deep", cfg, [("W", w)], kind=kind, count=0,
-                        plus_names={"W": "ZKF_LOD_W"}))
+    for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
+                                ("w9s1", 9, 1, "exhaustive"), ("w32s1", 32, 1, "directed")]:
+        out.append(_run("normshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,
+                        plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT"}))
     for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
                                 ("w16s0", 16, 0, "directed"), ("w16s1", 16, 1, "directed")]:
         out.append(_run("rshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,

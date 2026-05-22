@@ -58,7 +58,6 @@ module _zkf_pack #(
     wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext    = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
     wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext      = exp_unbiased_ext + bias_ext;
     wire                   [WEXP-1:0] exp_biased          = exp_biased_ext[WEXP-1:0];
-    wire                   [WEXP-1:0] exp_biased_plus_one = exp_biased + {{(WEXP-1){1'b0}}, 1'b1};
     wire                              exp_underflow_zero  = exp_biased_ext[WEXP_BIASED_EXT-1];
     wire                              exp_one_below_min   = ~|exp_biased_ext;
     wire                              exp_biased_high_nonzero;
@@ -80,37 +79,41 @@ module _zkf_pack #(
     reg            s1_one_below_min;
     reg            s1_overflow;
     reg [WEXP-1:0] s1_exp_biased;
-    reg [WEXP-1:0] s1_exp_biased_plus_one;
     reg [WMAN-1:0] s1_significand;
     reg            s1_guard;
     reg            s1_round;
     reg            s1_sticky;
 
-    // Stage 1 combinational rounding, round-to-nearest ties-to-even.
-    wire            s1_round_increment     = s1_guard && (s1_round || s1_sticky || s1_significand[0]);
-    wire   [WMAN:0] s1_rounded_ext         = {1'b0, s1_significand} + {{WMAN{1'b0}}, s1_round_increment};
-    wire            s1_round_carry         = s1_rounded_ext[WMAN];
-    wire            s1_infinity            = s1_force_inf || s1_overflow;
-    wire [WMAN-1:0] s1_rounded_significand = s1_round_carry ? s1_rounded_ext[WMAN:1] : s1_rounded_ext[WMAN-1:0];
-    wire [WEXP-1:0] s1_exp_rounded         = s1_round_carry ? s1_exp_biased_plus_one : s1_exp_biased;
+    // Stage 1 combinational rounding, round-to-nearest ties-to-even. The increment is folded into a single
+    // {exp_biased, significand} adder - the full significand including the hidden bit - so a true significand
+    // carry-out (significand was all-ones) ripples straight into the exponent without a separate exponent
+    // incrementer or carry-select mux, while a carry that only fills the hidden bit (denormalized significand input)
+    // stays out of the exponent, matching the reference. A round-carry at exp_biased == EXP_MAX_FINITE thus lands the
+    // exponent on EXP_INF with fraction 0 - canonical infinity - without consulting an explicit overflow flag.
+    localparam WEXPSIG = WEXP + WMAN;
+    wire               s1_round_increment = s1_guard && (s1_round || s1_sticky || s1_significand[0]);
+    wire [WEXPSIG-1:0] s1_expsig          = {s1_exp_biased, s1_significand};
+    wire [WEXPSIG-1:0] s1_expsig_rounded  = s1_expsig + {{(WEXPSIG-1){1'b0}}, s1_round_increment};
+    wire    [WEXP-1:0] s1_exp_rounded     = s1_expsig_rounded[WEXPSIG-1 -: WEXP];
+    wire   [WFRAC-1:0] s1_frac_rounded    = s1_expsig_rounded[WFRAC-1:0];
+    wire               s1_infinity        = s1_force_inf || s1_overflow;
 
-    // Round-carry at exp_biased == EXP_MAX_FINITE bumps the exponent to EXP_INF and forces the rounded significand
-    // to 1.000...0 (the carry-out path on s1_rounded_ext). The resulting s1_normal_y encoding is then bit-identical
-    // to s1_infinity_y, so the normal-output path produces canonical infinity without an explicit overflow flag.
+    // Result classification. force_zero wins over force_inf; a tiny finite magnitude exactly one exponent below the
+    // normal range rounds to signed MIN_NORMAL, anything lower to canonical +0.
+    wire s1_result_zero       = s1_force_zero || (!s1_force_inf && s1_underflow_zero);
+    wire s1_result_infinity   = !s1_result_zero && s1_infinity;
+    wire s1_result_min_normal = !s1_result_zero && !s1_force_inf && s1_one_below_min;
+    wire s1_result_normal     = !s1_result_zero && !s1_result_infinity && !s1_result_min_normal;
 
-    // Final packing is deliberately outside the reset branch; only validity is reset.
-    wire             s1_result_zero       = s1_force_zero || (!s1_force_inf && s1_underflow_zero);
-    wire             s1_result_infinity   = !s1_result_zero && s1_infinity;
-    wire             s1_result_min_normal = !s1_result_zero && !s1_force_inf && s1_one_below_min;
-    // verilator coverage_off
-    // Constant special-value encodings: only the sign bit varies (exercised trivially); the exponent and fraction
-    // fields are compile-time constant so their bits cannot toggle. s1_normal_y below is the real datapath output
-    // and stays covered.
-    wire [WFULL-1:0] s1_zero_y            = {WFULL{1'b0}};
-    wire [WFULL-1:0] s1_infinity_y        = {s1_sign, EXP_INF, {WFRAC{1'b0}}};
-    wire [WFULL-1:0] s1_min_normal_y      = {s1_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
-    // verilator coverage_on
-    wire [WFULL-1:0] s1_normal_y          = {s1_sign, s1_exp_rounded, s1_rounded_significand[WFRAC-1:0]};
+    // Canonicalize by masking instead of a full-width 4:1 output mux: the stored fraction is nonzero only for normal
+    // results, so it collapses to an AND-mask; the exponent selects one of three small constants or the rounded
+    // exponent; the sign is forced to 0 only for canonical +0. This keeps the wide fraction field off the mux tree.
+    wire             out_sign = s1_sign & ~s1_result_zero;
+    wire [WEXP-1:0]  out_exp  = s1_result_zero       ? {WEXP{1'b0}} :
+                                s1_result_infinity   ? EXP_INF :
+                                s1_result_min_normal ? {{(WEXP-1){1'b0}}, 1'b1} :
+                                                       s1_exp_rounded;
+    wire [WFRAC-1:0] out_frac = s1_frac_rounded & {WFRAC{s1_result_normal}};
 
     // Reset only stream validity. Payload registers intentionally free-run so reset is not on the datapath.
     always @(posedge clk) begin
@@ -130,17 +133,13 @@ module _zkf_pack #(
         s1_one_below_min       <= exp_one_below_min;
         s1_overflow            <= exp_overflow;
         s1_exp_biased          <= exp_biased;
-        s1_exp_biased_plus_one <= exp_biased_plus_one;
         s1_significand         <= significand;
         s1_guard               <= guard;
         s1_round               <= round;
         s1_sticky              <= sticky;
 
-        // Output capture.
-        y <= s1_result_zero       ? s1_zero_y :
-             s1_result_infinity   ? s1_infinity_y :
-             s1_result_min_normal ? s1_min_normal_y :
-                                    s1_normal_y;
+        // Output capture. Special-value canonicalization is folded into out_sign/out_exp/out_frac above.
+        y <= {out_sign, out_exp, out_frac};
     end
 endmodule
 

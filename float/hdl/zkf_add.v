@@ -75,27 +75,22 @@ module zkf_add #(
     wire [WMAN-1:0]  b_significand     = {1'b1, b_fraction};
     // verilator coverage_on
 
-    // Finite exponent order feeds exponent arithmetic; full magnitude order feeds significand subtraction.
+    // Masked exponent/significand keys: zero and non-finite operands contribute magnitude 0 to the datapath, so a
+    // zero operand correctly leaves the other unchanged and a non-finite one is overridden by force_inf/force_zero.
+    // The larger-magnitude operand selects between these keys below.
     wire [WEXP-1:0] raw_a_key_exp = a_finite ? a_exp : {WEXP{1'b0}};
     wire [WEXP-1:0] raw_b_key_exp = b_finite ? b_exp : {WEXP{1'b0}};
     wire [WMAN-1:0] raw_a_key_sig = a_finite ? a_significand : {WMAN{1'b0}};
     wire [WMAN-1:0] raw_b_key_sig = b_finite ? b_significand : {WMAN{1'b0}};
 
-    wire raw_a_exp_gt_b_exp = raw_a_key_exp > raw_b_key_exp;
-    wire raw_a_exp_eq_b_exp = raw_a_key_exp == raw_b_key_exp;
-    wire raw_a_exp_ge_b_exp = raw_a_exp_gt_b_exp || raw_a_exp_eq_b_exp;
-    wire raw_a_sig_ge_b_sig;
-    // Used only when exponents are equal (consumers gate on s1_exp_eq), so this reduces to the significand
-    // comparison. The full a_exp_gt_b_exp || (a_exp_eq_b_exp && a_sig_ge_b_sig) form is dead in context.
-    wire raw_a_mag_ge_b_mag = raw_a_sig_ge_b_sig;
-
-    // Compare the raw significands (with the hidden 1) rather than the finite-masked key_sigs. When exponents
-    // are equal the consumer's behaviour only depends on this signal if both operands are finite, in which case
-    // a_key_sig == a_significand and b_key_sig == b_significand, so the comparison is identical. For non-finite
-    // operands the result is don't-care because force_inf/force_zero takes over downstream. Skipping the mask
-    // drops three LUT levels (raw_*_inf -> *_finite -> raw_*_key_sig) and several long routes from the path
-    // into the SD-bundle register, where this comparison was the critical-path source on Yosys+nextpnr.
-    _zkf_add_ge #(.W(WMAN)) u_sig_ge (.a(a_significand), .b(b_significand), .ge(raw_a_sig_ge_b_sig));
+    // Full sign-magnitude order from a single unsigned compare of the {exponent, fraction} field (the operand word
+    // minus its sign bit). For finite operands this is exactly the magnitude order: the exponent dominates and the
+    // fraction breaks ties, so the larger-magnitude operand also has the larger-or-equal exponent (exp_diff >= 0
+    // below). A zero input (exponent 0) sorts below every finite; a non-finite input's order is don't-care because
+    // force_inf/force_zero overrides the datapath. This single compare replaces the former separate exponent compare
+    // and significand compare, and selecting the larger-magnitude operand directly removes the s1 equal-exponent swap.
+    wire raw_a_mag_ge_b_mag;
+    _zkf_add_ge #(.W(WFULL-1)) u_mag_ge (.a(a[WFULL-2:0]), .b(b[WFULL-2:0]), .ge(raw_a_mag_ge_b_mag));
 
     // Decoded-operand bundle. When STAGE_DECODE=0 the d_* signals are combinational aliases of the raw
     // decoded wires above; when STAGE_DECODE!=0 they are registered, so the s0 capture below sees the
@@ -112,8 +107,6 @@ module zkf_add #(
     wire [WEXP-1:0] d_b_key_exp;
     wire [WMAN-1:0] d_a_key_sig;
     wire [WMAN-1:0] d_b_key_sig;
-    wire            d_a_exp_ge_b_exp;
-    wire            d_a_exp_eq_b_exp;
     wire            d_a_mag_ge_b_mag;
 
     generate
@@ -128,8 +121,6 @@ module zkf_add #(
             assign d_b_key_exp       = raw_b_key_exp;
             assign d_a_key_sig       = raw_a_key_sig;
             assign d_b_key_sig       = raw_b_key_sig;
-            assign d_a_exp_ge_b_exp  = raw_a_exp_ge_b_exp;
-            assign d_a_exp_eq_b_exp  = raw_a_exp_eq_b_exp;
             assign d_a_mag_ge_b_mag  = raw_a_mag_ge_b_mag;
         end else begin : g_decode_register
             reg            r_valid;
@@ -142,8 +133,6 @@ module zkf_add #(
             reg [WEXP-1:0] r_b_key_exp;
             reg [WMAN-1:0] r_a_key_sig;
             reg [WMAN-1:0] r_b_key_sig;
-            reg            r_a_exp_ge_b_exp;
-            reg            r_a_exp_eq_b_exp;
             reg            r_a_mag_ge_b_mag;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
@@ -157,8 +146,6 @@ module zkf_add #(
                 r_b_key_exp      <= raw_b_key_exp;
                 r_a_key_sig      <= raw_a_key_sig;
                 r_b_key_sig      <= raw_b_key_sig;
-                r_a_exp_ge_b_exp <= raw_a_exp_ge_b_exp;
-                r_a_exp_eq_b_exp <= raw_a_exp_eq_b_exp;
                 r_a_mag_ge_b_mag <= raw_a_mag_ge_b_mag;
             end
             assign d_valid           = r_valid;
@@ -171,32 +158,28 @@ module zkf_add #(
             assign d_b_key_exp       = r_b_key_exp;
             assign d_a_key_sig       = r_a_key_sig;
             assign d_b_key_sig       = r_b_key_sig;
-            assign d_a_exp_ge_b_exp  = r_a_exp_ge_b_exp;
-            assign d_a_exp_eq_b_exp  = r_a_exp_eq_b_exp;
             assign d_a_mag_ge_b_mag  = r_a_mag_ge_b_mag;
         end
     endgenerate
 
-    // Combinational selections sourced from the decoded bundle. These feed the s0 capture below.
-    wire ordered_exp_sign  = d_a_exp_ge_b_exp ? d_a_sign : d_b_sign;
-    wire equal_finite_sign = d_same_sign ? d_a_sign : (d_a_mag_ge_b_mag ? d_a_sign : d_b_sign);
-    wire inf_sign          = (d_a_inf & d_a_sign) | (d_b_inf & d_b_sign);
+    // Combinational selections sourced from the decoded bundle. These feed the s0 capture below. The larger-magnitude
+    // operand is the minuend ("large"); the smaller is aligned and subtracted ("small"). The finite result sign is the
+    // larger-magnitude operand's sign (exact cancellation is forced to canonical +0 by the packer).
+    wire finite_sign = d_a_mag_ge_b_mag ? d_a_sign : d_b_sign;
+    wire inf_sign    = (d_a_inf & d_a_sign) | (d_b_inf & d_b_sign);
 
-    wire [WEXP-1:0] large_exp     = d_a_exp_ge_b_exp ? d_a_key_exp : d_b_key_exp;
-    wire [WEXP-1:0] small_exp     = d_a_exp_ge_b_exp ? d_b_key_exp : d_a_key_exp;
-    wire [WMAN-1:0] large_sig_exp = d_a_exp_ge_b_exp ? d_a_key_sig : d_b_key_sig;
-    wire [WMAN-1:0] small_sig_exp = d_a_exp_ge_b_exp ? d_b_key_sig : d_a_key_sig;
+    wire [WEXP-1:0] large_exp     = d_a_mag_ge_b_mag ? d_a_key_exp : d_b_key_exp;
+    wire [WEXP-1:0] small_exp     = d_a_mag_ge_b_mag ? d_b_key_exp : d_a_key_exp;
+    wire [WMAN-1:0] large_sig_exp = d_a_mag_ge_b_mag ? d_a_key_sig : d_b_key_sig;
+    wire [WMAN-1:0] small_sig_exp = d_a_mag_ge_b_mag ? d_b_key_sig : d_a_key_sig;
 
-    // Stage 0: decoded/classified operands, exponent order, and full-magnitude order.
+    // Stage 0: decoded/classified operands ordered by magnitude.
     reg                            s0_valid;
-    reg                            s0_ordered_exp_sign;
-    reg                            s0_equal_finite_sign;
+    reg                            s0_finite_sign;
     reg                            s0_inf_sign;
     reg                            s0_same_sign;
     reg                            s0_force_zero;
     reg                            s0_force_inf;
-    reg                            s0_exp_eq;
-    reg                            s0_a_mag_ge_b_mag;
     reg signed [WEXP_UNBIASED-1:0] s0_exp_unbiased;
     reg                 [WEXP-1:0] s0_exp_diff;
     reg                 [WMAN-1:0] s0_large_sig_exp;
@@ -217,65 +200,50 @@ module zkf_add #(
     // real register stage that delays the sideband signals by one cycle so they remain aligned with the
     // late-arriving s0_small_aligned.
     wire                            s0b_valid;
-    wire                            s0b_ordered_exp_sign;
-    wire                            s0b_equal_finite_sign;
+    wire                            s0b_finite_sign;
     wire                            s0b_inf_sign;
     wire                            s0b_same_sign;
     wire                            s0b_force_zero;
     wire                            s0b_force_inf;
-    wire                            s0b_exp_eq;
-    wire                            s0b_a_mag_ge_b_mag;
     wire signed [WEXP_UNBIASED-1:0] s0b_exp_unbiased;
     wire                 [WMAN-1:0] s0b_large_sig_exp;
 
     generate
         if (STAGE_ALIGN == 0) begin : g_no_align_register
             assign s0b_valid             = s0_valid;
-            assign s0b_ordered_exp_sign  = s0_ordered_exp_sign;
-            assign s0b_equal_finite_sign = s0_equal_finite_sign;
+            assign s0b_finite_sign       = s0_finite_sign;
             assign s0b_inf_sign          = s0_inf_sign;
             assign s0b_same_sign         = s0_same_sign;
             assign s0b_force_zero        = s0_force_zero;
             assign s0b_force_inf         = s0_force_inf;
-            assign s0b_exp_eq            = s0_exp_eq;
-            assign s0b_a_mag_ge_b_mag    = s0_a_mag_ge_b_mag;
             assign s0b_exp_unbiased      = s0_exp_unbiased;
             assign s0b_large_sig_exp     = s0_large_sig_exp;
         end else begin : g_align_register
             reg                            r_valid;
-            reg                            r_ordered_exp_sign;
-            reg                            r_equal_finite_sign;
+            reg                            r_finite_sign;
             reg                            r_inf_sign;
             reg                            r_same_sign;
             reg                            r_force_zero;
             reg                            r_force_inf;
-            reg                            r_exp_eq;
-            reg                            r_a_mag_ge_b_mag;
             reg signed [WEXP_UNBIASED-1:0] r_exp_unbiased;
             reg                 [WMAN-1:0] r_large_sig_exp;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
                 else      r_valid <= s0_valid;
-                r_ordered_exp_sign  <= s0_ordered_exp_sign;
-                r_equal_finite_sign <= s0_equal_finite_sign;
+                r_finite_sign       <= s0_finite_sign;
                 r_inf_sign          <= s0_inf_sign;
                 r_same_sign         <= s0_same_sign;
                 r_force_zero        <= s0_force_zero;
                 r_force_inf         <= s0_force_inf;
-                r_exp_eq            <= s0_exp_eq;
-                r_a_mag_ge_b_mag    <= s0_a_mag_ge_b_mag;
                 r_exp_unbiased      <= s0_exp_unbiased;
                 r_large_sig_exp     <= s0_large_sig_exp;
             end
             assign s0b_valid             = r_valid;
-            assign s0b_ordered_exp_sign  = r_ordered_exp_sign;
-            assign s0b_equal_finite_sign = r_equal_finite_sign;
+            assign s0b_finite_sign       = r_finite_sign;
             assign s0b_inf_sign          = r_inf_sign;
             assign s0b_same_sign         = r_same_sign;
             assign s0b_force_zero        = r_force_zero;
             assign s0b_force_inf         = r_force_inf;
-            assign s0b_exp_eq            = r_exp_eq;
-            assign s0b_a_mag_ge_b_mag    = r_a_mag_ge_b_mag;
             assign s0b_exp_unbiased      = r_exp_unbiased;
             assign s0b_large_sig_exp     = r_large_sig_exp;
         end
@@ -283,14 +251,11 @@ module zkf_add #(
 
     // Stage 1: registered aligned operands.
     reg                            s1_valid;
-    reg                            s1_ordered_exp_sign;
-    reg                            s1_equal_finite_sign;
+    reg                            s1_finite_sign;
     reg                            s1_inf_sign;
     reg                            s1_same_sign;
     reg                            s1_force_zero;
     reg                            s1_force_inf;
-    reg                            s1_exp_eq;
-    reg                            s1_a_mag_ge_b_mag;
     reg signed [WEXP_UNBIASED-1:0] s1_exp_unbiased;
     // the larger operand's extended significand carries the always-1 hidden bit
     // verilator coverage_off
@@ -299,18 +264,18 @@ module zkf_add #(
     // verilator coverage_on
     reg                 [WEXT-1:0] s1_small_aligned;
 
-    wire            s1_swap_equal  = s1_exp_eq && !s1_a_mag_ge_b_mag;
+    // The larger-magnitude operand is always the minuend, so no equal-exponent swap is needed: large is the adder's
+    // a input, the aligned small operand is the b input. Effective subtraction complements b and adds a carry-in.
     // verilator coverage_off
     // The adder operands' top bit is the constant carry pad and their upper bits carry the always-1 hidden
     // bit / fixed GRS positions, so those bits cannot toggle. s1_adder_b (the complemented operand) and
     // s1_raw_result (the sum) below are the behaviourally meaningful nets and stay covered.
-    wire [WRAW-1:0] s1_adder_a     = {1'b0, s1_swap_equal ? s1_small_aligned : s1_large_ext_exp};
-    wire [WRAW-1:0] s1_adder_b_abs = {1'b0, s1_swap_equal ? s1_large_ext_exp : s1_small_aligned};
+    wire [WRAW-1:0] s1_adder_a     = {1'b0, s1_large_ext_exp};
+    wire [WRAW-1:0] s1_adder_b_abs = {1'b0, s1_small_aligned};
     // verilator coverage_on
     wire [WRAW-1:0] s1_adder_b     = s1_same_sign ? s1_adder_b_abs : ~s1_adder_b_abs;
     wire [WRAW-1:0] s1_raw_result  = s1_adder_a + s1_adder_b + {{(WRAW-1){1'b0}}, !s1_same_sign};
-    wire            s1_finite_sign = s1_exp_eq    ? s1_equal_finite_sign : s1_ordered_exp_sign;
-    wire            s1_result_sign = s1_force_inf ? s1_inf_sign          : s1_finite_sign;
+    wire            s1_result_sign = s1_force_inf ? s1_inf_sign : s1_finite_sign;
 
     // Stage 2: registered raw add/sub result.
     reg                            s2_valid;
@@ -331,26 +296,14 @@ module zkf_add #(
     wire s2_add_round  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-2]    :   s2_raw_result[NORM_TOP-WMAN-1];
     wire s2_add_sticky = s2_add_carry ? (|s2_raw_result[WRAW-WMAN-3:0]) : (|s2_raw_result[NORM_TOP-WMAN-2:0]);
 
-    wire                            s2_sub_zero;
-    wire               [WINDEX-1:0] s2_sub_shift;
-    // zero-extension padding of the LOD shift amount (high bits constant 0).
-    // verilator coverage_off
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s2_sub_shift};
-    // verilator coverage_on
-    wire signed [WEXP_UNBIASED-1:0] s2_sub_exp_unbiased = s2_exp_unbiased - s2_sub_shift_ext;
-
-    // The sub-path LOD only needs to scan the lower NORM_TOP+1 = WMAN+3 bits of the raw result; any normalisation that
-    // would require a leading 1 above bit NORM_TOP is impossible after a close-cancellation subtraction. The shared
-    // _zkf_lod pads the natural $clog2(W) shamt up to WINDEX = $clog2(WRAW) bits to match the downstream signal width.
+    // The sub path's close-cancellation normalize is the fused _zkf_normshift instantiated in the s3 region below: its
+    // internal STAGE_SPLIT register sits on the s2->s3 boundary (replacing the former s3_raw_result and shift-count
+    // registers), so it scans and shifts the same low NINPUT = WMAN+3 bits of the raw result a separate LOD used to
+    // scan. A leading 1 above bit NORM_TOP is impossible after a close-cancellation subtraction. Only the add path's
+    // exponent adjust is resolved in this s2 cone; the sub path's exponent correction moves to the s3 cone where the
+    // normalize count becomes available.
     localparam NORM_TOP_INT = WMAN + 2;
     localparam NINPUT       = NORM_TOP_INT + 1;
-    _zkf_lod #(.W(NINPUT), .WSHAMT(WINDEX)) u_sub_shift_count (
-        .x(s2_raw_result[NINPUT-1:0]),
-        .zero(s2_sub_zero),
-        .shamt(s2_sub_shift)
-    );
-
-    wire signed [WEXP_UNBIASED-1:0] s2_pack_exp_unbiased = s2_same_sign ? s2_add_exp_unbiased : s2_sub_exp_unbiased;
 
     // Stage 3: registered add normalization and subtraction shift count.
     reg                            s3_valid;
@@ -358,28 +311,42 @@ module zkf_add #(
     reg                            s3_same_sign;
     reg                            s3_force_zero;
     reg                            s3_force_inf;
-    reg                 [WEXT-1:0] s3_raw_result;
-    reg signed [WEXP_UNBIASED-1:0] s3_pack_exp_unbiased;
+    reg signed [WEXP_UNBIASED-1:0] s3_exp_unbiased;       // base (large-operand) exponent, for the sub-path correction
+    reg signed [WEXP_UNBIASED-1:0] s3_add_exp_unbiased;   // add-path exponent, resolved in the s2 cone
     reg                 [WMAN-1:0] s3_add_significand;
     reg                            s3_add_guard;
     reg                            s3_add_round;
     reg                            s3_add_sticky;
-    reg                            s3_sub_zero;
-    reg               [WINDEX-1:0] s3_sub_shift;
 
-    wire [WMAN-1:0] s3_sub_significand;
-    wire            s3_sub_guard;
-    wire            s3_sub_round;
-    wire            s3_sub_sticky;
-
-    _zkf_add_sub_shift_apply #(.WMAN(WMAN), .WINDEX(WINDEX)) u_sub_shift (
-        .x(s3_raw_result),
-        .shamt(s3_sub_shift),
-        .significand(s3_sub_significand),
-        .guard(s3_sub_guard),
-        .round(s3_sub_round),
-        .sticky(s3_sub_sticky)
+    // Sub-path close-cancellation normalize: fused leading-zero count + left shift. STAGE_SPLIT=1 puts one register
+    // inside the cascade on the s2->s3 boundary, so its zero/count/aligned outputs are valid in this s3 cone, aligned
+    // with the registered add-path results. The input is the same low NINPUT = WMAN+3 bits of the raw result; the
+    // count it reports is the left-shift that brings the leading 1 to bit NORM_TOP, exactly as the former LOD+shift.
+    wire                s3_sub_zero;
+    wire   [WINDEX-1:0] s3_sub_shift;
+    // verilator coverage_off
+    // Normalized magnitude; its slices feed the covered significand/GRS below.
+    wire   [NINPUT-1:0] s3_sub_aligned;
+    // verilator coverage_on
+    _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(1)) u_sub_norm (
+        .clk(clk),
+        .x(s2_raw_result[NINPUT-1:0]),
+        .zero(s3_sub_zero),
+        .count(s3_sub_shift),
+        .y(s3_sub_aligned)
     );
+    wire [WMAN-1:0] s3_sub_significand = s3_sub_aligned[NINPUT-1 -: WMAN];
+    wire            s3_sub_guard       = s3_sub_aligned[2];
+    wire            s3_sub_round       = s3_sub_aligned[1];
+    wire            s3_sub_sticky      = s3_sub_aligned[0];
+
+    // Sub-path exponent correction lands here because the normalize count is now produced in this cone.
+    // verilator coverage_off
+    // zero-extension padding of the normalize shift amount (high bits constant 0).
+    wire signed [WEXP_UNBIASED-1:0] s3_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s3_sub_shift};
+    // verilator coverage_on
+    wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_unbiased  = s3_exp_unbiased - s3_sub_shift_ext;
+    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_unbiased = s3_same_sign ? s3_add_exp_unbiased : s3_sub_exp_unbiased;
 
     wire s3_finite_zero = s3_same_sign ? (~|{s3_add_significand, s3_add_guard, s3_add_round, s3_add_sticky})
                                        : s3_sub_zero;
@@ -420,15 +387,12 @@ module zkf_add #(
             s3_valid <= s2_valid;
         end
 
-        // Stage 0 capture: finite operand order, exponent delta, and special-case controls.
-        s0_ordered_exp_sign  <= ordered_exp_sign;
-        s0_equal_finite_sign <= equal_finite_sign;
+        // Stage 0 capture: magnitude-ordered operands, exponent delta, and special-case controls.
+        s0_finite_sign       <= finite_sign;
         s0_inf_sign          <= inf_sign;
         s0_same_sign         <= d_same_sign;
         s0_force_zero        <= d_a_inf && d_b_inf && !d_same_sign;
         s0_force_inf         <= d_a_inf || d_b_inf;
-        s0_exp_eq            <= d_a_exp_eq_b_exp;
-        s0_a_mag_ge_b_mag    <= d_a_mag_ge_b_mag;
         s0_exp_unbiased      <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp} - {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
         s0_exp_diff          <= large_exp - small_exp;
         s0_large_sig_exp     <= large_sig_exp;
@@ -436,14 +400,11 @@ module zkf_add #(
 
         // Stage 1 capture: aligned operands sourced from s0b_* (which is either s0_* directly or a
         // delayed copy of s0_*, depending on STAGE_ALIGN). The add/sub carry-chain is in the next stage.
-        s1_ordered_exp_sign  <= s0b_ordered_exp_sign;
-        s1_equal_finite_sign <= s0b_equal_finite_sign;
+        s1_finite_sign       <= s0b_finite_sign;
         s1_inf_sign          <= s0b_inf_sign;
         s1_same_sign         <= s0b_same_sign;
         s1_force_zero        <= s0b_force_zero;
         s1_force_inf         <= s0b_force_inf;
-        s1_exp_eq            <= s0b_exp_eq;
-        s1_a_mag_ge_b_mag    <= s0b_a_mag_ge_b_mag;
         s1_exp_unbiased      <= s0b_exp_unbiased;
         s1_large_ext_exp     <= {s0b_large_sig_exp, {WGRS{1'b0}}};
         s1_small_aligned     <= s0_small_aligned;
@@ -462,14 +423,12 @@ module zkf_add #(
         s3_same_sign         <= s2_same_sign;
         s3_force_zero        <= s2_force_zero;
         s3_force_inf         <= s2_force_inf;
-        s3_raw_result        <= s2_raw_result[WEXT-1:0];
-        s3_pack_exp_unbiased <= s2_pack_exp_unbiased;
+        s3_exp_unbiased      <= s2_exp_unbiased;
+        s3_add_exp_unbiased  <= s2_add_exp_unbiased;
         s3_add_significand   <= s2_add_significand;
         s3_add_guard         <= s2_add_guard;
         s3_add_round         <= s2_add_round;
         s3_add_sticky        <= s2_add_sticky;
-        s3_sub_zero          <= s2_sub_zero;
-        s3_sub_shift         <= s2_sub_shift;
     end
 endmodule
 
@@ -480,25 +439,6 @@ endmodule
 module _zkf_add_ge #(parameter W = 18) (input wire [W-1:0] a, input wire [W-1:0] b, output wire ge);
     wire [W:0] diff = {1'b0, a} - {1'b0, b};
     assign ge = !diff[W];
-endmodule
-
-
-// Apply the registered subtraction-normalization shift and exponent correction.
-module _zkf_add_sub_shift_apply #(parameter WMAN = 18, parameter WINDEX = $clog2(WMAN + 4)) (
-    input wire   [WMAN+2:0] x,
-    input wire [WINDEX-1:0] shamt,
-
-    output wire [WMAN-1:0] significand,
-    output wire            guard,
-    output wire            round,
-    output wire            sticky
-);
-    localparam NORM_TOP_INT = WMAN + 2;
-    wire [NORM_TOP_INT:0] shifted = x[NORM_TOP_INT:0] << shamt;
-    assign significand = shifted[NORM_TOP_INT -: WMAN];
-    assign guard       = shifted[2];
-    assign round       = shifted[1];
-    assign sticky      = shifted[0];
 endmodule
 
 

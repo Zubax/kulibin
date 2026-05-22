@@ -63,21 +63,27 @@ module zkf_from_int #(
     reg [WX-1:0]   s1_mag_ext;
     // verilator coverage_on
 
-    // Stage-2 cone: LOD on the registered magnitude. The output shamt is the left-shift count that brings the
-    // leading 1 to bit (WX-1); zero is the OR-reduction of the magnitude, which _zkf_pack will use as force_zero.
-    wire            s1_zero;
-    wire [WIDX-1:0] s1_shamt;
-    _zkf_lod #(.W(WX)) u_lod (.x(s1_mag_ext), .zero(s1_zero), .shamt(s1_shamt));
+    // Fused leading-zero normalize + left shift on the registered magnitude. STAGE_SPLIT=1 places one register
+    // inside the cascade, so zero/shamt/aligned all arrive one cycle later (stage 2), matching the s2_sign/s2_valid
+    // pipeline. shamt is the left-shift count that brings the leading 1 to bit (WX-1); zero is the magnitude
+    // OR-reduction, which _zkf_pack uses as force_zero. This replaces the former _zkf_lod plus a separate barrel shift.
+    wire            s2_zero;
+    wire [WIDX-1:0] s2_shamt;
+    // left-justified magnitude; its slices feed the covered significand/GRS below.
+    // verilator coverage_off
+    wire   [WX-1:0] s2_aligned;
+    // verilator coverage_on
+    _zkf_normshift #(.W(WX), .STAGE_SPLIT(1)) u_norm (
+        .clk(clk),
+        .x(s1_mag_ext),
+        .zero(s2_zero),
+        .count(s2_shamt),
+        .y(s2_aligned)
+    );
 
-    // Stage 2: register the LOD outputs and the magnitude. Reset only validity; payload free-runs.
+    // Stage 2: register sign alongside the normalize pipeline. Reset only validity; payload free-runs.
     reg            s2_valid;
     reg            s2_sign;
-    // WX-wide magnitude reg; the WX>WINT high bits are constant zero-padding.
-    // verilator coverage_off
-    reg [WX-1:0]   s2_mag_ext;
-    // verilator coverage_on
-    reg            s2_zero;
-    reg [WIDX-1:0] s2_shamt;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -91,18 +97,11 @@ module zkf_from_int #(
         s1_mag_ext <= mag_ext_in;
 
         s2_sign    <= s1_sign;
-        s2_mag_ext <= s1_mag_ext;
-        s2_zero    <= s1_zero;
-        s2_shamt   <= s1_shamt;
     end
 
-    // Stage 2 -> _zkf_pack inputs combinational: barrel shift (LOD already done) plus GRS extraction and exponent
-    // derivation. Significand carries the hidden leading 1 at the top; the next two bits feed guard/round, and any
+    // Stage 2 -> _zkf_pack inputs combinational: GRS extraction and exponent derivation from the normalized
+    // magnitude. Significand carries the hidden leading 1 at the top; the next two bits feed guard/round, and any
     // remaining bits below OR-reduce into sticky.
-    // left-justified magnitude; its slices feed the covered significand/GRS below.
-    // verilator coverage_off
-    wire   [WX-1:0] s2_aligned     =  s2_mag_ext << s2_shamt;
-    // verilator coverage_on
     wire [WMAN-1:0] s2_significand =  s2_aligned[WX-1 -: WMAN];
     wire            s2_guard       =  s2_aligned[WX-WMAN-1];
     wire            s2_round       =  s2_aligned[WX-WMAN-2];

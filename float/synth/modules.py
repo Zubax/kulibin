@@ -369,14 +369,14 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "add":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_lod.v",
+            hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
         ]
     if spec.kind == "addsub":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_lod.v",
+            hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
             hdl / "zkf_addsub.v",
@@ -400,7 +400,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return [
             hdl / "_zkf_pack.v",
             hdl / "_zkf_pipe.v",
-            hdl / "_zkf_lod.v",
+            hdl / "_zkf_normshift.v",
             hdl / "zkf_from_int.v",
         ]
     if spec.kind == "to_int":

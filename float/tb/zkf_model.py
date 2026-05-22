@@ -592,6 +592,17 @@ def lod_reference(width: int, value: int) -> tuple[int, int]:
     return 0, (width - 1) - (value.bit_length() - 1)
 
 
+def normshift_reference(width: int, value: int) -> tuple[int, int, int]:
+    """Reference for _zkf_normshift: returns (zero, count, y). count = (width-1) - leading_one_position, i.e. the
+    left-shift that brings the leading 1 to the MSB; y = value << count, the normalized vector. count and y are
+    don't-care when zero is asserted."""
+    value &= mask(width)
+    if value == 0:
+        return 1, 0, 0
+    count = (width - 1) - (value.bit_length() - 1)
+    return 0, count, (value << count) & mask(width)
+
+
 def rshift_sticky_reference(width: int, value: int, shamt: int) -> int:
     """Reference for _zkf_rshift_sticky: y = value >> shamt, with y[0] OR-collecting every dropped bit
     (and the bit landing at position 0). For shamt >= width the result is {0, |value}."""

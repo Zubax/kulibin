@@ -7,7 +7,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
-      - hdl/_zkf_lod.v
+      - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_mul.v
@@ -39,7 +39,7 @@ filesets:
   rtl_add:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_lod.v
+      - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
     file_type: verilogSource
@@ -57,9 +57,9 @@ filesets:
       - hdl/_zkf_pipe.v
     file_type: verilogSource
 
-  rtl_lod:
+  rtl_normshift:
     files:
-      - hdl/_zkf_lod.v
+      - hdl/_zkf_normshift.v
     file_type: verilogSource
 
   rtl_rshift:
@@ -104,7 +104,7 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_lod.v
+      - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
       - hdl/zkf_addsub.v
@@ -124,7 +124,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
-      - hdl/_zkf_lod.v
+      - hdl/_zkf_normshift.v
       - hdl/zkf_from_int.v
     file_type: verilogSource
 
@@ -336,9 +336,13 @@ parameters:
     datatype: int
     default: 0
     paramtype: vlogparam
-  ZKF_LOD_W:
+  ZKF_NS_W:
     datatype: int
     default: 8
+    paramtype: plusarg
+  ZKF_NS_SPLIT:
+    datatype: int
+    default: 0
     paramtype: plusarg
   ZKF_RSH_W:
     datatype: int
@@ -724,30 +728,32 @@ targets:
       run_options: [+verilator+coverage+file+coverage.dat]
     parameters: *pipe_params
 
-  sim_lod_icarus:
-    filesets: [rtl_lod, tb_cocotb]
-    toplevel: _zkf_lod
+  sim_normshift_icarus:
+    filesets: [rtl_normshift, tb_cocotb]
+    toplevel: _zkf_normshift
     flow: sim
     flow_options:
       tool: icarus
-      cocotb_module: test_lod
+      cocotb_module: test_normshift
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: &lod_params
+    parameters: &normshift_params
       - W
-      - ZKF_LOD_W
+      - STAGE_SPLIT
+      - ZKF_NS_W
+      - ZKF_NS_SPLIT
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
 
-  sim_lod_verilator:
-    filesets: [rtl_lod, tb_cocotb]
-    toplevel: _zkf_lod
+  sim_normshift_verilator:
+    filesets: [rtl_normshift, tb_cocotb]
+    toplevel: _zkf_normshift
     flow: sim
     flow_options:
       tool: verilator
-      cocotb_module: test_lod
+      cocotb_module: test_normshift
       verilator_options:
         - --timing
         - -Wno-TIMESCALEMOD
@@ -758,7 +764,7 @@ targets:
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
-    parameters: *lod_params
+    parameters: *normshift_params
 
   sim_rshift_icarus:
     filesets: [rtl_rshift, tb_cocotb]
