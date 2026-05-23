@@ -1,14 +1,20 @@
 /// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
-/// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 3+STAGE_INPUT end-to-end.
+/// Register stages: 2+STAGE_INPUT+STAGE_OUTPUT end-to-end.
+///
+/// STAGE_INPUT=0: input combinational paths are exposed.
+/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
+///
+/// STAGE_OUTPUT=0: outputs are combinational (default)
+/// STAGE_OUTPUT=1: registered (one extra cycle).
 
 `default_nettype none
 
 module zkf_from_int #(
-    parameter WEXP        = 6,
-    parameter WMAN        = 18,
-    parameter WINT        = 32,
-    parameter STAGE_INPUT = 0   // whether to add a stage at the input (shields inputs from combinational paths)
+    parameter WEXP         = 6,
+    parameter WMAN         = 18,
+    parameter WINT         = 32,
+    parameter STAGE_INPUT  = 0,
+    parameter STAGE_OUTPUT = 0
 ) (
     input wire clk,
     input wire rst,
@@ -122,7 +128,7 @@ module zkf_from_int #(
     wire signed [WEU-1:0] s2_exp_biased = EXP_BIASED_TOP - s2_shamt_ext;
     // verilator coverage_on
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1)) u_pack (
+    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s2_valid),

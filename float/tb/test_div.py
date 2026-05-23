@@ -53,9 +53,10 @@ class DivObservation:
 
 
 def div_register_stages(wman: int) -> int:
+    # div_core overhead (2) + the radix-4 quotient stages (qfrac/2). STAGE_INPUT and STAGE_OUTPUT are added by callers.
     qfrac_base = wman + 2
     qfrac = qfrac_base + (qfrac_base % 2)
-    return (qfrac // 2) + 3
+    return (qfrac // 2) + 2
 
 
 def add_unique(
@@ -353,7 +354,7 @@ async def div_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = div_register_stages(fmt.wman) + context.stage_input
+    register_stages = div_register_stages(fmt.wman) + context.stage_output + context.stage_input
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

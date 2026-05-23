@@ -34,7 +34,7 @@ class TestContext:
     stage_product: int = 0   # zkf_mul
     stage_align: int = 0     # zkf_add / zkf_addsub (alignment shifter split)
     stage_decode: int = 0    # zkf_mul_ilog2_const (decoded-signal pipeline register)
-    stage_output: int = 1    # zkf_mul: 1 = registered output (default); 0 = combinational output (-1 cycle)
+    stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
 
     @property
     def params(self) -> str:
@@ -142,7 +142,7 @@ def _stage_decode() -> int:
 
 
 def _stage_output() -> int:
-    value = plusarg_int("ZKF_STAGE_OUTPUT", 1)
+    value = plusarg_int("ZKF_STAGE_OUTPUT", 0)
     if value not in (0, 1):
         raise ValueError(f"ZKF_STAGE_OUTPUT must be 0 or 1, got {value}")
     return value

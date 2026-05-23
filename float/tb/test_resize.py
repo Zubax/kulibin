@@ -157,11 +157,9 @@ async def resize_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
 
-    # zkf_resize uses 1 stage on the widen-only fast path (output covers input in both
-    # dimensions) and 1 stage when the value must flow through the single-stage _zkf_pack for
-    # rounding or overflow handling - so the stage count is the same either way.
-    widen_only = (fmt_out.wman >= fmt_in.wman) and (fmt_out.wexp >= fmt_in.wexp)
-    register_stages = (1 if widen_only else 1) + context.stage_input
+    # zkf_resize latency is STAGE_INPUT + STAGE_OUTPUT for both the widen-only fast path and the _zkf_pack path
+    # (both honor STAGE_OUTPUT), so the stage count is the same either way; 0 means a fully combinational cast.
+    register_stages = context.stage_output + context.stage_input
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt_out.wfull)})
 
     def drive_case(case: ResizeCase) -> dict[str, int]:

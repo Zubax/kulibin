@@ -1,8 +1,13 @@
 /// Streamed cast between two Zubax Kulibin float formats.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages depend on the format relation:
-///   1+STAGE_INPUT stages when WMAN_OUT >= WMAN_IN and WEXP_OUT >= WEXP_IN. The output format is a superset.
-///   1+STAGE_INPUT stages otherwise too (using the single-stage _zkf_pack like other arithmetic modules do).
+///
+/// Register stages: STAGE_INPUT+STAGE_OUTPUT end-to-end.
+///
+/// STAGE_INPUT=0: input combinational paths are exposed.
+/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
+///
+/// STAGE_OUTPUT=0: outputs are combinational (default)
+/// STAGE_OUTPUT=1: registered (one extra cycle).
 ///
 /// Behaviour:
 ///   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
@@ -15,11 +20,12 @@
 `default_nettype none
 
 module zkf_resize #(
-    parameter WEXP_IN     = 6,
-    parameter WMAN_IN     = 18,
-    parameter WEXP_OUT    = 5,
-    parameter WMAN_OUT    = 11,
-    parameter STAGE_INPUT = 0
+    parameter WEXP_IN      = 6,
+    parameter WMAN_IN      = 18,
+    parameter WEXP_OUT     = 5,
+    parameter WMAN_OUT     = 11,
+    parameter STAGE_INPUT  = 0,
+    parameter STAGE_OUTPUT = 0
 ) (
     input wire clk,
     input wire rst,
@@ -98,33 +104,34 @@ module zkf_resize #(
             end
             // verilator coverage_on
 
-            // Final encoding: zero collapses to canonical +0; infinity becomes canonical signed infinity;
-            // normal values use the re-biased exponent and padded fraction.
-            // case is wrapped inside the clocked always block per the project's banned-construct list.
-            reg                 s_valid;
-            // s_y takes constant zero/inf encodings in two case arms (only the
+            // Final encoding: zero collapses to canonical +0 (wins over inf); infinity becomes canonical signed
+            // infinity; normal values use the re-biased exponent and padded fraction. A ternary (not a case) so the
+            // same expression feeds both the registered and combinational STAGE_OUTPUT branches below.
+            // y_widen takes constant zero/inf encodings on two arms (only the sign bit varies there); the
             // verilator coverage_off
-            // sign bit varies there); the normal-result bits and the output port y stay covered.
-            reg [WFULL_OUT-1:0] s_y;
+            // normal-result bits and the output port y stay covered.
+            wire [WFULL_OUT-1:0] y_widen = is_zero ? {WFULL_OUT{1'b0}}
+                                         : is_inf  ? {sign_in, {WEXP_OUT{1'b1}}, {WFRAC_OUT{1'b0}}}
+                                         :           {sign_in, exp_widened, frac_widened};
             // verilator coverage_on
-            always @(posedge clk) begin
-                if (rst) begin
-                    s_valid <= 1'b0;
-                end else begin
-                    s_valid <= in_valid_q;
+            if (STAGE_OUTPUT != 0) begin : g_owr
+                reg                 s_valid;
+                reg [WFULL_OUT-1:0] s_y;
+                always @(posedge clk) begin
+                    if (rst) s_valid <= 1'b0;
+                    else     s_valid <= in_valid_q;
+                    s_y <= y_widen;
                 end
-
-                case ({is_zero, is_inf})
-                    2'b10, 2'b11: s_y <= {WFULL_OUT{1'b0}};
-                    2'b01:        s_y <= {sign_in, {WEXP_OUT{1'b1}}, {WFRAC_OUT{1'b0}}};
-                    default:      s_y <= {sign_in, exp_widened, frac_widened};
-                endcase
+                assign out_valid = s_valid;
+                assign y         = s_y;
+            end else begin : g_owc
+                // Combinational output: gate out_valid by rst so reset still suppresses output without a register.
+                assign out_valid = in_valid_q & ~rst;
+                assign y         = y_widen;
             end
-            assign out_valid = s_valid;
-            assign y         = s_y;
         end else begin : g_pack
             // Slow path: at least one dimension narrows, so rounding and/or overflow detection are needed and
-            // _zkf_pack handles them. Latency = 1 cycle (the single pack stage). Output-side accumulator width for the
+            // _zkf_pack handles them (its STAGE_OUTPUT sets registered vs combinational). Output-side accumulator width for the
             // unbiased exponent. Must hold the input format's full signed exp_unbiased range (WEXP_IN + 1 signed bits)
             // and also _zkf_pack's internal range requirement of at least WEXP_OUT + 2 signed bits.
             localparam WEU_PACK_MIN = WEXP_OUT + 2;
@@ -172,7 +179,7 @@ module zkf_resize #(
                 end
             end
 
-            _zkf_pack #(.WEXP(WEXP_OUT), .WMAN(WMAN_OUT), .WEXP_UNBIASED(WEU)) u_pack (
+            _zkf_pack #(.WEXP(WEXP_OUT), .WMAN(WMAN_OUT), .WEXP_UNBIASED(WEU), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
                 .clk(clk),
                 .rst(rst),
                 .in_valid(in_valid_q),

@@ -44,10 +44,13 @@ class RegisterStageScoreboard:
         context: TestContext,
         outputs: dict[str, tuple[object, int]],
     ) -> None:
-        if register_stages < 1:
-            raise ValueError(f"register_stages must be at least 1, got {register_stages}")
+        if register_stages < 0:
+            raise ValueError(f"register_stages must be non-negative, got {register_stages}")
         self._dut = dut
-        self._queue_delay = register_stages - 1
+        # A combinational module (register_stages == 0) is observed exactly like a single-stage one: the driver holds
+        # the inputs across the sampling edge, so the held combinational output is still valid one edge after the
+        # drive. out_valid is gated by rst on such modules, so the reset/gap checks below behave identically.
+        self._queue_delay = max(0, register_stages - 1)
         self._context = context
         self._outputs = outputs
         self._queue: deque[tuple[dict[str, int], str] | None] = deque([None] * self._queue_delay)

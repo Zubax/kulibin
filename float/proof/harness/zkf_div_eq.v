@@ -3,7 +3,7 @@
 
 `default_nettype none
 
-module zkf_div_eq #(parameter WEXP = 4, parameter WMAN = 6) (
+module zkf_div_eq #(parameter WEXP = 4, parameter WMAN = 6, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
     input wire in_valid,
@@ -14,7 +14,8 @@ module zkf_div_eq #(parameter WEXP = 4, parameter WMAN = 6) (
     localparam QFRAC_BASE  = WMAN + 2;
     localparam QFRAC       = QFRAC_BASE + (QFRAC_BASE % 2);
     localparam QSTAGES     = QFRAC / 2;
-    localparam PIPE_STAGES = 3 + QSTAGES;
+    // div_core overhead (2) + quotient stages + STAGE_OUTPUT (registered pack output / aligned div0).
+    localparam PIPE_STAGES = 2 + QSTAGES + STAGE_OUTPUT;
     localparam T_RESULT    = 1 + PIPE_STAGES;
     localparam CYCLE_W     = 6;
 
@@ -43,7 +44,7 @@ module zkf_div_eq #(parameter WEXP = 4, parameter WMAN = 6) (
     wire             dut_valid;
     wire [WFULL-1:0] dut_q;
     wire             dut_div0;
-    zkf_div #(.WEXP(WEXP), .WMAN(WMAN)) u_dut (
+    zkf_div #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_OUTPUT(STAGE_OUTPUT)) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(a), .b(b),
         .out_valid(dut_valid), .q(dut_q), .div0(dut_div0)

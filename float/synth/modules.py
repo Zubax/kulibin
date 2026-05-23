@@ -33,7 +33,7 @@ class ModuleSpec:
     stage_product: int = 0   # zkf_mul: 0 or 1.
     stage_align: int = 0     # zkf_add, zkf_addsub: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const: 0 or 1 (decoded-signal register).
-    stage_output: int = 1    # zkf_mul: 1 = registered output (default); 0 = combinational output (-1 cycle).
+    stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
 
 
 MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
@@ -69,25 +69,25 @@ MODULES = [
         stage_product=1,
     ),
     ModuleSpec(
-        name="zkf_mul_so0",
-        label="zkf_mul (STAGE_OUTPUT=0, 1-cycle combinational-output)",
-        top="zkf_mul_so0_synth_top",
+        name="zkf_mul_so1",
+        label="zkf_mul (STAGE_OUTPUT=1, registered output)",
+        top="zkf_mul_so1_synth_top",
         kind="mul",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        stage_output=0,
+        stage_output=1,
     ),
     ModuleSpec(
-        name="zkf_mul_w8m36_so0",
-        label="zkf_mul (WEXP=8, WMAN=36, STAGE_PRODUCT=1, STAGE_OUTPUT=0)",
-        top="zkf_mul_w8m36_so0_synth_top",
+        name="zkf_mul_w8m36_so1",
+        label="zkf_mul (WEXP=8, WMAN=36, STAGE_PRODUCT=1, STAGE_OUTPUT=1)",
+        top="zkf_mul_w8m36_so1_synth_top",
         kind="mul",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_product=1,
-        stage_output=0,
+        stage_output=1,
     ),
     ModuleSpec(
         name="zkf_mul_w8m36_sp1",
@@ -169,13 +169,15 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_div_w8m36",
-        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18, STAGE_INPUT=1 shields the wide input decode cone)",
+        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18; STAGE_INPUT=1 shields the wide input decode cone, "
+              "STAGE_OUTPUT=1 registers the wide quotient round so Diamond/LSE closes timing)",
         top="zkf_div_w8m36_synth_top",
         kind="div",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
+        stage_output=1,
     ),
     ModuleSpec(
         name="zkf_cmp",
@@ -451,31 +453,29 @@ def register_stages(spec: ModuleSpec) -> int:
     qfrac = qfrac_base + (qfrac_base % 2)
     div_core_stages = 2 + (qfrac // 2)
 
+    # Every pack-based op ends in _zkf_pack, whose output stage is STAGE_OUTPUT (0 = combinational, 1 = registered).
     if spec.kind == "pack":
-        return 1
+        return spec.stage_output
     if spec.kind == "mul":
-        # zkf_mul: 1 (product) + STAGE_OUTPUT (registered pack output) + STAGE_PRODUCT (DSP cascade split).
-        # Default STAGE_OUTPUT=1 -> 2 stages; STAGE_OUTPUT=0 (combinational output) -> 1 stage.
+        # 1 (product) + STAGE_OUTPUT (pack output) + STAGE_PRODUCT (DSP cascade split). Default 1 + STAGE_PRODUCT.
         return 1 + spec.stage_output + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
-        return 5 + spec.stage_decode + spec.stage_align
+        return 4 + spec.stage_output + spec.stage_decode + spec.stage_align
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
-        return div_core_stages + 1 + spec.stage_input
+        return div_core_stages + spec.stage_output + spec.stage_input
     if spec.kind in {"cmp", "sort"}:
         return 1
     if spec.kind == "mul_ilog2_const":
         return 1 + spec.stage_decode
     if spec.kind == "from_int":
-        return 3 + spec.stage_input          # 2 front stages + 1-stage _zkf_pack
+        return 2 + spec.stage_output + spec.stage_input   # 2 front stages + STAGE_OUTPUT pack output
     if spec.kind == "to_int":
         return 4 + spec.stage_input          # does not use _zkf_pack; unaffected by the packer pipeline
     if spec.kind == "resize":
-        # 1 stage on the widen-only fast path; 1 stage when the value flows through the single-stage _zkf_pack.
-        if spec.wman_out >= spec.wman_in and spec.wexp_out >= spec.wexp_in:
-            return 1 + spec.stage_input
-        return 1 + spec.stage_input
+        # Both the widen-only fast path and the _zkf_pack path honor STAGE_OUTPUT; STAGE_INPUT adds the input pipe.
+        return spec.stage_output + spec.stage_input
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -493,7 +493,7 @@ def _sp_suffix(spec: ModuleSpec) -> str:
 
 
 def _so_suffix(spec: ModuleSpec) -> str:
-    return ", STAGE_OUTPUT=0" if spec.stage_output == 0 else ""
+    return ", STAGE_OUTPUT=1" if spec.stage_output == 1 else ""
 
 
 def _sa_suffix(spec: ModuleSpec) -> str:

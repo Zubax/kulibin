@@ -219,7 +219,8 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_DECODE({spec.stage_decode}),
-        .STAGE_ALIGN({spec.stage_align})
+        .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -291,7 +292,8 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_DECODE({spec.stage_decode}),
-        .STAGE_ALIGN({spec.stage_align})
+        .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -497,7 +499,8 @@ module {spec.top} (
     zkf_div #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -784,7 +787,8 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .WINT({wint}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -913,7 +917,8 @@ module {spec.top} (
         .WMAN_IN({spec.wman_in}),
         .WEXP_OUT({spec.wexp_out}),
         .WMAN_OUT({spec.wman_out}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
         .rst(rst),

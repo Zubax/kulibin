@@ -318,11 +318,11 @@ parameters:
     paramtype: plusarg
   STAGE_OUTPUT:
     datatype: int
-    default: 1
+    default: 0
     paramtype: vlogparam
   ZKF_STAGE_OUTPUT:
     datatype: int
-    default: 1
+    default: 0
     paramtype: plusarg
   STAGE_ALIGN:
     datatype: int

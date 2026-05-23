@@ -223,7 +223,7 @@ async def pack_runtime_cases(dut) -> None:
     dut.round.value = 0
     dut.sticky.value = 0
 
-    register_stages = 1
+    register_stages = context.stage_output
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: PackCase) -> dict[str, int]:

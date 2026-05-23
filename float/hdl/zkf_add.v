@@ -1,6 +1,9 @@
 /// Streamed Zubax Kulibin float adder.
 /// The outputs are latched and are only valid when out_valid is asserted.
-/// Register stages: 5+STAGE_DECODE+STAGE_ALIGN end-to-end.
+/// Register stages: 4+STAGE_DECODE+STAGE_ALIGN+STAGE_OUTPUT end-to-end.
+///
+/// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).
+/// STAGE_OUTPUT=1: one register stage at the output; good if the module feeds long external combinational paths.
 ///
 /// STAGE_DECODE=0: per-operand decode (sign, exponent classification, significand extraction, exponent compare)
 /// feeds the s0 capture combinationally — input flop → decode → mux/subtract → s0 register sits in one clock period.
@@ -19,8 +22,9 @@
 module zkf_add #(
     parameter WEXP         = 6,    // exponent field width
     parameter WMAN         = 18,   // significand precision including the hidden bit
-    parameter STAGE_DECODE = 0,    // 0 = decode feeds s0 combinationally; =1 = registered decoded bundle (+1 cycle)
-    parameter STAGE_ALIGN  = 0     // 0 = single-cycle alignment; =1 = split alignment shifter (+1 cycle)
+    parameter STAGE_DECODE = 0,    // 0 = decode feeds s0 combinationally; 1 = registered decoded bundle (+1 cycle)
+    parameter STAGE_ALIGN  = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
+    parameter STAGE_OUTPUT = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -135,7 +139,7 @@ module zkf_add #(
             reg            r_a_mag_ge_b_mag;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
-                else      r_valid <= in_valid;
+                else     r_valid <= in_valid;
                 r_a_sign         <= a_sign;
                 r_b_sign         <= b_sign;
                 r_same_sign      <= raw_same_sign;
@@ -179,7 +183,10 @@ module zkf_add #(
     reg                            s0_same_sign;
     reg                            s0_force_zero;
     reg                            s0_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s0_exp_biased;
+    // The carry/add-path biased exponent only ever holds the non-negative larger-operand exponent (and the +1 add
+    // carry), bounded by EXP_INF, so it is stored at the native WEXP width with no sign/zero-extension headroom. Only
+    // the sub-path correction can go negative, so it (and the packer feed) widen to the signed WEXP_UNBIASED below.
+    reg                 [WEXP-1:0] s0_exp_biased;
     reg                 [WEXP-1:0] s0_exp_diff;
     reg                 [WMAN-1:0] s0_large_sig_exp;
     reg                 [WMAN-1:0] s0_small_sig_exp;
@@ -204,7 +211,7 @@ module zkf_add #(
     wire                            s0b_same_sign;
     wire                            s0b_force_zero;
     wire                            s0b_force_inf;
-    wire signed [WEXP_UNBIASED-1:0] s0b_exp_biased;
+    wire                 [WEXP-1:0] s0b_exp_biased;
     wire                 [WMAN-1:0] s0b_large_sig_exp;
 
     generate
@@ -224,11 +231,11 @@ module zkf_add #(
             reg                            r_same_sign;
             reg                            r_force_zero;
             reg                            r_force_inf;
-            reg signed [WEXP_UNBIASED-1:0] r_exp_biased;
+            reg                 [WEXP-1:0] r_exp_biased;
             reg                 [WMAN-1:0] r_large_sig_exp;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
-                else      r_valid <= s0_valid;
+                else     r_valid <= s0_valid;
                 r_finite_sign       <= s0_finite_sign;
                 r_inf_sign          <= s0_inf_sign;
                 r_same_sign         <= s0_same_sign;
@@ -255,7 +262,7 @@ module zkf_add #(
     reg                            s1_same_sign;
     reg                            s1_force_zero;
     reg                            s1_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s1_exp_biased;
+    reg                 [WEXP-1:0] s1_exp_biased;
     // the larger operand's extended significand carries the always-1 hidden bit
     // verilator coverage_off
     // and fixed GRS pad in its upper bits; its low fraction bits are exercised via the inputs and result.
@@ -282,14 +289,14 @@ module zkf_add #(
     reg                            s2_same_sign;
     reg                            s2_force_zero;
     reg                            s2_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s2_exp_biased;
+    reg                 [WEXP-1:0] s2_exp_biased;
     reg                 [WRAW-1:0] s2_raw_result;
 
     // Same-sign addition never left-normalizes, so a jammed LSB remains sticky. For subtraction, close
     // cancellation only occurs with small exact alignment shifts; far cancellation cannot require a full-width
     // discarded tail, and the compact GRS representation supplies the packer with sufficient rounding state.
     wire                            s2_add_carry      = s2_raw_result[WRAW-1];
-    wire signed [WEXP_UNBIASED-1:0] s2_add_exp_biased = s2_exp_biased + {{(WEXP_UNBIASED-1){1'b0}}, s2_add_carry};
+    wire             [WEXP-1:0]    s2_add_exp_biased = s2_exp_biased + {{(WEXP-1){1'b0}}, s2_add_carry};
     wire [WMAN-1:0] s2_add_significand = s2_add_carry ? s2_raw_result[WRAW-1 -: WMAN] : s2_raw_result[NORM_TOP -: WMAN];
     wire s2_add_guard  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-1]    :   s2_raw_result[NORM_TOP-WMAN];
     wire s2_add_round  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-2]    :   s2_raw_result[NORM_TOP-WMAN-1];
@@ -310,8 +317,8 @@ module zkf_add #(
     reg                            s3_same_sign;
     reg                            s3_force_zero;
     reg                            s3_force_inf;
-    reg signed [WEXP_UNBIASED-1:0] s3_exp_biased;       // base (large-operand) exponent, for the sub-path correction
-    reg signed [WEXP_UNBIASED-1:0] s3_add_exp_biased;   // add-path exponent, resolved in the s2 cone
+    reg                 [WEXP-1:0] s3_exp_biased;       // base (large-operand) exponent, for the sub-path correction
+    reg                 [WEXP-1:0] s3_add_exp_biased;   // add-path exponent, resolved in the s2 cone
     reg                 [WMAN-1:0] s3_add_significand;
     reg                            s3_add_guard;
     reg                            s3_add_round;
@@ -344,8 +351,16 @@ module zkf_add #(
     // zero-extension padding of the normalize shift amount (high bits constant 0).
     wire signed [WEXP_UNBIASED-1:0] s3_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s3_sub_shift};
     // verilator coverage_on
-    wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_biased  = s3_exp_biased - s3_sub_shift_ext;
-    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_biased = s3_same_sign ? s3_add_exp_biased : s3_sub_exp_biased;
+    // Widen the native-width base exponent to the signed WEXP_UNBIASED for the subtraction, which can go negative on a
+    // close-cancellation underflow. The add-path exponent is non-negative, so it zero-extends into the same field.
+    // verilator coverage_off
+    // zero-extension padding (high bits constant 0, like the shift extension above); the exponent value itself is
+    // covered via s3_exp_biased and the signed subtraction result below.
+    wire signed [WEXP_UNBIASED-1:0] s3_exp_biased_ext  = {{(WEXP_UNBIASED-WEXP){1'b0}}, s3_exp_biased};
+    // verilator coverage_on
+    wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_biased  = s3_exp_biased_ext - s3_sub_shift_ext;
+    wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_biased =
+        s3_same_sign ? {{(WEXP_UNBIASED-WEXP){1'b0}}, s3_add_exp_biased} : s3_sub_exp_biased;
 
     wire s3_finite_zero = s3_same_sign ? (~|{s3_add_significand, s3_add_guard, s3_add_round, s3_add_sticky})
                                        : s3_sub_zero;
@@ -355,7 +370,9 @@ module zkf_add #(
     wire            s3_pack_round       = s3_same_sign ? s3_add_round        : s3_sub_round;
     wire            s3_pack_sticky      = s3_same_sign ? s3_add_sticky       : s3_sub_sticky;
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .EXP_IS_BIASED(1)) u_pack (
+    _zkf_pack#(
+        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s3_valid),
@@ -396,7 +413,7 @@ module zkf_add #(
         // large_exp + add_carry (add path) or large_exp - normalize_shift (sub path), and _zkf_pack is told the value
         // is already biased (EXP_IS_BIASED). This folds away the former -BIAS/+BIAS round trip, removing pack's bias
         // add from the adder's exponent critical path.
-        s0_exp_biased        <= {{(WEXP_UNBIASED-WEXP){1'b0}}, large_exp};
+        s0_exp_biased        <= large_exp;
         s0_exp_diff          <= large_exp - small_exp;
         s0_large_sig_exp     <= large_sig_exp;
         s0_small_sig_exp     <= small_sig_exp;

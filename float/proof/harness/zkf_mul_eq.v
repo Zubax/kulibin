@@ -2,7 +2,7 @@
 
 `default_nettype none
 
-module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11, parameter STAGE_OUTPUT = 1) (
+module zkf_mul_eq #(parameter WEXP = 5, parameter WMAN = 11, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
     input wire in_valid,

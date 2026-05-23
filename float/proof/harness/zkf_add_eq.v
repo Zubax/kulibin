@@ -2,7 +2,7 @@
 
 `default_nettype none
 
-module zkf_add_eq #(parameter WEXP = 4, parameter WMAN = 6) (
+module zkf_add_eq #(parameter WEXP = 4, parameter WMAN = 6, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
     input wire in_valid,
@@ -10,7 +10,8 @@ module zkf_add_eq #(parameter WEXP = 4, parameter WMAN = 6) (
     input wire [WEXP+WMAN-1:0] b
 );
     localparam WFULL    = WEXP + WMAN;
-    localparam T_RESULT = 6;     // 5 stage pipeline → result at cycle 1+5 = 6
+    // 4 internal stages + STAGE_OUTPUT (registered pack output); result at cycle 1 + 4 + STAGE_OUTPUT.
+    localparam T_RESULT = 5 + STAGE_OUTPUT;
 
     reg [4:0] cycle = 5'd0;
     always @(posedge clk) cycle <= (cycle == 5'd31) ? cycle : cycle + 5'd1;
@@ -36,7 +37,7 @@ module zkf_add_eq #(parameter WEXP = 4, parameter WMAN = 6) (
 
     wire             dut_valid;
     wire [WFULL-1:0] dut_y;
-    zkf_add #(.WEXP(WEXP), .WMAN(WMAN)) u_dut (
+    zkf_add #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_OUTPUT(STAGE_OUTPUT)) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(a), .b(b),
         .out_valid(dut_valid), .y(dut_y)

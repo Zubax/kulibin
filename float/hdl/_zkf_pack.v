@@ -8,8 +8,8 @@
 /// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
 /// canonical signed infinity for exponent overflow. Subnormals are not generated.
 ///
+/// STAGE_OUTPUT=0: the output is combinational, zero cycle latency (default).
 /// STAGE_OUTPUT=1: one register stage at the output.
-/// STAGE_OUTPUT=0: the output is combinational, zero cycle latency.
 ///
 /// EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
 /// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
@@ -23,7 +23,7 @@ module _zkf_pack #(
     parameter WMAN          = 18,         // significand precision including the hidden bit
     parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
     parameter EXP_IS_BIASED = 0,          // see above
-    parameter STAGE_OUTPUT  = 1           // 1 = registered output (one register stage); 0 = combinational output
+    parameter STAGE_OUTPUT  = 0           // 0 = combinational output (default); 1 = registered output (one stage)
 )(
     input  wire clk,
     input  wire rst,
@@ -111,10 +111,7 @@ module _zkf_pack #(
                                                     exp_rounded;
     wire [WFRAC-1:0] out_frac = frac_rounded & {WFRAC{result_normal}};
 
-    // Output stage. STAGE_OUTPUT=1 registers the packed result (one register stage; reset only touches validity, the
-    // payload register free-runs so reset is not on the datapath). STAGE_OUTPUT=0 drives it combinationally so the
-    // consumer provides the register, letting a caller shed the packer's output cycle. Special-value canonicalization
-    // is folded into out_sign/out_exp/out_frac above.
+    // Output stage.
     generate
         if (STAGE_OUTPUT != 0) begin : g_out_reg
             reg             out_valid_r;
@@ -127,22 +124,33 @@ module _zkf_pack #(
             assign out_valid = out_valid_r;
             assign y         = y_r;
         end else begin : g_out_comb
-            assign out_valid = in_valid;
+            // Combinational output: out_valid is gated by rst so the stream-control contract (no output during reset)
+            // still holds without a register; the payload y is reset-independent, as on the registered path.
+            assign out_valid = in_valid & ~rst;
             assign y         = {out_sign, out_exp, out_frac};
         end
     endgenerate
 endmodule
 
-/// Delay a sideband payload through the single register stage of _zkf_pack.
+/// Delay a sideband payload through the same output stage as _zkf_pack: pass STAGE_OUTPUT to match it.
 /// When changing the packer pipeline, update this one as well.
 /// The reset can be tied off to zero if the delay is not used for carrying control signals.
-module _zkf_pack_delay#(parameter W = 1)(input wire clk, input wire rst, input wire [W-1:0] x, output reg [W-1:0] y);
-    always @(posedge clk) begin
-        // verilator coverage_off
-        if (rst) y <= {W{1'b0}};
-        // verilator coverage_on
-        else     y <= x;
-    end
+module _zkf_pack_delay#(parameter W = 1, parameter STAGE_OUTPUT = 0)(
+    input wire clk, input wire rst, input wire [W-1:0] x, output wire [W-1:0] y);
+    generate
+        if (STAGE_OUTPUT != 0) begin : g_reg
+            reg [W-1:0] y_r;
+            always @(posedge clk) begin
+                // verilator coverage_off
+                if (rst) y_r <= {W{1'b0}};
+                // verilator coverage_on
+                else     y_r <= x;
+            end
+            assign y = y_r;
+        end else begin : g_comb
+            assign y = x;
+        end
+    endgenerate
 endmodule
 
 `default_nettype wire
