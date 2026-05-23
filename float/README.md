@@ -54,23 +54,26 @@ They do not offer any of the guarantees that are valid for the public modules.
 Most modules provide pipelining knobs, like output register selection, internal registers, etc,
 to enable tuning for the target chip.
 
-| Module                | Function                                                       |
-|-----------------------|----------------------------------------------------------------|
-| `zkf_abs`             | Absolute value.                                                |
-| `zkf_neg`             | Negation.                                                      |
-| `zkf_is_finite`       | True iff `x` is finite.                                        |
-| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           |
-| `zkf_const`           | Elaboration-time constant from a `real` literal.               |
-| `zkf_cmp`             | Compare two values.                                            |
-| `zkf_sort`            | Min and max of two values.                                     |
-| `zkf_add`             | `a + b`.                                                       |
-| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |
-| `zkf_mul`             | `a × b`.                                                       |
-| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |
-| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |
-| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |
-| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |
-| `zkf_resize`          | Cast between different float formats.                          |
+Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
+other modules since they always canonicalize inputs, but it is worth noting.
+
+| Module                | Function                                                       | Remarks                     |
+|-----------------------|----------------------------------------------------------------|-----------------------------|
+| `zkf_abs`             | Absolute value.                                                |                             |
+| `zkf_neg`             | Negation.                                                      | May produce -0 (non-canon.) |
+| `zkf_is_finite`       | True iff `x` is finite.                                        |                             |
+| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
+| `zkf_const`           | Elaboration-time constant from a `real` literal.               |                             |
+| `zkf_cmp`             | Compare two values.                                            |                             |
+| `zkf_sort`            | Min and max of two values.                                     |                             |
+| `zkf_add`             | `a + b`.                                                       |                             |
+| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_mul`             | `a × b`.                                                       |                             |
+| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
+| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |                             |
+| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |                             |
+| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |                             |
+| `zkf_resize`          | Cast between different float formats.                          |                             |
 
 ## Notable sizes
 
