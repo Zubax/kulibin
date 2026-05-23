@@ -37,10 +37,13 @@ module zkf_from_int #(
     // and at least WMAN+3 so a static slice of [WX-WMAN-3:0] always provides at least one sticky bit.
     localparam WX    = (WINT > (WMAN + 3)) ? WINT : (WMAN + 3);
     localparam WIDX  = $clog2(WX);
-    // Unbiased exponent must hold the maximum leading-one position (WX-1) and _zkf_pack's own internal range that
-    // needs at least WEXP+2 signed bits.
-    localparam WEU_LOD = WIDX + 1;
-    localparam WEU     = (WEU_LOD > (WEXP + 2)) ? WEU_LOD : (WEXP + 2);
+    // The biased exponent fed to _zkf_pack is the leading-one position plus BIAS, maxing at (WX-1)+BIAS. WEU must hold
+    // that as a non-negative signed value so the packer reads it positive (and its overflow detector fires) for the
+    // widest operands, and must also meet the packer's internal minimum of WEXP+2 signed bits. Sizing from the bare
+    // position (WIDX+1) under-counts by BIAS and silently wraps wide-WINT operands to a spurious negative (underflow).
+    localparam EXP_BIASED_MAX = (WX - 1) + ((1 << (WEXP - 1)) - 1);
+    localparam WEU_LOD        = $clog2(EXP_BIASED_MAX + 1) + 1;
+    localparam WEU            = (WEU_LOD > (WEXP + 2)) ? WEU_LOD : (WEXP + 2);
 
     // Optional input register stage.
     wire             in_valid_q;
@@ -101,7 +104,6 @@ module zkf_from_int #(
         end
         s1_sign    <= sign_in;
         s1_mag_ext <= mag_ext_in;
-
         s2_sign    <= s1_sign;
     end
 
@@ -119,9 +121,9 @@ module zkf_from_int #(
     // input the result is don't-care because force_zero (= s2_zero) overrides it.
     //
     // shamt is the radix-4 normalize count; for nonzero input it is in [0, WX-1], so s2_exp_biased is in
-    // [BIAS, WX-1+BIAS] and never underflows. WEU >= WEXP+2 holds (WX-1+BIAS) and gives _zkf_pack the headroom its
-    // overflow detection needs.
-    localparam [WEU-1:0] EXP_BIASED_TOP = (WX - 1) + ((1 << (WEXP - 1)) - 1);
+    // [BIAS, WX-1+BIAS] and never underflows. WEU is sized above to hold WX-1+BIAS as a positive signed value, giving
+    // _zkf_pack the headroom its overflow detection needs even for the widest operands.
+    localparam [WEU-1:0] EXP_BIASED_TOP = EXP_BIASED_MAX;
     // verilator coverage_off
     // s2_shamt zero-extended to WEU; the pad bits and (for valid inputs) the top of s2_exp_biased are constant.
     wire        [WEU-1:0] s2_shamt_ext  = {{(WEU-WIDX){1'b0}}, s2_shamt};

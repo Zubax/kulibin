@@ -67,6 +67,10 @@ FROM_INT = [
     ("w5_m11_int16_random", 5, 11, 16, "random", 512),
     ("w6_m18_int32_random", 6, 18, 32, "random", 768),
     ("w8_m24_int32_random", 8, 24, 32, "random", 1024),
+    # Wide WINT (>= ~98 here) makes the leading-one position + BIAS exceed a position-only-sized exponent field; the
+    # directed extremes (int_max etc.) overflow to +inf and would regress to +0 if WEU is mis-sized. Exhaustive is
+    # infeasible at this width, so directed covers the boundary deterministically.
+    ("w6_m18_int128_directed", 6, 18, 128, "directed", 0),
 ]
 TO_INT = FROM_INT + [("w11_m53_int32_random", 11, 53, 32, "random", 384)]
 # resize: (config, wexp_in, wman_in, wexp_out, wman_out, kind, count). Covers every (WMAN, WEXP) relation
