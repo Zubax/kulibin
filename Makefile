@@ -8,6 +8,16 @@ FLOAT_SEED ?= 0x9e3779b97f4a7c15
 
 FLOAT_CORE = zubax:kulibin:float
 FLOAT_PYTHONPATH = $(CURDIR)/float/tb$(if $(PYTHONPATH),:$(PYTHONPATH))
+# Matrix parallelism: the per-config FuseSoC runs are independent (each builds into its own root and writes its own
+# coverage.dat), so pytest-xdist fans them across cores. FLOAT_JOBS=auto uses every core; set FLOAT_JOBS=1 to serialize.
+# xdist is loaded explicitly with -p; if not installed the run silently falls back to serial.
+FLOAT_JOBS ?= auto
+ifeq ($(filter 0 1,$(FLOAT_JOBS)),)
+  FLOAT_XDIST := $(shell $(PYTHON) -c "import xdist" >/dev/null 2>&1 && echo "-p xdist -n $(FLOAT_JOBS)")
+else
+  FLOAT_XDIST :=
+endif
+
 # Hermetic pytest invocation for the float matrix (float/tb/test_float_matrix.py drives FuseSoC).
 # Invoked as `$(PYTHON) -m pytest` so it uses the same interpreter as the rest of the suite (robust
 # against PATH / missing console-script in the CI image). No plugin autoload / external addopts - the
@@ -15,7 +25,7 @@ FLOAT_PYTHONPATH = $(CURDIR)/float/tb$(if $(PYTHONPATH),:$(PYTHONPATH))
 # rest of `verify`); append -m to pick a tier (see float/pytest.ini).
 FLOAT_PYTEST = PYTHONPATH="$(FLOAT_PYTHONPATH)" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_ADDOPTS= \
 	FUSESOC="$(FUSESOC)" PYTHON="$(PYTHON)" FLOAT_SEED="$(FLOAT_SEED)" \
-	$(PYTHON) -m pytest -c float/pytest.ini float/tb/test_float_matrix.py -x -v
+	$(PYTHON) -m pytest -c float/pytest.ini float/tb/test_float_matrix.py -x -v $(FLOAT_XDIST)
 
 TARGETS = \
 	zubax:kulibin:nco::sim \
@@ -131,11 +141,14 @@ verify-deep: library
 verify-float-properties: library
 	@$(FLOAT_PYTEST) -m properties
 
+# FORMAL_JOBS controls sby proof parallelism (0 = all cores); each proof runs in its own build subdir.
+FORMAL_JOBS ?= 0
 formal-float: library
 	@$(PYTHON) float/proof/run_proofs.py \
 	    --sby-dir float/proof/sby \
 	    --build-dir build/float/formal \
-	    --report build/float/formal/report.html
+	    --report build/float/formal/report.html \
+	    --jobs $(FORMAL_JOBS)
 
 formal-float-clean:
 	rm -rf build/float/formal

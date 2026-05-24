@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -43,6 +46,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sby-dir", type=Path, default=Path("float/proof/sby"))
     parser.add_argument("--build-dir", type=Path, default=Path("build/float/formal"))
     parser.add_argument("--report", type=Path, default=Path("build/float/formal/report.html"))
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="run this many proofs in parallel (0 = os.cpu_count()); each sby runs in its own "
+                             "build subdir, so they are independent")
     parser.add_argument("--summary-json", type=Path, default=None,
                         help="Optional JSON summary path; defaults to <build-dir>/summary.json")
     parser.add_argument("--timeout-seconds", type=int, default=3 * 60 * 60,
@@ -169,12 +175,35 @@ def main() -> int:
         print(f"[run_proofs] no proofs found under {args.sby_dir}", file=sys.stderr)
         return 1
 
+    jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 1)
+    jobs = max(1, min(jobs, len(proofs)))
     results: list[ProofResult] = []
-    for sby_path in proofs:
-        print(f"[run_proofs] starting {sby_path.stem}")
-        result = run_one_proof(sby_path, args.build_dir, args.timeout_seconds)
-        results.append(result)
-        print(f"[run_proofs] {result.name}: {result.status} ({result.wall_seconds:.1f}s)")
+    if jobs == 1:
+        for sby_path in proofs:
+            print(f"[run_proofs] starting {sby_path.stem}", flush=True)
+            result = run_one_proof(sby_path, args.build_dir, args.timeout_seconds)
+            results.append(result)
+            print(f"[run_proofs] {result.name}: {result.status} ({result.wall_seconds:.1f}s)", flush=True)
+    else:
+        # Proofs are independent (each sby runs in build_dir/<name>), so fan them across cores and
+        # reassemble in discovery order for a deterministic summary/report.
+        print(f"[run_proofs] running {len(proofs)} proofs with {jobs} parallel workers", flush=True)
+        print_lock = threading.Lock()
+
+        def _run(sby_path: Path) -> ProofResult:
+            with print_lock:
+                print(f"[run_proofs] starting {sby_path.stem}", flush=True)
+            r = run_one_proof(sby_path, args.build_dir, args.timeout_seconds)
+            with print_lock:
+                print(f"[run_proofs] {r.name}: {r.status} ({r.wall_seconds:.1f}s)", flush=True)
+            return r
+
+        done: dict[Path, ProofResult] = {}
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            future_to_path = {ex.submit(_run, p): p for p in proofs}
+            for fut in as_completed(future_to_path):
+                done[future_to_path[fut]] = fut.result()
+        results = [done[p] for p in proofs]
 
     summary_path.write_text(
         json.dumps([asdict(r) for r in results], indent=2),
