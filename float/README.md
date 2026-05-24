@@ -7,6 +7,8 @@ Only one canonical positive zero representation exists.
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted.
 See `zkf.py` for the encoding rules and range/precision limits.
 
+See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpga-floating-point-eval>.
+
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
