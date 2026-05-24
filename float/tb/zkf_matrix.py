@@ -156,35 +156,47 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
 
 # --- builders that mirror the former bash helpers -------------------------------------------------
 def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None,
-            target=None, root_module=None) -> Run:
+            so=None, target=None, root_module=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
-        vlog.append(("STAGE_PRODUCT", sp)); suffix = f"_sp{sp}"
+        vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix = f"_si{si}"
+        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sd is not None and sa is not None:
-        vlog += [("STAGE_DECODE", sd), ("STAGE_ALIGN", sa)]; suffix = f"_sd{sd}_sa{sa}"
+        vlog += [("STAGE_DECODE", sd), ("STAGE_ALIGN", sa)]; suffix += f"_sd{sd}_sa{sa}"
     elif sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix = f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count,
                 target=target, root_module=root_module)
 
 
-def _pack(sim, tier, config, w, m, u, kind, count) -> Run:
-    return _run("pack", sim, tier, config,
-                [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)], kind=kind, count=count)
+def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
+    suffix = ""
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+    if eb is not None:
+        vlog.append(("EXP_IS_BIASED", eb)); suffix += f"_eb{eb}"
+    return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
-def _cast(module, sim, tier, base, w, m, wint, kind, count, si) -> Run:
-    return _run(module, sim, tier, f"{base}_si{si}",
-                [("WEXP", w), ("WMAN", m), ("WINT", wint), ("STAGE_INPUT", si)], kind=kind, count=count)
+def _cast(module, sim, tier, base, w, m, wint, kind, count, si, so=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m), ("WINT", wint), ("STAGE_INPUT", si)]
+    suffix = f"_si{si}"
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+    return _run(module, sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
-def _resize(sim, tier, base, wi, mi, wo, mo, kind, count, si) -> Run:
-    return _run("resize", sim, tier, f"{base}_si{si}",
-                [("WEXP_IN", wi), ("WMAN_IN", mi), ("WEXP_OUT", wo), ("WMAN_OUT", mo),
-                 ("STAGE_INPUT", si)], kind=kind, count=count)
+def _resize(sim, tier, base, wi, mi, wo, mo, kind, count, si, so=None) -> Run:
+    vlog = [("WEXP_IN", wi), ("WMAN_IN", mi), ("WEXP_OUT", wo), ("WMAN_OUT", mo), ("STAGE_INPUT", si)]
+    suffix = f"_si{si}"
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+    return _run("resize", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
 def _pipe(sim, tier, config, w, n, count) -> Run:
@@ -231,41 +243,59 @@ def _per_pr(sim, out: list) -> None:
 
 
 def _deep_correctness(out: list) -> None:
+    # Full Cartesian product of each module's structural knobs, swept across every format in its deep list, so every
+    # parameter combination is exercised for correctness. (Coverage closure lives in _deep_coverage under merged-union
+    # semantics.) Knob axes: mul = STAGE_PRODUCT x STAGE_OUTPUT; add/addsub = STAGE_DECODE x STAGE_ALIGN x STAGE_OUTPUT;
+    # div/from_int/resize = STAGE_INPUT x STAGE_OUTPUT; to_int = STAGE_INPUT only (no STAGE_OUTPUT); pack = STAGE_OUTPUT
+    # x EXP_IS_BIASED; mul_ilog2_const = STAGE_DECODE x K (K already fanned out by its wrapper).
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
         for sp in (0, 1):
-            out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp))
+            for so in (0, 1):
+                out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, so=so))
         for op in ("add", "addsub"):
             for sd in (0, 1):
                 for sa in (0, 1):
-                    out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa))
+                    for so in (0, 1):
+                        out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
         out.append(_binary("sort", s, "deep", base, w, m, k, c))
     for w, m, k, c in DIV_EXT:
         for si in (0, 1):
-            out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si))
+            for so in (0, 1):
+                out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("abs", "neg", "is_finite", "saturate"):
             out.append(_binary(op, s, "deep", base, w, m, k, c))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
+    # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
+    # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
                           (4, 5, 8, "random", 768), (6, 17, 10, "random", 1024), (4, 4, 8, "random", 512)]:
-        out.append(_pack(s, "deep", f"w{w}m{m}u{u}_{k}", w, m, u, k, c))
+        base = f"w{w}m{m}u{u}_{k}"
+        for so in (0, 1):
+            out.append(_pack(s, "deep", base, w, m, u, k, c, so=so))
+            if k == "exhaustive":
+                out.append(_pack(s, "deep", base, w, m, u, k, c, so=so, eb=1))
     for w, m, i, k, c in [(3, 5, 5, "exhaustive", 0), (2, 5, 3, "exhaustive", 0), (4, 5, 7, "exhaustive", 0),
                           (4, 6, 5, "exhaustive", 0), (5, 11, 9, "random", 512), (6, 17, 33, "random", 512),
                           (8, 24, 17, "random", 512)]:
+        base = f"w{w}m{m}i{i}_{k}"
         for si in (0, 1):
-            out.append(_cast("to_int", s, "deep", f"w{w}m{m}i{i}_{k}", w, m, i, k, c, si))
-            out.append(_cast("from_int", s, "deep", f"w{w}m{m}i{i}_{k}", w, m, i, k, c, si))
+            out.append(_cast("to_int", s, "deep", base, w, m, i, k, c, si))
+            for so in (0, 1):
+                out.append(_cast("from_int", s, "deep", base, w, m, i, k, c, si, so=so))
     for wi, mi, wo, mo, k, c in [(4, 5, 4, 4, "exhaustive", 0), (4, 4, 4, 5, "exhaustive", 0),
                                  (2, 5, 4, 7, "exhaustive", 0), (4, 7, 2, 5, "exhaustive", 0),
                                  (5, 5, 3, 4, "exhaustive", 0), (3, 4, 5, 5, "exhaustive", 0),
                                  (6, 17, 4, 11, "random", 512), (5, 11, 6, 17, "random", 512)]:
+        base = f"w{wi}m{mi}_to_w{wo}m{mo}_{k}"
         for si in (0, 1):
-            out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}_{k}", wi, mi, wo, mo, k, c, si))
+            for so in (0, 1):
+                out.append(_resize(s, "deep", base, wi, mi, wo, mo, k, c, si, so=so))
 
 
 def _deep_coverage(out: list) -> None:
@@ -310,6 +340,21 @@ def _deep_coverage(out: list) -> None:
     for wi, mi, wo, mo in [(3, 4, 5, 6), (5, 6, 3, 4), (4, 5, 4, 4), (4, 4, 4, 5), (5, 4, 3, 6), (3, 6, 5, 4)]:
         for si in (0, 1):
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
+    # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches that stay dark under the defaults, so the merged gate can
+    # measure them: _zkf_pack g_out_reg (every packer op), _zkf_pack_delay g_reg (div), zkf_resize g_owr (widen path),
+    # and the standalone packer's registered-output and biased-exponent cones. One config per branch suffices under
+    # merged-union; small exhaustive formats toggle the new registers.
+    out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
+    out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
+    out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
+    out.append(_binary("div", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
+    out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
+    # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0) so the registered s_y has no structurally-zero padding bits and every
+    # bit toggles under the exhaustive input sweep; a padding-bearing widen would leave low s_y bits permanently 0.
+    out.append(_resize(s, "deep", "w4m5_to_w4m5", 4, 5, 4, 5, "exhaustive", 0, 0, so=1))   # widen-only -> g_owr
+    out.append(_resize(s, "deep", "w5m6_to_w3m4", 5, 6, 3, 4, "exhaustive", 0, 0, so=1))   # narrow -> g_out_reg
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, so=1))
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, eb=1))
 
 
 def _properties(out: list) -> None:

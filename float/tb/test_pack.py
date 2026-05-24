@@ -141,12 +141,15 @@ def manual_w5_m8_cases() -> list[PackCase]:
     return cases
 
 
-def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int) -> list[PackCase]:
+def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int, exp_is_biased: int = 0) -> list[PackCase]:
     cases: list[PackCase] = []
     for sign in (0, 1):
         for force_zero in (0, 1):
             for force_inf in (0, 1):
-                for exp_unbiased in signed_range(wexp_unbiased):
+                for exp_field in signed_range(wexp_unbiased):
+                    # In biased mode the DUT consumes this field directly as the signed biased exponent, so iterate the
+                    # field and recover the unbiased value the reference expects; drive_case re-adds the bias on drive.
+                    exp_unbiased = exp_field - fmt.bias if exp_is_biased else exp_field
                     for significand_value in range(1 << fmt.wman):
                         for grs in range(8):
                             cases.append(
@@ -166,9 +169,15 @@ def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int) -> list[PackCase]:
     return cases
 
 
-def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int, wexp_unbiased: int) -> list[PackCase]:
+def cases_for(
+    fmt: ZkfFormat, kind: str, seed: int, count: int, wexp_unbiased: int, exp_is_biased: int = 0
+) -> list[PackCase]:
     if kind == "exhaustive":
-        return exhaustive_cases(fmt, wexp_unbiased)
+        return exhaustive_cases(fmt, wexp_unbiased, exp_is_biased)
+    if exp_is_biased:
+        # The directed/random generators choose unbiased exponents around the format's range; re-biasing those for the
+        # EXP_IS_BIASED port can exceed the signed field, so EXP_IS_BIASED=1 is only swept with the exhaustive kind.
+        raise ValueError("EXP_IS_BIASED=1 pack stimulus is only generated for the exhaustive kind")
 
     cases = directed_cases(fmt)
     if (fmt.wexp, fmt.wman) == (5, 8):
@@ -209,7 +218,8 @@ async def pack_runtime_cases(dut) -> None:
     check_width("y", dut.y, fmt.wfull, context)
     check_width("significand", dut.significand, fmt.wman, context)
     check_width("exp_unbiased", dut.exp_unbiased, wexp_unbiased, context)
-    cases = cases_for(fmt, context.kind, context.seed, context.count, wexp_unbiased)
+    exp_is_biased = context.exp_is_biased
+    cases = cases_for(fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased)
 
     start_clock(dut)
     dut.rst.value = 1
@@ -230,7 +240,9 @@ async def pack_runtime_cases(dut) -> None:
         dut.sign.value = case.sign
         dut.force_zero.value = case.force_zero
         dut.force_inf.value = case.force_inf
-        drive_signed(dut.exp_unbiased, case.exp_unbiased)
+        # EXP_IS_BIASED=1 expects the already-biased exponent on the port; the exhaustive generator chose exp_unbiased
+        # so that exp_unbiased + bias stays inside the signed field.
+        drive_signed(dut.exp_unbiased, case.exp_unbiased + (fmt.bias if exp_is_biased else 0))
         drive_unsigned(dut.significand, case.significand)
         dut.guard.value = case.guard
         dut.round.value = case.round_bit

@@ -35,6 +35,7 @@ class TestContext:
     stage_align: int = 0     # zkf_add / zkf_addsub (alignment shifter split)
     stage_decode: int = 0    # zkf_mul_ilog2_const (decoded-signal pipeline register)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
+    exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
 
     @property
     def params(self) -> str:
@@ -49,6 +50,8 @@ class TestContext:
             knob_suffix += f" SD={self.stage_decode}"
         if self.stage_output == 0:
             knob_suffix += " SO=0"
+        if self.exp_is_biased:
+            knob_suffix += f" EB={self.exp_is_biased}"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
@@ -148,6 +151,13 @@ def _stage_output() -> int:
     return value
 
 
+def _exp_is_biased() -> int:
+    value = plusarg_int("ZKF_EXP_IS_BIASED", 0)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_EXP_IS_BIASED must be 0 or 1, got {value}")
+    return value
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -174,6 +184,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
         stage_output=_stage_output(),
+        exp_is_biased=_exp_is_biased(),
     )
 
 

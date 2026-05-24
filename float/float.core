@@ -360,6 +360,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  EXP_IS_BIASED:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_EXP_IS_BIASED:
+    datatype: int
+    default: 0
+    paramtype: plusarg
 
 targets:
   default:
@@ -374,13 +382,17 @@ targets:
       cocotb_module: test_pack
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters:
+    parameters: &float_pack_params
       - WEXP
       - WMAN
       - WEXP_UNBIASED
+      - STAGE_OUTPUT
+      - EXP_IS_BIASED
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_WEXP_UNBIASED
+      - ZKF_STAGE_OUTPUT
+      - ZKF_EXP_IS_BIASED
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
@@ -403,17 +415,7 @@ targets:
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
-    parameters:
-      - WEXP
-      - WMAN
-      - WEXP_UNBIASED
-      - ZKF_WEXP
-      - ZKF_WMAN
-      - ZKF_WEXP_UNBIASED
-      - ZKF_KIND
-      - ZKF_COUNT
-      - ZKF_SEED
-      - ZKF_CONFIG
+    parameters: *float_pack_params
 
   sim_mul_icarus:
     filesets: [rtl_mul, tb_cocotb]
@@ -471,6 +473,7 @@ targets:
       - WMAN
       - STAGE_DECODE
       - STAGE_ALIGN
+      - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
@@ -479,6 +482,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
+      - ZKF_STAGE_OUTPUT
 
   sim_add_verilator:
     filesets: [rtl_add, tb_cocotb]
@@ -502,6 +506,7 @@ targets:
       - WEXP
       - WMAN
       - STAGE_INPUT
+      - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_KIND
@@ -509,6 +514,7 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_OUTPUT
 
   sim_div_verilator:
     filesets: [rtl_div, tb_cocotb]
@@ -873,6 +879,40 @@ targets:
       cocotb_module: test_from_int
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_cast_params_so
+      - WEXP
+      - WMAN
+      - WINT
+      - STAGE_INPUT
+      - STAGE_OUTPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_WINT
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_OUTPUT
+
+  sim_from_int_verilator:
+    filesets: [rtl_from_int, tb_cocotb]
+    toplevel: zkf_from_int
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_from_int
+    parameters: *float_cast_params_so
+
+  sim_to_int_icarus:
+    filesets: [rtl_to_int, tb_cocotb]
+    toplevel: zkf_to_int
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_to_int
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
     parameters: &float_cast_params
       - WEXP
       - WMAN
@@ -886,26 +926,6 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
-
-  sim_from_int_verilator:
-    filesets: [rtl_from_int, tb_cocotb]
-    toplevel: zkf_from_int
-    flow: sim
-    flow_options:
-      <<: *verilator_binary_flow
-      cocotb_module: test_from_int
-    parameters: *float_cast_params
-
-  sim_to_int_icarus:
-    filesets: [rtl_to_int, tb_cocotb]
-    toplevel: zkf_to_int
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_to_int
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_cast_params
 
   sim_to_int_verilator:
     filesets: [rtl_to_int, tb_cocotb]
@@ -931,6 +951,7 @@ targets:
       - WEXP_OUT
       - WMAN_OUT
       - STAGE_INPUT
+      - STAGE_OUTPUT
       - ZKF_WEXP_IN
       - ZKF_WMAN_IN
       - ZKF_WEXP_OUT
@@ -940,6 +961,7 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_OUTPUT
 
   sim_resize_verilator:
     filesets: [rtl_resize, tb_cocotb]
