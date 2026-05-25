@@ -65,7 +65,6 @@ other modules since they always canonicalize inputs, but it is worth noting.
 | `zkf_neg`             | Negation.                                                      | May produce -0 (non-canon.) |
 | `zkf_is_finite`       | True iff `x` is finite.                                        |                             |
 | `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
-| `zkf_const`           | Elaboration-time constant from a `real` literal.               |                             |
 | `zkf_cmp`             | Compare two values.                                            |                             |
 | `zkf_sort`            | Min and max of two values.                                     |                             |
 | `zkf_add`             | `a + b`.                                                       |                             |

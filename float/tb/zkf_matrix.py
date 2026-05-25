@@ -56,9 +56,6 @@ UNARY = [
 ]
 # pipe:     (config, width, stages, count)
 PIPE = [("w8_n0", 8, 0, 64), ("w8_n4", 8, 4, 96), ("w24_n2", 24, 2, 96)]
-# const: (config, wexp, wman). The const wrap needs WEXP>=3 (to fit 1/3) and WMAN>=4 (format minimum);
-# its vectors are hardcoded, so kind is forced "directed" and count/seed are unused.
-CONST = [("w3_m4", 3, 4), ("w6_m18", 6, 18), ("w8_m24", 8, 24), ("w11_m53", 11, 53)]
 # from_int/to_int: (config, wexp, wman, wint, kind, count)
 FROM_INT = [
     ("w2_m4_int4_exhaustive", 2, 4, 4, "exhaustive", 0),
@@ -225,8 +222,6 @@ def _per_pr(sim, out: list) -> None:
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-    for cfg, w, m in CONST:
-        out.append(_binary("const", sim, "pr", cfg, w, m, "directed", 0))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -381,7 +376,6 @@ _FAST = [
     ("neg", "neg", [("WEXP", 2), ("WMAN", 4)]),
     ("is_finite", "is_finite", [("WEXP", 2), ("WMAN", 4)]),
     ("saturate", "saturate", [("WEXP", 2), ("WMAN", 4)]),
-    ("const", "const", [("WEXP", 3), ("WMAN", 4)]),
     ("add_sd0_sa0", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
     ("add_sd1_sa1", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("addsub_sd0_sa0", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),

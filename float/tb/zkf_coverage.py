@@ -65,10 +65,9 @@ def is_zkf_source(path_text: str) -> bool:
 
 def normalized_source(path_text: str) -> str:
     """Rewrite an SF: path from the per-run staged copy back to a path that exists in the workspace,
-    so genhtml can find the source. Verilator emits paths relative to the build CWD (e.g.
-    "src/<core>/hdl/zkf_pack.v" or "src/<core>/tb/zkf_const_wrap.v") which no longer resolve once
-    the build subdirectory is cleaned. We don't rewrite paths whose basename isn't found locally;
-    genhtml will still skip them gracefully."""
+    so genhtml can find the source. Verilator emits paths relative to the build CWD which no longer resolve once the
+    build subdirectory is cleaned. We don't rewrite paths whose basename isn't found locally; genhtml will still skip
+    them gracefully."""
     path = Path(path_text)
     if path.parent.name == "hdl":
         source = RTL_DIR / path.name

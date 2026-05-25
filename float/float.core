@@ -21,7 +21,6 @@ filesets:
       - hdl/zkf_cmp.v
       - hdl/zkf_sort.v
       - hdl/zkf_addsub.v
-      - hdl/zkf_const.v
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
@@ -110,11 +109,6 @@ filesets:
       - hdl/zkf_addsub.v
     file_type: verilogSource
 
-  rtl_const:
-    files:
-      - hdl/zkf_const.v
-    file_type: verilogSource
-
   rtl_mul_ilog2_const:
     files:
       - hdl/zkf_mul_ilog2_const.v
@@ -142,11 +136,6 @@ filesets:
       - hdl/zkf_resize.v
     file_type: verilogSource
 
-  tb_const_wrap:
-    files:
-      - tb/zkf_const_wrap.v
-    file_type: verilogSource
-
   tb_mul_ilog2_const_wrap:
     files:
       - tb/zkf_mul_ilog2_const_wrap.v
@@ -157,8 +146,6 @@ filesets:
       - tb/zkf_model.py:
           file_type: user
       - tb/zkf_params.py:
-          file_type: user
-      - tb/zkf_const_cases.py:
           file_type: user
       - tb/zkf_stream.py:
           file_type: user
@@ -189,8 +176,6 @@ filesets:
       - tb/test_cmp.py:
           file_type: user
       - tb/test_sort.py:
-          file_type: user
-      - tb/test_const.py:
           file_type: user
       - tb/test_mul_ilog2_const.py:
           file_type: user
@@ -819,26 +804,6 @@ targets:
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
     parameters: *rshift_params
-
-  sim_const_icarus:
-    filesets: [rtl_const, tb_const_wrap, tb_cocotb]
-    toplevel: zkf_const_wrap
-    flow: sim
-    flow_options:
-      tool: icarus
-      cocotb_module: test_const
-      timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
-
-  sim_const_verilator:
-    filesets: [rtl_const, tb_const_wrap, tb_cocotb]
-    toplevel: zkf_const_wrap
-    flow: sim
-    flow_options:
-      <<: *verilator_binary_flow
-      cocotb_module: test_const
-    parameters: *float_binary_params
 
   sim_mul_ilog2_const_icarus:
     filesets: [rtl_mul_ilog2_const, tb_mul_ilog2_const_wrap, tb_cocotb]
