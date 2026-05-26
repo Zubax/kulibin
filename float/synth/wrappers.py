@@ -326,6 +326,81 @@ endmodule
     )
 
 
+def write_fma_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire [{wfull - 1}:0] b,
+    input  wire [{wfull - 1}:0] c,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_b;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_c;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_fma #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_OUTPUT({spec.stage_output})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .b(r_b),
+        .c(r_c),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a <= a;
+        r_b <= b;
+        r_c <= c;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wexp_unbiased = spec.wexp + 2
@@ -956,6 +1031,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_add_wrapper(spec, path)
     elif spec.kind == "addsub":
         write_addsub_wrapper(spec, path)
+    elif spec.kind == "fma":
+        write_fma_wrapper(spec, path)
     elif spec.kind == "div_core":
         write_div_core_wrapper(spec, path)
     elif spec.kind == "div":

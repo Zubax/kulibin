@@ -1,5 +1,4 @@
 /// Streamed cast between two Zubax Kulibin float formats.
-/// The outputs are latched and are only valid when out_valid is asserted.
 ///
 /// Register stages: STAGE_INPUT+STAGE_OUTPUT end-to-end.
 ///

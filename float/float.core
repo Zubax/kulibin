@@ -22,6 +22,7 @@ filesets:
       - hdl/zkf_sort.v
       - hdl/zkf_addsub.v
       - hdl/zkf_mul_ilog2_const.v
+      - hdl/zkf_fma.v
     file_type: verilogSource
 
   rtl_pack:
@@ -41,6 +42,14 @@ filesets:
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
+    file_type: verilogSource
+
+  rtl_fma:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/_zkf_normshift.v
+      - hdl/_zkf_rshift_sticky.v
+      - hdl/zkf_fma.v
     file_type: verilogSource
 
   rtl_div:
@@ -158,6 +167,8 @@ filesets:
       - tb/test_mul.py:
           file_type: user
       - tb/test_add.py:
+          file_type: user
+      - tb/test_fma.py:
           file_type: user
       - tb/test_div.py:
           file_type: user
@@ -477,6 +488,40 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_add
     parameters: *float_binary_params_sad
+
+  sim_fma_icarus:
+    filesets: [rtl_fma, tb_cocotb]
+    toplevel: zkf_fma
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_fma
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_fma_params
+      - WEXP
+      - WMAN
+      - STAGE_PRODUCT
+      - STAGE_ALIGN
+      - STAGE_OUTPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_ALIGN
+      - ZKF_STAGE_OUTPUT
+
+  sim_fma_verilator:
+    filesets: [rtl_fma, tb_cocotb]
+    toplevel: zkf_fma
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_fma
+    parameters: *float_fma_params
 
   sim_div_icarus:
     filesets: [rtl_div, tb_cocotb]

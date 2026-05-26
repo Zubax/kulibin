@@ -46,6 +46,19 @@ BINARY = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
 ]
+# fma (ternary a*b+c): exhaustive only at the smallest format (64^3 = 262144 triples); every wider format is
+# random because ternary-exhaustive explodes (128^3 = 2M at wfull=7, 512^3 = 134M at wfull=9).
+# (config, wexp, wman, kind, count)
+FMA = [
+    ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
+    ("w3_m4_random", 3, 4, "random", 2048),
+    ("w3_m5_random", 3, 5, "random", 768),
+    ("w4_m6_random", 4, 6, "random", 768),
+    ("w5_m11_random", 5, 11, "random", 768),
+    ("w6_m18_random", 6, 18, "random", 1024),
+    ("w8_m24_random", 8, 24, "random", 1024),
+    ("w11_m53_random", 11, 53, "random", 512),
+]
 # unary:    (config, wexp, wman, kind, count)
 UNARY = [
     ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
@@ -103,6 +116,11 @@ DIV_EXT = [
 UNARY_EXT = [
     (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (3, 6, "exhaustive", 0),
     (6, 17, "random", 512), (8, 23, "random", 512),
+]
+# fma deep formats: all random (ternary-exhaustive is infeasible above wfull=6). (wexp, wman, kind, count)
+FMA_EXT = [
+    (4, 5, "random", 512), (3, 6, "random", 512), (5, 4, "random", 512), (3, 7, "random", 512),
+    (6, 17, "random", 768), (8, 23, "random", 512), (7, 12, "random", 512), (9, 24, "random", 512),
 ]
 
 
@@ -170,6 +188,18 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
                 target=target, root_module=root_module)
 
 
+def _fma(sim, tier, base, w, m, kind, count, *, sp=None, sa=None, so=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m)]
+    suffix = ""
+    if sp is not None:
+        vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if sa is not None:
+        vlog.append(("STAGE_ALIGN", sa)); suffix += f"_sa{sa}"
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+    return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
+
+
 def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
     suffix = ""
@@ -219,6 +249,14 @@ def _per_pr(sim, out: list) -> None:
     for si in (0, 1):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
+    for cfg, w, m, k, c in FMA:
+        out.append(_fma(sim, "pr", cfg, w, m, k, c))
+    # Staging coverage on a fast format: results are staging-independent, so this checks the out_valid timing
+    # of every STAGE_PRODUCT x STAGE_ALIGN x STAGE_OUTPUT combination without re-running the slow formats.
+    for sp in (0, 1):
+        for sa in (0, 1):
+            for so in (0, 1):
+                out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sa=sa, so=so))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
@@ -256,6 +294,16 @@ def _deep_correctness(out: list) -> None:
                         out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
         out.append(_binary("sort", s, "deep", base, w, m, k, c))
+    # fma: full STAGE_PRODUCT x STAGE_ALIGN x STAGE_OUTPUT cartesian across the deep format list, plus the
+    # smallest format exhaustively at the default and max-staging configs.
+    for w, m, k, c in FMA_EXT:
+        base = f"w{w}m{m}_{k}"
+        for sp in (0, 1):
+            for sa in (0, 1):
+                for so in (0, 1):
+                    out.append(_fma(s, "deep", base, w, m, k, c, sp=sp, sa=sa, so=so))
+    for sp, sa, so in ((0, 0, 0), (1, 1, 1)):
+        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, sa=sa, so=so))
     for w, m, k, c in DIV_EXT:
         for si in (0, 1):
             for so in (0, 1):
@@ -304,6 +352,13 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
         out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
+    # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default and max staging toggles
+    # the product/align/output split registers; wider random runs toggle the wide shifters and the far-shift
+    # saturation path that the tiny W2/M4 exponent range cannot reach.
+    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=0, sa=0, so=0))
+    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=1, sa=1, so=1))
+    out.append(_fma(s, "deep", "w3m4", 3, 4, "random", 4096, sp=1, sa=1, so=1))
+    out.append(_fma(s, "deep", "w6m18", 6, 18, "random", 1024, sp=1, sa=1, so=0))
     for w, m in [(4, 5), (3, 6), (3, 5), (2, 6)]:
         for si in (0, 1):
             out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))

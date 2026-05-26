@@ -72,6 +72,7 @@ other modules since they always canonicalize inputs, but it is worth noting.
 | `zkf_mul`             | `a × b`.                                                       |                             |
 | `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
 | `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |                             |
+| `zkf_fma`             | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | Cast signed two's-complement integer to float.                 |                             |
 | `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |                             |
 | `zkf_resize`          | Cast between different float formats.                          |                             |

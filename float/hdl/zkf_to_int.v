@@ -1,5 +1,4 @@
 /// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
-/// The outputs are latched and are only valid when out_valid is asserted.
 /// Register stages: 4+STAGE_INPUT end-to-end.
 ///
 /// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,

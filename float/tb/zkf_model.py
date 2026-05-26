@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -357,6 +358,49 @@ def add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int:
     return round_fraction_to_zkf(fmt, 1 if result < 0 else 0, abs(result))
 
 
+def fma_reference(fmt: ZkfFormat, a_bits: int, b_bits: int, c_bits: int) -> int:
+    """Correctly-rounded fused multiply-add: round(a*b + c) with a single rounding.
+
+    The product's special handling matches mul_reference (a or b zero gives +0, including 0*inf; inf times a
+    nonzero finite gives signed inf). The infinity combination with c then matches add_reference. The finite case
+    computes the exact a*b + c as a Fraction and rounds exactly once, so it is strictly more accurate than the
+    chained add_reference(mul_reference(a, b), c), which rounds the product before adding."""
+    a = decode(fmt, a_bits)
+    b = decode(fmt, b_bits)
+    c = decode(fmt, c_bits)
+
+    p_zero = a.is_zero or b.is_zero
+    p_inf = (not p_zero) and (a.is_inf or b.is_inf)
+    p_sign = a.sign ^ b.sign
+
+    if p_inf and c.is_inf:
+        return canonical_inf(fmt, p_sign) if p_sign == c.sign else zero(fmt)
+    if p_inf:
+        return canonical_inf(fmt, p_sign)
+    if c.is_inf:
+        return canonical_inf(fmt, c.sign)
+
+    def finite_value(item: Decoded, sign: int) -> Fraction:
+        if item.is_zero:
+            return Fraction(0, 1)
+        value = Fraction(significand(fmt, item.bits), 1)
+        value *= pow2_fraction(item.exp - fmt.bias - fmt.wfrac)
+        return -value if sign else value
+
+    if p_zero:
+        product = Fraction(0, 1)
+    else:
+        product = Fraction(significand(fmt, a.bits) * significand(fmt, b.bits), 1)
+        product *= pow2_fraction(a.exp + b.exp - 2 * fmt.bias - 2 * fmt.wfrac)
+        if p_sign:
+            product = -product
+
+    result = product + finite_value(c, c.sign)
+    if result == 0:
+        return zero(fmt)
+    return round_fraction_to_zkf(fmt, 1 if result < 0 else 0, abs(result))
+
+
 def canonicalize_special(fmt: ZkfFormat, bits: int) -> int:
     item = decode(fmt, bits)
     if item.is_zero:
@@ -578,6 +622,34 @@ def numpy_add_reference(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int | None:
     with np.errstate(all="ignore"):
         result = dtype(lhs + rhs)
     raw = _numpy_to_bits(result, dtype)
+    if _ieee_underflowed_to_subnormal(fmt, raw):
+        return None
+    return _canonicalize_numpy_result(fmt, raw)
+
+
+def numpy_fma_reference(fmt: ZkfFormat, a_bits: int, b_bits: int, c_bits: int) -> int | None:
+    """math.fma is a correctly-rounded single-rounding FMA on Python floats (binary64), so it is an exact oracle
+    only for the (11, 53) config and only for finite canonical operands (IEEE 0*inf -> NaN differs from ZKF)."""
+    if _numpy_dtype(fmt) is not np.float64:
+        return None
+    if not all(is_canonical_numpy_operand(fmt, bits) for bits in (a_bits, b_bits, c_bits)):
+        return None
+    a = decode(fmt, a_bits)
+    b = decode(fmt, b_bits)
+    c = decode(fmt, c_bits)
+    if a.is_inf or b.is_inf or c.is_inf:
+        return None
+    try:
+        result = math.fma(
+            float(_bits_to_numpy(a_bits, np.float64)),
+            float(_bits_to_numpy(b_bits, np.float64)),
+            float(_bits_to_numpy(c_bits, np.float64)),
+        )
+    except (OverflowError, ValueError):
+        return None
+    if math.isinf(result) or math.isnan(result):
+        return None
+    raw = _numpy_to_bits(np.float64(result), np.float64)
     if _ieee_underflowed_to_subnormal(fmt, raw):
         return None
     return _canonicalize_numpy_result(fmt, raw)

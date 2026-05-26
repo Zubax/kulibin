@@ -31,7 +31,7 @@ class ModuleSpec:
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize: 0 or 1.
     stage_product: int = 0   # zkf_mul: 0 or 1.
-    stage_align: int = 0     # zkf_add, zkf_addsub: 0 or 1 (alignment shifter split).
+    stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const: 0 or 1 (decoded-signal register).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
 
@@ -135,6 +135,15 @@ MODULES = [
         label="zkf_addsub",
         top="zkf_addsub_synth_top",
         kind="addsub",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_fma",
+        label="zkf_fma (true single-rounding a*b+c)",
+        top="zkf_fma_synth_top",
+        kind="fma",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
@@ -406,6 +415,13 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_add.v",
             hdl / "zkf_addsub.v",
         ]
+    if spec.kind == "fma":
+        return [
+            hdl / "_zkf_pack.v",
+            hdl / "_zkf_normshift.v",
+            hdl / "_zkf_rshift_sticky.v",
+            hdl / "zkf_fma.v",
+        ]
     if spec.kind == "div_core":
         return [hdl / "_zkf_div_core.v"]
     if spec.kind == "div":
@@ -461,6 +477,10 @@ def register_stages(spec: ModuleSpec) -> int:
         return 1 + spec.stage_output + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
         return 4 + spec.stage_output + spec.stage_decode + spec.stage_align
+    if spec.kind == "fma":
+        # 5 base (product, order, align-capture, add, normalize+pack) + STAGE_PRODUCT (DSP split)
+        # + STAGE_ALIGN (alignment shifter split) + STAGE_OUTPUT (pack output register).
+        return 5 + (1 if spec.stage_product >= 1 else 0) + spec.stage_align + spec.stage_output
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
@@ -532,6 +552,8 @@ def params(spec: ModuleSpec) -> str:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_so_suffix(spec)}"
     if spec.kind in {"add", "addsub"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}"
+    if spec.kind == "fma":
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_sa_suffix(spec)}{_so_suffix(spec)}"
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 

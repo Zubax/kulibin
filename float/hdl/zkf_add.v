@@ -1,5 +1,4 @@
 /// Streamed Zubax Kulibin float adder.
-/// The outputs are latched and are only valid when out_valid is asserted.
 /// Register stages: 4+STAGE_DECODE+STAGE_ALIGN+STAGE_OUTPUT end-to-end.
 ///
 /// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).

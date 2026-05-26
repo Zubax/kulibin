@@ -325,6 +325,36 @@ This form is much more efficient than full multiplication and especially divisio
 requires much lower area and fewer pipeline stages; presumably a single stage is sufficient.
 With K<0 the module acts as a divider by a constant.
 
+### 6.2 Fused multiply-add
+
+Computes `y = (a * b) + c` with a single rounding of the exact product-plus-addend (a true FMA), so it is more
+accurate than chaining `zkf_mul` into `zkf_add`, which rounds the product before adding.
+
+```verilog
+zkf_fma #(parameter WEXP = 6, parameter WMAN = 18,
+          parameter STAGE_PRODUCT = 0, parameter STAGE_ALIGN = 0, parameter STAGE_OUTPUT = 0)(
+    input  wire clk,
+    input  wire rst,
+
+    input  wire             in_valid,
+    input  wire [WFULL-1:0] a,
+    input  wire [WFULL-1:0] b,
+    input  wire [WFULL-1:0] c,
+
+    output wire             out_valid,
+    output wire [WFULL-1:0] y
+);
+```
+
+Correct single rounding must keep the full `2*WMAN`-bit product alive through the alignment, the add/subtract and
+the close-cancellation normalize, so the datapath is about twice as wide as `zkf_add` and the operator is
+necessarily larger and somewhat slower than a `zkf_mul` + `zkf_add` chain (which discards the low product bits into
+a sticky bit). Use it when the single-rounding accuracy matters (dot products, Horner evaluation); use the separate
+operators when it does not. Default latency is 5 register stages; `STAGE_PRODUCT` (split the DSP product),
+`STAGE_ALIGN` (split the alignment shifter) and `STAGE_OUTPUT` (register the packed output) each add one stage to
+help timing closure. Special cases compose `zkf_mul` then `zkf_add`: `0*inf -> +0`, `inf*finite -> signed inf`,
+`inf + (-inf) -> +0`.
+
 ---
 
 ## 7. Divider
