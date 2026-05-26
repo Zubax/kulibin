@@ -136,6 +136,16 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
         ):
             cases.append((label, a, b, c))
 
+    # (4,30) regression: deep cancellation whose corrected exponent (anchor - normalize_shift) underflows far below
+    # the product exponent range. A sub-path exponent field sized only for the exponent range (WEXP+2) wraps the
+    # tiny residual to a spurious large finite; these must round to canonical +0.
+    if (fmt.wexp, fmt.wman) == (4, 30):
+        for label, a, b, c in (
+            ("w4m30_cancel_underflow0", 0x08EA99F89, 0x07AEC4FCE, 0x22AF60440),
+            ("w4m30_cancel_underflow1", 0x28DD00C89, 0x08A4ABE3C, 0x03C8C11EA),
+        ):
+            cases.append((label, a, b, c))
+
     return cases
 
 

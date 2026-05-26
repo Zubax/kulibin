@@ -59,6 +59,9 @@ FMA = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m36_random", 8, 36, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 512),
+    # Small WEXP with large WMAN: the close-cancellation corrected exponent underflows far below the product
+    # exponent range, so this guards the sub-path exponent width (the directed w4m30 cancellation witnesses run here).
+    ("w4_m30_random", 4, 30, "random", 512),
 ]
 # unary:    (config, wexp, wman, kind, count)
 UNARY = [

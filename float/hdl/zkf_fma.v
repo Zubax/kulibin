@@ -59,7 +59,12 @@ module zkf_fma #(
     localparam WF    = WMAG + WGRS;         // unified accumulation/normalize width
     localparam WRAW  = WF + 1;              // carry-extended adder width
     localparam WINDEX = $clog2(WF);         // normalize-count / shift index width
-    localparam WEU    = WEXP + 2;           // signed biased exponent field (holds the product exponent sum)
+    // Signed biased exponent field. WEXP+2 holds the product exponent sum (a_exp+b_exp-BIAS, +1 normalize), but the
+    // close-cancellation sub path computes anchor - normalize_shift, which reaches down to ~-(2*WMAN+1) (shift up to
+    // WF-1). For small WEXP with large WMAN that underflows WEXP+2 and wraps to a spurious positive exponent (and the
+    // s3_sub_shift zero-extension would even take a negative replication count), so the field must also cover the
+    // shift range: WINDEX+2. WINDEX <= WEXP for the common formats, so this is a no-op there (6/18->8, 8/36->10).
+    localparam WEU    = ((WEXP > WINDEX) ? WEXP : WINDEX) + 2;
     localparam WDIFF  = WEU + 1;            // signed exponent-difference field (no overflow vs EXP_MIN)
     localparam WSHIFT = (WDIFF > (WINDEX + 1)) ? WDIFF : (WINDEX + 1);
 
