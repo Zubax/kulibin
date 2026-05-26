@@ -336,6 +336,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_NORMALIZE:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_NORMALIZE:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_SPLIT:
     datatype: int
     default: 0
@@ -502,7 +510,9 @@ targets:
       - WEXP
       - WMAN
       - STAGE_PRODUCT
+      - STAGE_DECODE
       - STAGE_ALIGN
+      - STAGE_NORMALIZE
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -511,7 +521,9 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
+      - ZKF_STAGE_NORMALIZE
       - ZKF_STAGE_OUTPUT
 
   sim_fma_verilator:

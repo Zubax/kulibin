@@ -367,7 +367,9 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),

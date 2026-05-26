@@ -57,6 +57,7 @@ FMA = [
     ("w5_m11_random", 5, 11, "random", 768),
     ("w6_m18_random", 6, 18, "random", 1024),
     ("w8_m24_random", 8, 24, "random", 1024),
+    ("w8_m36_random", 8, 36, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 512),
 ]
 # unary:    (config, wexp, wman, kind, count)
@@ -188,13 +189,17 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
                 target=target, root_module=root_module)
 
 
-def _fma(sim, tier, base, w, m, kind, count, *, sp=None, sa=None, so=None) -> Run:
+def _fma(sim, tier, base, w, m, kind, count, *, sp=None, sd=None, sa=None, sn=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if sd is not None:
+        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
     if sa is not None:
         vlog.append(("STAGE_ALIGN", sa)); suffix += f"_sa{sa}"
+    if sn is not None:
+        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
@@ -251,12 +256,11 @@ def _per_pr(sim, out: list) -> None:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
     for cfg, w, m, k, c in FMA:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
-    # Staging coverage on a fast format: results are staging-independent, so this checks the out_valid timing
-    # of every STAGE_PRODUCT x STAGE_ALIGN x STAGE_OUTPUT combination without re-running the slow formats.
-    for sp in (0, 1):
-        for sa in (0, 1):
-            for so in (0, 1):
-                out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sa=sa, so=so))
+    # Each pipeline knob exercised once (plus all-on) on a fast format. Results are staging-independent, so this
+    # validates the out_valid timing of every STAGE_* register without re-running the slow formats.
+    for sp, sd, sa, sn, so in [(0, 0, 0, 0, 0), (1, 0, 0, 0, 0), (0, 1, 0, 0, 0), (0, 0, 1, 0, 0),
+                               (0, 0, 0, 1, 0), (0, 0, 0, 0, 1), (1, 1, 1, 1, 1)]:
+        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
@@ -294,16 +298,21 @@ def _deep_correctness(out: list) -> None:
                         out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
         out.append(_binary("sort", s, "deep", base, w, m, k, c))
-    # fma: full STAGE_PRODUCT x STAGE_ALIGN x STAGE_OUTPUT cartesian across the deep format list, plus the
-    # smallest format exhaustively at the default and max-staging configs.
+    # fma: each deep format once for correctness (results are staging-independent), the full pipeline-knob
+    # cartesian on one fast format to validate every STAGE_* timing combination, the WEXP=8/WMAN=36 gated synth
+    # config, and the smallest format exhaustively at the staging extremes.
     for w, m, k, c in FMA_EXT:
-        base = f"w{w}m{m}_{k}"
-        for sp in (0, 1):
+        out.append(_fma(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
+    for sp in (0, 1):
+        for sd in (0, 1):
             for sa in (0, 1):
-                for so in (0, 1):
-                    out.append(_fma(s, "deep", base, w, m, k, c, sp=sp, sa=sa, so=so))
-    for sp, sa, so in ((0, 0, 0), (1, 1, 1)):
-        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, sa=sa, so=so))
+                for sn in (0, 1):
+                    for so in (0, 1):
+                        out.append(_fma(s, "deep", "w4m6_knobs", 4, 6, "random", 256,
+                                        sp=sp, sd=sd, sa=sa, sn=sn, so=so))
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=1))
+    for sp, sd, sa, sn, so in ((0, 0, 0, 0, 0), (1, 1, 1, 1, 1)):
+        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
     for w, m, k, c in DIV_EXT:
         for si in (0, 1):
             for so in (0, 1):
@@ -352,13 +361,14 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
         out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
-    # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default and max staging toggles
-    # the product/align/output split registers; wider random runs toggle the wide shifters and the far-shift
-    # saturation path that the tiny W2/M4 exponent range cannot reach.
-    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=0, sa=0, so=0))
-    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=1, sa=1, so=1))
-    out.append(_fma(s, "deep", "w3m4", 3, 4, "random", 4096, sp=1, sa=1, so=1))
-    out.append(_fma(s, "deep", "w6m18", 6, 18, "random", 1024, sp=1, sa=1, so=0))
+    # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default and all-on staging toggles
+    # the product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
+    # far-shift saturation path that the tiny W2/M4 exponent range cannot reach.
+    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=0, sd=0, sa=0, sn=0, so=0))
+    out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=1, sd=1, sa=1, sn=1, so=1))
+    out.append(_fma(s, "deep", "w3m4", 3, 4, "random", 4096, sp=1, sd=1, sa=1, sn=1, so=1))
+    out.append(_fma(s, "deep", "w6m18", 6, 18, "random", 1024, sp=1, sd=1, sa=1, sn=1, so=0))
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 1024, sp=1, sd=1, sa=1, sn=1, so=0))
     for w, m in [(4, 5), (3, 6), (3, 5), (2, 6)]:
         for si in (0, 1):
             out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))

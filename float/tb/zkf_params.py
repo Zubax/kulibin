@@ -32,8 +32,9 @@ class TestContext:
     wman_out: int | None = None
     stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize
     stage_product: int = 0   # zkf_mul
-    stage_align: int = 0     # zkf_add / zkf_addsub (alignment shifter split)
-    stage_decode: int = 0    # zkf_mul_ilog2_const (decoded-signal pipeline register)
+    stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma (alignment shifter split)
+    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma (decoded-signal pipeline register)
+    stage_normalize: int = 0 # zkf_fma (register packer inputs, splitting the normalize/round cone)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
     exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
 
@@ -48,6 +49,8 @@ class TestContext:
             knob_suffix += f" SA={self.stage_align}"
         if self.stage_decode:
             knob_suffix += f" SD={self.stage_decode}"
+        if self.stage_normalize:
+            knob_suffix += f" SN={self.stage_normalize}"
         if self.stage_output == 0:
             knob_suffix += " SO=0"
         if self.exp_is_biased:
@@ -144,6 +147,13 @@ def _stage_decode() -> int:
     return value
 
 
+def _stage_normalize() -> int:
+    value = plusarg_int("ZKF_STAGE_NORMALIZE", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_NORMALIZE must be non-negative, got {value}")
+    return value
+
+
 def _stage_output() -> int:
     value = plusarg_int("ZKF_STAGE_OUTPUT", 0)
     if value not in (0, 1):
@@ -183,6 +193,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_product=_stage_product(),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
+        stage_normalize=_stage_normalize(),
         stage_output=_stage_output(),
         exp_is_biased=_exp_is_biased(),
     )

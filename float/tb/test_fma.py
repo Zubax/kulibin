@@ -231,9 +231,12 @@ async def fma_runtime_cases(dut) -> None:
     dut.c.value = 0
 
     # zkf_fma: 5 stages (product, order, align-capture, add, normalize+pack) + STAGE_PRODUCT (split multiply)
-    # + STAGE_ALIGN (split alignment shifter) + STAGE_OUTPUT (registered pack output). Each knob clamps to 1.
+    # + STAGE_DECODE (register decoded operands before compare/select) + STAGE_ALIGN (split alignment shifter)
+    # + STAGE_NORMALIZE (register packer inputs) + STAGE_OUTPUT (registered pack output). Each knob clamps to 1.
     register_stages = (5 + (1 if context.stage_product >= 1 else 0)
-                       + (1 if context.stage_align >= 1 else 0) + context.stage_output)
+                       + (1 if context.stage_decode >= 1 else 0)
+                       + (1 if context.stage_align >= 1 else 0)
+                       + (1 if context.stage_normalize >= 1 else 0) + context.stage_output)
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: FmaCase) -> dict[str, int]:

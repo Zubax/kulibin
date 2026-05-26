@@ -1,13 +1,16 @@
 /// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
-/// Register stages: 5+STAGE_PRODUCT+STAGE_ALIGN+STAGE_OUTPUT end-to-end (default 5).
+/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_OUTPUT end-to-end (default 5).
 ///
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add
 /// The structure mirrors zkf_add with operand A replaced by the multiplier's full product.
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication (combinational a*b into the product register, default).
-/// STAGE_PRODUCT>=1: split the product into a 2*2 grid of partial products registered one stage earlier and
+/// STAGE_PRODUCT=1: split the product into a 2*2 grid of partial products registered one stage earlier and
 ///   summed in the next cycle, exactly as zkf_mul does, so the DSP cascade closes in two periods (+1 cycle).
+///
+/// STAGE_DECODE=0: the decoded/normalized operands feed the magnitude-compare and operand-select combinationally.
+/// STAGE_DECODE=1: register them first, splitting the wide compare+select cone (+1 cycle).
 ///
 /// STAGE_ALIGN=0: single-cycle alignment shifter (default).
 /// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
@@ -18,11 +21,13 @@
 `default_nettype none
 
 module zkf_fma #(
-    parameter WEXP          = 6,    // exponent field width
-    parameter WMAN          = 18,   // significand precision including the hidden bit
-    parameter STAGE_PRODUCT = 0,    // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
-    parameter STAGE_ALIGN   = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
-    parameter STAGE_OUTPUT  = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter WEXP            = 6,  // exponent field width
+    parameter WMAN            = 18, // significand precision including the hidden bit
+    parameter STAGE_PRODUCT   = 0,  // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
+    parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
+    parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
+    parameter STAGE_NORMALIZE = 0,  // 0 = normalize feeds pack combinationally; 1 = register pack inputs (+1 cycle)
+    parameter STAGE_OUTPUT    = 0   // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -205,7 +210,7 @@ module zkf_fma #(
     reg                  pr_c_zero;
     reg                  pr_c_inf;
 
-    // -- Stage 0 combinational: normalize product, classify, magnitude-order against c -------------------------
+    // -- Decode / normalize (combinational from the product stage) ----------------------------------------------
     wire             pr_p_finite = ~pr_p_zero & ~pr_p_inf;
     wire             pr_c_finite = ~pr_c_zero & ~pr_c_inf;
     // A nonzero hidden-bit product has its leading one in bit WMAG-1 (value in [2,4)) or WMAG-2 (value in [1,2)).
@@ -222,21 +227,78 @@ module zkf_fma #(
     // Ordering is bias-invariant, so the magnitude compare below is unaffected by working in the biased domain.
     wire signed [WEU-1:0] ep_finite = pr_p_exp_base + product_high_ext;
     wire signed [WEU-1:0] ec_finite = {{(WEU-WEXP){1'b0}}, pr_c_exp};
-    wire signed [WEU-1:0] ep_eff    = pr_p_finite ? ep_finite : EXP_MIN;
-    wire signed [WEU-1:0] ec_eff    = pr_c_finite ? ec_finite : EXP_MIN;
 
-    wire [WMAG-1:0] p_key = pr_p_finite ? product_norm : {WMAG{1'b0}};
-    wire [WMAN-1:0] c_key = pr_c_finite ? pr_c_sig     : {WMAN{1'b0}};
+    // Optional decode register (STAGE_DECODE): splits the decode/normalize cone above from the magnitude-compare and
+    // operand-select cone below. That compare+select cone (a 2*WMAN-bit subtract feeding the WF-wide large/small
+    // operand mux) is the critical path at large WMAN, so registering the decoded bundle here closes timing there.
+    // The decoded keys are formed directly into d_* in each branch (no intermediate alias net), so STAGE_DECODE=0 is
+    // structurally identical to feeding the magnitude compare straight from the product stage.
+    wire                  d_valid;
+    wire       [WMAG-1:0] d_p_key;
+    wire       [WMAN-1:0] d_c_key;
+    wire signed [WEU-1:0] d_ep_eff;
+    wire signed [WEU-1:0] d_ec_eff;
+    wire                  d_p_sign;
+    wire                  d_c_sign;
+    wire                  d_p_inf;
+    wire                  d_c_inf;
+
+    generate
+        if (STAGE_DECODE == 0) begin : g_no_decode_register
+            assign d_valid  = pr_valid;
+            assign d_p_key  = pr_p_finite ? product_norm : {WMAG{1'b0}};
+            assign d_c_key  = pr_c_finite ? pr_c_sig     : {WMAN{1'b0}};
+            assign d_ep_eff = pr_p_finite ? ep_finite : EXP_MIN;
+            assign d_ec_eff = pr_c_finite ? ec_finite : EXP_MIN;
+            assign d_p_sign = pr_p_sign;
+            assign d_c_sign = pr_c_sign;
+            assign d_p_inf  = pr_p_inf;
+            assign d_c_inf  = pr_c_inf;
+        end else begin : g_decode_register
+            reg                  r_valid;
+            reg       [WMAG-1:0] r_p_key;
+            reg       [WMAN-1:0] r_c_key;
+            reg signed [WEU-1:0] r_ep_eff;
+            reg signed [WEU-1:0] r_ec_eff;
+            reg                  r_p_sign;
+            reg                  r_c_sign;
+            reg                  r_p_inf;
+            reg                  r_c_inf;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else     r_valid <= pr_valid;
+                r_p_key  <= pr_p_finite ? product_norm : {WMAG{1'b0}};
+                r_c_key  <= pr_c_finite ? pr_c_sig     : {WMAN{1'b0}};
+                r_ep_eff <= pr_p_finite ? ep_finite : EXP_MIN;
+                r_ec_eff <= pr_c_finite ? ec_finite : EXP_MIN;
+                r_p_sign <= pr_p_sign;
+                r_c_sign <= pr_c_sign;
+                r_p_inf  <= pr_p_inf;
+                r_c_inf  <= pr_c_inf;
+            end
+            assign d_valid  = r_valid;
+            assign d_p_key  = r_p_key;
+            assign d_c_key  = r_c_key;
+            assign d_ep_eff = r_ep_eff;
+            assign d_ec_eff = r_ec_eff;
+            assign d_p_sign = r_p_sign;
+            assign d_c_sign = r_c_sign;
+            assign d_p_inf  = r_p_inf;
+            assign d_c_inf  = r_c_inf;
+        end
+    endgenerate
+
+    // -- Magnitude-order + operand select (combinational from the decoded bundle) -------------------------------
     // c left-aligned into the product's width for the equal-exponent magnitude tie-break.
-    wire [WMAG-1:0] c_key_wide = {c_key, {WMAN{1'b0}}};
+    wire [WMAG-1:0] c_key_wide = {d_c_key, {WMAN{1'b0}}};
 
     // Signed exponent difference (sign-extended to WDIFF so EXP_MIN cannot overflow).
-    wire signed [WDIFF-1:0] ediff = {ep_eff[WEU-1], ep_eff} - {ec_eff[WEU-1], ec_eff};
+    wire signed [WDIFF-1:0] ediff = {d_ep_eff[WEU-1], d_ep_eff} - {d_ec_eff[WEU-1], d_ec_eff};
     wire ediff_zero = ~|ediff;
     wire ediff_pos  = ~ediff[WDIFF-1] & ~ediff_zero;
     // Equal-exponent tie-break by significand: product wins ties so large >= small always holds.
     // verilator coverage_off
-    wire [WMAG:0] tie_diff = {1'b0, p_key} - {1'b0, c_key_wide};
+    wire [WMAG:0] tie_diff = {1'b0, d_p_key} - {1'b0, c_key_wide};
     // verilator coverage_on
     wire p_ge_c_tie  = ~tie_diff[WMAG];
     wire product_ge_c = ediff_pos | (ediff_zero & p_ge_c_tie);
@@ -247,15 +309,15 @@ module zkf_fma #(
     // verilator coverage_on
 
     // Anchor exponent and the two operands extended (MSB-aligned) into the WF field.
-    wire signed [WEU-1:0] anchor_exp = product_ge_c ? ep_eff : ec_eff;
-    wire         [WF-1:0] large_ext  = product_ge_c ? {p_key, {WGRS{1'b0}}} : {c_key, {(WF-WMAN){1'b0}}};
-    wire         [WF-1:0] small_ext  = product_ge_c ? {c_key, {(WF-WMAN){1'b0}}} : {p_key, {WGRS{1'b0}}};
+    wire signed [WEU-1:0] anchor_exp = product_ge_c ? d_ep_eff : d_ec_eff;
+    wire         [WF-1:0] large_ext  = product_ge_c ? {d_p_key, {WGRS{1'b0}}} : {d_c_key, {(WF-WMAN){1'b0}}};
+    wire         [WF-1:0] small_ext  = product_ge_c ? {d_c_key, {(WF-WMAN){1'b0}}} : {d_p_key, {WGRS{1'b0}}};
 
-    wire same_sign   = ~(pr_p_sign ^ pr_c_sign);
-    wire finite_sign = product_ge_c ? pr_p_sign : pr_c_sign;
-    wire inf_sign    = (pr_p_inf & pr_p_sign) | (pr_c_inf & pr_c_sign);
-    wire force_inf   = pr_p_inf | pr_c_inf;
-    wire force_zero  = pr_p_inf & pr_c_inf & (pr_p_sign != pr_c_sign);
+    wire same_sign   = ~(d_p_sign ^ d_c_sign);
+    wire finite_sign = product_ge_c ? d_p_sign : d_c_sign;
+    wire inf_sign    = (d_p_inf & d_p_sign) | (d_c_inf & d_c_sign);
+    wire force_inf   = d_p_inf | d_c_inf;
+    wire force_zero  = d_p_inf & d_c_inf & (d_p_sign != d_c_sign);
 
     // -- Stage 0 register: magnitude-ordered operands, shift amount, special-case controls ----------------------
     reg                  s0_valid;
@@ -415,23 +477,70 @@ module zkf_fma #(
     wire            s3_pack_round      = s3_same_sign ? s3_add_round  : s3_sub_round;
     wire            s3_pack_sticky     = s3_same_sign ? s3_add_sticky : s3_sub_sticky;
 
-    _zkf_pack #(
-        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
-    ) u_pack (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(s3_valid),
-        .sign(s3_sign),
-        .force_zero(s3_pack_force_zero),
-        .force_inf(s3_force_inf),
-        .exp_unbiased(s3_pack_exp),
-        .significand(s3_pack_sig),
-        .guard(s3_pack_guard),
-        .round(s3_pack_round),
-        .sticky(s3_pack_sticky),
-        .out_valid(out_valid),
-        .y(y)
-    );
+    // Optional packer-input register (STAGE_NORMALIZE): splits the close-cancellation normalize + exponent
+    // correction cone from the packer's rounding adder (the s3 critical path at large WMAN). The packer is
+    // instantiated inside each branch so STAGE_NORMALIZE=0 feeds it the s3 results directly with no intermediate
+    // alias net, keeping the default path structurally identical to a combinational normalize -> pack.
+    generate
+        if (STAGE_NORMALIZE == 0) begin : g_no_norm_register
+            _zkf_pack #(
+                .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
+            ) u_pack (
+                .clk(clk),
+                .rst(rst),
+                .in_valid(s3_valid),
+                .sign(s3_sign),
+                .force_zero(s3_pack_force_zero),
+                .force_inf(s3_force_inf),
+                .exp_unbiased(s3_pack_exp),
+                .significand(s3_pack_sig),
+                .guard(s3_pack_guard),
+                .round(s3_pack_round),
+                .sticky(s3_pack_sticky),
+                .out_valid(out_valid),
+                .y(y)
+            );
+        end else begin : g_norm_register
+            reg                  r_valid;
+            reg                  r_sign;
+            reg                  r_force_zero;
+            reg                  r_force_inf;
+            reg signed [WEU-1:0] r_exp;
+            reg       [WMAN-1:0] r_sig;
+            reg                  r_guard;
+            reg                  r_round;
+            reg                  r_sticky;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else     r_valid <= s3_valid;
+                r_sign       <= s3_sign;
+                r_force_zero <= s3_pack_force_zero;
+                r_force_inf  <= s3_force_inf;
+                r_exp        <= s3_pack_exp;
+                r_sig        <= s3_pack_sig;
+                r_guard      <= s3_pack_guard;
+                r_round      <= s3_pack_round;
+                r_sticky     <= s3_pack_sticky;
+            end
+            _zkf_pack #(
+                .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
+            ) u_pack (
+                .clk(clk),
+                .rst(rst),
+                .in_valid(r_valid),
+                .sign(r_sign),
+                .force_zero(r_force_zero),
+                .force_inf(r_force_inf),
+                .exp_unbiased(r_exp),
+                .significand(r_sig),
+                .guard(r_guard),
+                .round(r_round),
+                .sticky(r_sticky),
+                .out_valid(out_valid),
+                .y(y)
+            );
+        end
+    endgenerate
 
     // Reset only stream validity; payload registers free-run. s0b_valid is reset inside its generate block when
     // STAGE_ALIGN!=0, so this always block manages pr/s0/s1/s2/s3 validity only.
@@ -444,7 +553,7 @@ module zkf_fma #(
             s3_valid <= 1'b0;
         end else begin
             pr_valid <= mag_valid;
-            s0_valid <= pr_valid;
+            s0_valid <= d_valid;
             s1_valid <= s0b_valid;
             s2_valid <= s1_valid;
             s3_valid <= s2_valid;

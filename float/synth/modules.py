@@ -32,7 +32,8 @@ class ModuleSpec:
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize: 0 or 1.
     stage_product: int = 0   # zkf_mul: 0 or 1.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const: 0 or 1 (decoded-signal register).
+    stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
+    stage_normalize: int = 0 # zkf_fma: 0 or 1 (register packer inputs, splitting the normalize/round cone).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
 
 
@@ -147,6 +148,20 @@ MODULES = [
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_fma_w8m36_sp1_sd1_sa1_sn1",
+        label="zkf_fma (WEXP=8, WMAN=36, STAGE_PRODUCT=1 quad 18x18, STAGE_DECODE=1, STAGE_ALIGN=1, "
+              "STAGE_NORMALIZE=1)",
+        top="zkf_fma_w8m36_sp1_sd1_sa1_sn1_synth_top",
+        kind="fma",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        stage_product=1,
+        stage_decode=1,
+        stage_align=1,
+        stage_normalize=1,
     ),
     ModuleSpec(
         name="_zkf_div_core",
@@ -479,8 +494,10 @@ def register_stages(spec: ModuleSpec) -> int:
         return 4 + spec.stage_output + spec.stage_decode + spec.stage_align
     if spec.kind == "fma":
         # 5 base (product, order, align-capture, add, normalize+pack) + STAGE_PRODUCT (DSP split)
-        # + STAGE_ALIGN (alignment shifter split) + STAGE_OUTPUT (pack output register).
-        return 5 + (1 if spec.stage_product >= 1 else 0) + spec.stage_align + spec.stage_output
+        # + STAGE_DECODE (decode/compare split) + STAGE_ALIGN (align split) + STAGE_NORMALIZE (pack-input
+        # register) + STAGE_OUTPUT (pack output register).
+        return (5 + (1 if spec.stage_product >= 1 else 0)
+                + spec.stage_decode + spec.stage_align + spec.stage_normalize + spec.stage_output)
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
@@ -524,6 +541,10 @@ def _sd_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_DECODE={spec.stage_decode}" if spec.stage_decode else ""
 
 
+def _sn_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_NORMALIZE={spec.stage_normalize}" if spec.stage_normalize else ""
+
+
 def params(spec: ModuleSpec) -> str:
     if spec.kind == "pack":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WEXP_UNBIASED={spec.wexp_unbiased}"
@@ -553,7 +574,8 @@ def params(spec: ModuleSpec) -> str:
     if spec.kind in {"add", "addsub"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}"
     if spec.kind == "fma":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_sa_suffix(spec)}{_so_suffix(spec)}"
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_sp_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}{_so_suffix(spec)}")
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 
