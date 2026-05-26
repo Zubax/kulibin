@@ -114,9 +114,10 @@ module zkf_fma #(
     wire p_inf  = ~p_zero & (a_inf | b_inf);
     wire p_sign = a_sign ^ b_sign;
 
-    // Biased product exponent base, a_exp + b_exp - BIAS. The +product_high adjust is added at stage 0 once the
-    // product's leading bit is known. Carrying the BIASED exponent (rather than unbiased) lets the packer skip its
-    // bias add (EXP_IS_BIASED=1), keeping that adder off the result-exponent critical path, exactly as zkf_add does.
+    // Biased product exponent base, a_exp + b_exp - BIAS. The +product_high normalize adjust is folded in just
+    // before the product register (mag_ep_finite, see the retiming note there), once the product's leading bit is
+    // known. Carrying the BIASED exponent (rather than unbiased) lets the packer skip its bias add (EXP_IS_BIASED=1),
+    // keeping that adder off the result-exponent critical path, exactly as zkf_add does.
     // verilator coverage_off
     // Zero-extension padding of non-negative exponent fields plus the compile-time-constant bias.
     wire signed [WEU-1:0] a_exp_ext = {{(WEU-WEXP){1'b0}}, a_exp};
@@ -216,13 +217,27 @@ module zkf_fma #(
         end
     endgenerate
 
-    // -- Product stage register: full product magnitude + product control + decoded c bundle --------------------
+    // -- Product normalization, retimed to the producing side of the product register ---------------------------
+    // A nonzero hidden-bit product has its leading one at bit WMAG-1 (value in [2,4)) or WMAG-2 (value in [1,2)).
+    // Doing the normalize HERE - before the product register, in the slack of the multiply stage - instead of after
+    // it keeps the +1 exponent adjust and the normalize shift off the HEAD of the magnitude-compare cone (the
+    // critical path), so that cone now begins at the exponent subtract rather than clk->q -> adder. mag and
+    // m_p_exp_base are the common interface of both STAGE_PRODUCT branches, so this retiming is identical for the
+    // split and unsplit multiply.
+    wire                  mag_high      = mag[WMAG-1];
+    // verilator coverage_off
+    wire        [WMAG-1:0] mag_norm      = mag_high ? mag : (mag << 1);
+    wire signed [WEU-1:0]  mag_high_ext  = {{(WEU-1){1'b0}}, mag_high};
+    // verilator coverage_on
+    wire signed [WEU-1:0]  mag_ep_finite = m_p_exp_base + mag_high_ext;
+
+    // -- Product stage register: normalized product magnitude + adjusted exponent + product control + c bundle ---
     reg                  pr_valid;
-    reg       [WMAG-1:0] pr_mag;
+    reg       [WMAG-1:0] pr_product_norm;
     reg                  pr_p_sign;
     reg                  pr_p_zero;
     reg                  pr_p_inf;
-    reg signed [WEU-1:0] pr_p_exp_base;
+    reg signed [WEU-1:0] pr_ep_finite;
     reg       [WMAN-1:0] pr_c_sig;
     reg       [WEXP-1:0] pr_c_exp;
     reg                  pr_c_sign;
@@ -232,19 +247,13 @@ module zkf_fma #(
     // -- Decode / normalize (combinational from the product stage) ----------------------------------------------
     wire             pr_p_finite = ~pr_p_zero & ~pr_p_inf;
     wire             pr_c_finite = ~pr_c_zero & ~pr_c_inf;
-    // A nonzero hidden-bit product has its leading one in bit WMAG-1 (value in [2,4)) or WMAG-2 (value in [1,2)).
-    // Normalize to leading one at WMAG-1 so the product is, in form, a 2*WMAN-bit significand in [1,2).
-    wire             product_high = pr_mag[WMAG-1];
-    // verilator coverage_off
-    wire  [WMAG-1:0] product_norm = product_high ? pr_mag : (pr_mag << 1);
-    // product_high contributes the +1 normalize adjust in a WEU-wide field; only its low bit toggles.
-    wire signed [WEU-1:0] product_high_ext = {{(WEU-1){1'b0}}, product_high};
-    // verilator coverage_on
-
+    // pr_product_norm and pr_ep_finite arrive already normalized from the product register (see the retiming note
+    // above the register): pr_product_norm is the product significand with its leading one at bit WMAG-1, and
+    // pr_ep_finite is its biased exponent with the +1 normalize adjust already folded in.
+    //
     // Effective biased MSB exponents (c's biased exponent is exactly its stored field). A non-finite/zero operand
     // contributes magnitude 0 (key masked to 0) and is pinned to EXP_MIN so it always sorts as the smaller operand.
     // Ordering is bias-invariant, so the magnitude compare below is unaffected by working in the biased domain.
-    wire signed [WEU-1:0] ep_finite = pr_p_exp_base + product_high_ext;
     wire signed [WEU-1:0] ec_finite = {{(WEU-WEXP){1'b0}}, pr_c_exp};
 
     // Optional decode register (STAGE_DECODE): splits the decode/normalize cone above from the magnitude-compare and
@@ -265,9 +274,9 @@ module zkf_fma #(
     generate
         if (STAGE_DECODE == 0) begin : g_no_decode_register
             assign d_valid  = pr_valid;
-            assign d_p_key  = pr_p_finite ? product_norm : {WMAG{1'b0}};
-            assign d_c_key  = pr_c_finite ? pr_c_sig     : {WMAN{1'b0}};
-            assign d_ep_eff = pr_p_finite ? ep_finite : EXP_MIN;
+            assign d_p_key  = pr_p_finite ? pr_product_norm : {WMAG{1'b0}};
+            assign d_c_key  = pr_c_finite ? pr_c_sig        : {WMAN{1'b0}};
+            assign d_ep_eff = pr_p_finite ? pr_ep_finite : EXP_MIN;
             assign d_ec_eff = pr_c_finite ? ec_finite : EXP_MIN;
             assign d_p_sign = pr_p_sign;
             assign d_c_sign = pr_c_sign;
@@ -286,9 +295,9 @@ module zkf_fma #(
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
                 else     r_valid <= pr_valid;
-                r_p_key  <= pr_p_finite ? product_norm : {WMAG{1'b0}};
-                r_c_key  <= pr_c_finite ? pr_c_sig     : {WMAN{1'b0}};
-                r_ep_eff <= pr_p_finite ? ep_finite : EXP_MIN;
+                r_p_key  <= pr_p_finite ? pr_product_norm : {WMAG{1'b0}};
+                r_c_key  <= pr_c_finite ? pr_c_sig        : {WMAN{1'b0}};
+                r_ep_eff <= pr_p_finite ? pr_ep_finite : EXP_MIN;
                 r_ec_eff <= pr_c_finite ? ec_finite : EXP_MIN;
                 r_p_sign <= pr_p_sign;
                 r_c_sign <= pr_c_sign;
@@ -313,7 +322,10 @@ module zkf_fma #(
 
     // Signed exponent difference (sign-extended to WDIFF so EXP_MIN cannot overflow).
     wire signed [WDIFF-1:0] ediff = {d_ep_eff[WEU-1], d_ep_eff} - {d_ec_eff[WEU-1], d_ec_eff};
-    wire ediff_zero = ~|ediff;
+    // Exponent equality from the operands, in parallel with the subtract (off its carry chain): both operands are
+    // sign-extended from WEU to WDIFF identically, so the WEU fields being equal is exact and equals ~|ediff. This
+    // keeps the wide zero-reduction out of the product_ge_c serial path, which now waits only on the subtract sign.
+    wire ediff_zero = ~|(d_ep_eff ^ d_ec_eff);
     wire ediff_pos  = ~ediff[WDIFF-1] & ~ediff_zero;
     // Equal-exponent tie-break by significand: product wins ties so large >= small always holds.
     // verilator coverage_off
@@ -596,16 +608,16 @@ module zkf_fma #(
                 end
 
         // Product stage capture.
-        pr_mag        <= mag;
-        pr_p_sign     <= m_p_sign;
-        pr_p_zero     <= m_p_zero;
-        pr_p_inf      <= m_p_inf;
-        pr_p_exp_base <= m_p_exp_base;
-        pr_c_sig      <= m_c_sig;
-        pr_c_exp      <= m_c_exp;
-        pr_c_sign     <= m_c_sign;
-        pr_c_zero     <= m_c_zero;
-        pr_c_inf      <= m_c_inf;
+        pr_product_norm <= mag_norm;
+        pr_p_sign       <= m_p_sign;
+        pr_p_zero       <= m_p_zero;
+        pr_p_inf        <= m_p_inf;
+        pr_ep_finite    <= mag_ep_finite;
+        pr_c_sig        <= m_c_sig;
+        pr_c_exp        <= m_c_exp;
+        pr_c_sign       <= m_c_sign;
+        pr_c_zero       <= m_c_zero;
+        pr_c_inf        <= m_c_inf;
 
         // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
         s0_finite_sign <= finite_sign;
@@ -678,16 +690,16 @@ module zkf_fma #(
                 end
 
         // Product stage capture.
-        pr_mag        <= mag;
-        pr_p_sign     <= m_p_sign;
-        pr_p_zero     <= m_p_zero;
-        pr_p_inf      <= m_p_inf;
-        pr_p_exp_base <= m_p_exp_base;
-        pr_c_sig      <= m_c_sig;
-        pr_c_exp      <= m_c_exp;
-        pr_c_sign     <= m_c_sign;
-        pr_c_zero     <= m_c_zero;
-        pr_c_inf      <= m_c_inf;
+        pr_product_norm <= mag_norm;
+        pr_p_sign       <= m_p_sign;
+        pr_p_zero       <= m_p_zero;
+        pr_p_inf        <= m_p_inf;
+        pr_ep_finite    <= mag_ep_finite;
+        pr_c_sig        <= m_c_sig;
+        pr_c_exp        <= m_c_exp;
+        pr_c_sign       <= m_c_sign;
+        pr_c_zero       <= m_c_zero;
+        pr_c_inf        <= m_c_inf;
 
         // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
         s0_finite_sign <= finite_sign;

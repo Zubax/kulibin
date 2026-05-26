@@ -33,7 +33,7 @@ class ModuleSpec:
     stage_product: int = 0   # zkf_mul: 0 or 1.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
-    stage_normalize: int = 0 # zkf_fma: 0 or 1 (register packer inputs, splitting the normalize/round cone).
+    stage_normalize: int = 0 # zkf_fma: 0, 1, or 2 (1 = register packer inputs; 2 = + 3-segment normalizer).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
 
 
@@ -142,12 +142,15 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_fma",
-        label="zkf_fma (true single-rounding a*b+c)",
+        label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_PRODUCT=1 split multiply + "
+              "STAGE_NORMALIZE=2 FMA-local 3-segment normalizer: closes the product, normalize and pack cones)",
         top="zkf_fma_synth_top",
         kind="fma",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+        stage_product=1,
+        stage_normalize=2,
     ),
     ModuleSpec(
         name="zkf_fma_w8m36_sp1_sd1_sa1_sn2",
