@@ -1,5 +1,5 @@
 /// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
-/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_OUTPUT end-to-end (default 5).
+/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT end-to-end (default 5).
 ///
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add
@@ -14,6 +14,10 @@
 ///
 /// STAGE_ALIGN=0: single-cycle alignment shifter (default).
 /// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
+///
+/// STAGE_NORMALIZE=0: the close-cancellation normalize + exponent correction feed the packer combinationally.
+/// STAGE_NORMALIZE=1: register the packer inputs, splitting that cone from the rounding adder (+1 cycle). With
+///   STAGE_DECODE, this is what closes timing at the wide WEXP=8/WMAN=36 datapath (its two long cones).
 ///
 /// STAGE_OUTPUT=0: combinational packed output (default).
 /// STAGE_OUTPUT=1: registered output (+1 cycle).
