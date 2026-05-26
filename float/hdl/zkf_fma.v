@@ -50,6 +50,15 @@ module zkf_fma #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // STAGE_NORMALIZE=2 selects the FMA-local 3-segment normalizer (_zkf_fma_norm3), which needs at least three
+        // radix-4 levels - NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3 - so its two register barriers land at distinct positions
+        // and its latency is exactly 2, the +1 cycle the s2x payload realignment below assumes. NL4 >= 3 holds iff
+        // 2*WMAN+3 >= 17, i.e. WMAN >= 7; below that the barriers collapse to one, the normalizer becomes 1-cycle, and
+        // the sub path races ahead of the add path. STAGE_NORMALIZE=2 is a wide-format timing knob (the close-
+        // cancellation normalize is only slow at large WMAN), so narrow formats never need it: reject at elaboration.
+        if ((STAGE_NORMALIZE == 2) && (WMAN < 7)) begin : g_invalid_norm2_wman
+            _zkf_invalid_fma_stage_normalize2_requires_wman_ge_7 u_invalid();
+        end
     endgenerate
     // verilator coverage_on
 

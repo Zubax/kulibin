@@ -264,8 +264,11 @@ def _per_pr(sim, out: list) -> None:
     for sp, sd, sa, sn, so in [(0, 0, 0, 0, 0), (1, 0, 0, 0, 0), (0, 1, 0, 0, 0), (0, 0, 1, 0, 0),
                                (0, 0, 0, 1, 0), (0, 0, 0, 0, 1), (1, 1, 1, 1, 1)]:
         out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
-    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 >= 3, so it cannot use the w4/m6 knob format
-    # above; exercise it on the smallest format that supports it (WEXP=6/WMAN=18) so CI validates its +1-stage timing.
+    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3, i.e. WMAN >= 7
+    # (smaller WMAN collapses its two register barriers and is rejected at elaboration), so it cannot use the w4/m6
+    # knob format above. Exercise it at the WMAN=7 guard boundary - the smallest format permitted, and a WINDEX-
+    # dominated WEU corner - and at a wider WMAN=18 so CI covers both the guard edge and the +1-stage timing.
+    out.append(_fma(sim, "pr", "w4m7_sn2", 4, 7, "random", 384, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(sim, "pr", "w6m18_sn2", 6, 18, "random", 384, sp=1, sd=1, sa=1, sn=2))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
