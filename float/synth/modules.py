@@ -150,10 +150,10 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_fma_w8m36_sp1_sd1_sa1_sn1",
+        name="zkf_fma_w8m36_sp1_sd1_sa1_sn2",
         label="zkf_fma (WEXP=8, WMAN=36, STAGE_PRODUCT=1 quad 18x18, STAGE_DECODE=1, STAGE_ALIGN=1, "
-              "STAGE_NORMALIZE=1)",
-        top="zkf_fma_w8m36_sp1_sd1_sa1_sn1_synth_top",
+              "STAGE_NORMALIZE=2: register pack inputs + FMA-local 3-segment normalizer so both wide cones close)",
+        top="zkf_fma_w8m36_sp1_sd1_sa1_sn2_synth_top",
         kind="fma",
         wexp=8,
         wman=36,
@@ -161,7 +161,7 @@ MODULES = [
         stage_product=1,
         stage_decode=1,
         stage_align=1,
-        stage_normalize=1,
+        stage_normalize=2,
     ),
     ModuleSpec(
         name="_zkf_div_core",

@@ -1,5 +1,5 @@
 /// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
-/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT end-to-end (default 5).
+/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT end-to-end.
 ///
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add
@@ -15,9 +15,10 @@
 /// STAGE_ALIGN=0: single-cycle alignment shifter (default).
 /// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
 ///
-/// STAGE_NORMALIZE=0: the close-cancellation normalize + exponent correction feed the packer combinationally.
-/// STAGE_NORMALIZE=1: register the packer inputs, splitting that cone from the rounding adder (+1 cycle). With
-///   STAGE_DECODE, this is what closes timing at the wide WEXP=8/WMAN=36 datapath (its two long cones).
+/// STAGE_NORMALIZE selects how deeply the close-cancellation normalize/round path is pipelined (0, 1 or 2):
+///   0: the normalize + exponent correction feed the packer combinationally (default).
+///   1: register the packer inputs, splitting that cone from the rounding adder (+1 cycle).
+///   2: swap 1-split normalizer for a 3-segment one, realign the carried payload (+2 cycles).
 ///
 /// STAGE_OUTPUT=0: combinational packed output (default).
 /// STAGE_OUTPUT=1: registered output (+1 cycle).
@@ -30,7 +31,7 @@ module zkf_fma #(
     parameter STAGE_PRODUCT   = 0,  // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
-    parameter STAGE_NORMALIZE = 0,  // 0 = normalize feeds pack combinationally; 1 = register pack inputs (+1 cycle)
+    parameter STAGE_NORMALIZE = 0,  // 0 = comb; 1 = register pack inputs; 2 = 3-segment normalizer
     parameter STAGE_OUTPUT    = 0   // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
@@ -447,13 +448,25 @@ module zkf_fma #(
     // verilator coverage_off
     wire     [WF-1:0] s3_sub_aligned;
     // verilator coverage_on
-    _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT(1)) u_sub_norm (
-        .clk(clk),
-        .x(s2_raw_result[WF-1:0]),
-        .zero(s3_sub_zero),
-        .count(s3_sub_shift),
-        .y(s3_sub_aligned)
-    );
+    generate
+        if (STAGE_NORMALIZE < 2) begin : g_subnorm
+            _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT(1)) u_sub_norm (
+                .clk(clk),
+                .x(s2_raw_result[WF-1:0]),
+                .zero(s3_sub_zero),
+                .count(s3_sub_shift),
+                .y(s3_sub_aligned)
+            );
+        end else begin : g_subnorm_deep
+            _zkf_fma_norm3 #(.W(WF), .WSHAMT(WINDEX)) u_sub_norm (
+                .clk(clk),
+                .x(s2_raw_result[WF-1:0]),
+                .zero(s3_sub_zero),
+                .count(s3_sub_shift),
+                .y(s3_sub_aligned)
+            );
+        end
+    endgenerate
     wire [WMAN-1:0] s3_sub_sig    = s3_sub_aligned[WF-1 -: WMAN];
     wire            s3_sub_guard  = s3_sub_aligned[WF-WMAN-1];
     wire            s3_sub_round  = s3_sub_aligned[WF-WMAN-2];
@@ -551,22 +564,27 @@ module zkf_fma #(
         end
     endgenerate
 
-    // Reset only stream validity; payload registers free-run. s0b_valid is reset inside its generate block when
-    // STAGE_ALIGN!=0, so this always block manages pr/s0/s1/s2/s3 validity only.
-    always @(posedge clk) begin
-        if (rst) begin
-            pr_valid <= 1'b0;
-            s0_valid <= 1'b0;
-            s1_valid <= 1'b0;
-            s2_valid <= 1'b0;
-            s3_valid <= 1'b0;
-        end else begin
-            pr_valid <= mag_valid;
-            s0_valid <= d_valid;
-            s1_valid <= s0b_valid;
-            s2_valid <= s1_valid;
-            s3_valid <= s2_valid;
-        end
+    // Stream pipeline. Reset clears only stream validity; payload registers free-run (s0b_valid is reset inside
+    // its own generate block under STAGE_ALIGN). The capture is duplicated by STAGE_NORMALIZE depth so the <2 branch
+    // is the exact single always block of the base design - byte-for-byte unchanged - while the ==2 branch threads
+    // the s3-bound payload through one extra register (s2x_*) to realign it with the 3-segment normalizer, whose
+    // outputs arrive one cycle later.
+    generate
+        if (STAGE_NORMALIZE < 2) begin : g_norm2_off
+            always @(posedge clk) begin
+                if (rst) begin
+                    pr_valid <= 1'b0;
+                    s0_valid <= 1'b0;
+                    s1_valid <= 1'b0;
+                    s2_valid <= 1'b0;
+                    s3_valid <= 1'b0;
+                end else begin
+                    pr_valid <= mag_valid;
+                    s0_valid <= d_valid;
+                    s1_valid <= s0b_valid;
+                    s2_valid <= s1_valid;
+                    s3_valid <= s2_valid;
+                end
 
         // Product stage capture.
         pr_mag        <= mag;
@@ -609,7 +627,7 @@ module zkf_fma #(
         s2_anchor_exp <= s1_anchor_exp;
         s2_raw_result <= s1_raw_result;
 
-        // Stage 3 capture: add-path normalization (sub-path lives in the normshift's internal register).
+        // Stage 3 capture: add-path normalization (sub path lives in the normalizer's internal registers).
         s3_sign       <= s2_sign;
         s3_same_sign  <= s2_same_sign;
         s3_force_zero <= s2_force_zero;
@@ -620,7 +638,204 @@ module zkf_fma #(
         s3_add_guard  <= s2_add_guard;
         s3_add_round  <= s2_add_round;
         s3_add_sticky <= s2_add_sticky;
+            end
+        end else begin : g_norm2_on
+            reg                  s2x_valid;
+            reg                  s2x_sign;
+            reg                  s2x_same_sign;
+            reg                  s2x_force_zero;
+            reg                  s2x_force_inf;
+            reg signed [WEU-1:0] s2x_anchor_exp;
+            reg signed [WEU-1:0] s2x_add_exp;
+            reg       [WMAN-1:0] s2x_add_sig;
+            reg                  s2x_add_guard;
+            reg                  s2x_add_round;
+            reg                  s2x_add_sticky;
+            always @(posedge clk) begin
+                if (rst) begin
+                    pr_valid  <= 1'b0;
+                    s0_valid  <= 1'b0;
+                    s1_valid  <= 1'b0;
+                    s2_valid  <= 1'b0;
+                    s2x_valid <= 1'b0;
+                    s3_valid  <= 1'b0;
+                end else begin
+                    pr_valid  <= mag_valid;
+                    s0_valid  <= d_valid;
+                    s1_valid  <= s0b_valid;
+                    s2_valid  <= s1_valid;
+                    s2x_valid <= s2_valid;
+                    s3_valid  <= s2x_valid;
+                end
+
+        // Product stage capture.
+        pr_mag        <= mag;
+        pr_p_sign     <= m_p_sign;
+        pr_p_zero     <= m_p_zero;
+        pr_p_inf      <= m_p_inf;
+        pr_p_exp_base <= m_p_exp_base;
+        pr_c_sig      <= m_c_sig;
+        pr_c_exp      <= m_c_exp;
+        pr_c_sign     <= m_c_sign;
+        pr_c_zero     <= m_c_zero;
+        pr_c_inf      <= m_c_inf;
+
+        // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
+        s0_finite_sign <= finite_sign;
+        s0_inf_sign    <= inf_sign;
+        s0_same_sign   <= same_sign;
+        s0_force_zero  <= force_zero;
+        s0_force_inf   <= force_inf;
+        s0_anchor_exp  <= anchor_exp;
+        s0_exp_diff    <= {{(WSHIFT-WDIFF){1'b0}}, exp_diff_abs};
+        s0_large_ext   <= large_ext;
+        s0_small_ext   <= small_ext;
+
+        // Stage 1 capture: aligned operands from s0b (s0_* directly or one-cycle-delayed when STAGE_ALIGN).
+        s1_finite_sign   <= s0b_finite_sign;
+        s1_inf_sign      <= s0b_inf_sign;
+        s1_same_sign     <= s0b_same_sign;
+        s1_force_zero    <= s0b_force_zero;
+        s1_force_inf     <= s0b_force_inf;
+        s1_anchor_exp    <= s0b_anchor_exp;
+        s1_large_ext     <= s0b_large_ext;
+        s1_small_aligned <= s0_small_aligned;
+
+        // Stage 2 capture: the raw add/subtract result.
+        s2_sign       <= s1_result_sign;
+        s2_same_sign  <= s1_same_sign;
+        s2_force_zero <= s1_force_zero;
+        s2_force_inf  <= s1_force_inf;
+        s2_anchor_exp <= s1_anchor_exp;
+        s2_raw_result <= s1_raw_result;
+
+                // Stage 2.5: realignment register between s2 and s3 (the 3-segment normalizer is +1 cycle).
+                s2x_sign       <= s2_sign;
+                s2x_same_sign  <= s2_same_sign;
+                s2x_force_zero <= s2_force_zero;
+                s2x_force_inf  <= s2_force_inf;
+                s2x_anchor_exp <= s2_anchor_exp;
+                s2x_add_exp    <= s2_add_exp;
+                s2x_add_sig    <= s2_add_sig;
+                s2x_add_guard  <= s2_add_guard;
+                s2x_add_round  <= s2_add_round;
+                s2x_add_sticky <= s2_add_sticky;
+
+                // Stage 3 capture from the realignment register.
+                s3_sign       <= s2x_sign;
+                s3_same_sign  <= s2x_same_sign;
+                s3_force_zero <= s2x_force_zero;
+                s3_force_inf  <= s2x_force_inf;
+                s3_anchor_exp <= s2x_anchor_exp;
+                s3_add_exp    <= s2x_add_exp;
+                s3_add_sig    <= s2x_add_sig;
+                s3_add_guard  <= s2x_add_guard;
+                s3_add_round  <= s2x_add_round;
+                s3_add_sticky <= s2x_add_sticky;
+            end
+        end
+    endgenerate
+endmodule
+
+
+`default_nettype none
+
+// FMA-local 3-segment leading-zero normalizer for the wide cancellation path (STAGE_NORMALIZE=2). A radix-4 normalize
+// (largest-shift-first), specialized to TWO internal register barriers - after the single coarsest level (whose
+// near-full-width zero-detect is the widest) and at the midpoint - so the cascade closes in three short periods
+// instead of two. Outputs (zero, count, y) are 2 cycles after x.
+// Same y/count/zero contract as _zkf_normshift: count = applied left shift; count don't-care when zero.
+module _zkf_fma_norm3 #(parameter W = 75, parameter WSHAMT = $clog2(W)) (
+    input  wire              clk,
+    input  wire      [W-1:0] x,
+    output wire              zero,
+    output wire [WSHAMT-1:0] count,
+    output wire      [W-1:0] y
+);
+    localparam NL2         = $clog2(W);
+    localparam NL4         = (NL2 + 1) / 2;        // radix-4 levels (NL4 >= 3 for the two barriers to be distinct)
+    localparam CNTW        = 2 * NL4;
+    localparam SPLIT_BACK  = (NL4 - 1) / 2;        // mid barrier (after this level)
+    localparam SPLIT_FRONT = 0;                    // front barrier (after the coarsest level 0)
+
+    // verilator coverage_off
+    wire [W-1:0]    data     [0:NL4];
+    wire [W-1:0]    data_pre [0:NL4];
+    wire [CNTW-1:0] dig_pre;
+    // verilator coverage_on
+    assign data[0] = x;
+
+    genvar s;
+    generate
+        for (s = 0; s < NL4; s = s + 1) begin : g_lvl
+            localparam integer K = NL4 - 1 - s;
+            localparam integer G = 1 << (2 * K);
+            wire z1 = ~|data[s][W-1 -: G];
+            wire z2;
+            wire z3;
+            if (2 * G < W) begin : g_z2  assign z2 = ~|data[s][W-1 -: (2 * G)]; end
+            else           begin : g_z2z assign z2 = 1'b0;                      end
+            if (3 * G < W) begin : g_z3  assign z3 = ~|data[s][W-1 -: (3 * G)]; end
+            else           begin : g_z3z assign z3 = 1'b0;                      end
+            assign dig_pre[2*K +: 2] = z1 ? (z2 ? (z3 ? 2'd3 : 2'd2) : 2'd1) : 2'd0;
+            // verilator coverage_off
+            wire [W-1:0] sh1 = (G     < W) ? (data[s] << G)     : {W{1'b0}};
+            wire [W-1:0] sh2 = (2 * G < W) ? (data[s] << (2*G)) : {W{1'b0}};
+            wire [W-1:0] sh3 = (3 * G < W) ? (data[s] << (3*G)) : {W{1'b0}};
+            assign data_pre[s+1] = z3 ? sh3 : (z2 ? sh2 : (z1 ? sh1 : data[s]));
+            // verilator coverage_on
+        end
+    endgenerate
+
+    // Two register barriers (after SPLIT_FRONT=0 and SPLIT_BACK); the data path accumulates both delays.
+    genvar t;
+    generate
+        for (t = 1; t <= NL4; t = t + 1) begin : g_data
+            if ((t == SPLIT_BACK + 1) || (t == SPLIT_FRONT + 1)) begin : g_split
+                reg [W-1:0] data_r;
+                always @(posedge clk) data_r <= data_pre[t];
+                assign data[t] = data_r;
+            end else begin : g_pass
+                assign data[t] = data_pre[t];
+            end
+        end
+    endgenerate
+    assign y = data[NL4];
+
+    // Count: a digit resolved at level s is delayed once per barrier ahead of it. Level-0 digit (resolved before
+    // both barriers) gets two delays; levels 1..SPLIT_BACK get one; the rest none. This aligns count with y.
+    wire [CNTW-1:0] cnt;
+    genvar k;
+    generate
+        for (k = 0; k < NL4; k = k + 1) begin : g_count
+            if (k >= (NL4 - 1 - SPLIT_FRONT)) begin : g_d2
+                reg [1:0] dig_r1, dig_r2;
+                always @(posedge clk) begin dig_r1 <= dig_pre[2*k +: 2]; dig_r2 <= dig_r1; end
+                assign cnt[2*k +: 2] = dig_r2;
+            end else if (k >= (NL4 - 1 - SPLIT_BACK)) begin : g_d1
+                reg [1:0] dig_r;
+                always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
+                assign cnt[2*k +: 2] = dig_r;
+            end else begin : g_d0
+                assign cnt[2*k +: 2] = dig_pre[2*k +: 2];
+            end
+        end
+    endgenerate
+
+    reg zero_r1, zero_r2;
+    always @(posedge clk) begin
+        zero_r1 <= ~|x;
+        zero_r2 <= zero_r1;
     end
+    assign zero = zero_r2;
+
+    generate
+        if (WSHAMT > CNTW) begin : g_pad
+            assign count = {{(WSHAMT-CNTW){1'b0}}, cnt};
+        end else begin : g_no_pad
+            assign count = cnt[WSHAMT-1:0];
+        end
+    endgenerate
 endmodule
 
 `default_nettype wire

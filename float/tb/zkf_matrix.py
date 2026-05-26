@@ -264,6 +264,9 @@ def _per_pr(sim, out: list) -> None:
     for sp, sd, sa, sn, so in [(0, 0, 0, 0, 0), (1, 0, 0, 0, 0), (0, 1, 0, 0, 0), (0, 0, 1, 0, 0),
                                (0, 0, 0, 1, 0), (0, 0, 0, 0, 1), (1, 1, 1, 1, 1)]:
         out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
+    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 >= 3, so it cannot use the w4/m6 knob format
+    # above; exercise it on the smallest format that supports it (WEXP=6/WMAN=18) so CI validates its +1-stage timing.
+    out.append(_fma(sim, "pr", "w6m18_sn2", 6, 18, "random", 384, sp=1, sd=1, sa=1, sn=2))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
@@ -313,7 +316,7 @@ def _deep_correctness(out: list) -> None:
                     for so in (0, 1):
                         out.append(_fma(s, "deep", "w4m6_knobs", 4, 6, "random", 256,
                                         sp=sp, sd=sd, sa=sa, sn=sn, so=so))
-    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=1))
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     for sp, sd, sa, sn, so in ((0, 0, 0, 0, 0), (1, 1, 1, 1, 1)):
         out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
     for w, m, k, c in DIV_EXT:
@@ -371,7 +374,8 @@ def _deep_coverage(out: list) -> None:
     out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=1, sd=1, sa=1, sn=1, so=1))
     out.append(_fma(s, "deep", "w3m4", 3, 4, "random", 4096, sp=1, sd=1, sa=1, sn=1, so=1))
     out.append(_fma(s, "deep", "w6m18", 6, 18, "random", 1024, sp=1, sd=1, sa=1, sn=1, so=0))
-    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 1024, sp=1, sd=1, sa=1, sn=1, so=0))
+    out.append(_fma(s, "deep", "w6m18_sn2", 6, 18, "random", 1024, sp=1, sd=1, sa=1, sn=2, so=0))
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 1024, sp=1, sd=1, sa=1, sn=2, so=0))
     for w, m in [(4, 5), (3, 6), (3, 5), (2, 6)]:
         for si in (0, 1):
             out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))

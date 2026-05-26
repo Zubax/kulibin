@@ -246,7 +246,7 @@ async def fma_runtime_cases(dut) -> None:
     register_stages = (5 + (1 if context.stage_product >= 1 else 0)
                        + (1 if context.stage_decode >= 1 else 0)
                        + (1 if context.stage_align >= 1 else 0)
-                       + (1 if context.stage_normalize >= 1 else 0) + context.stage_output)
+                       + context.stage_normalize + context.stage_output)
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: FmaCase) -> dict[str, int]:

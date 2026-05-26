@@ -349,16 +349,9 @@ zkf_fma #(parameter WEXP = 6, parameter WMAN = 18,
 
 Correct single rounding must keep the full `2*WMAN`-bit product alive through the alignment, the add/subtract and
 the close-cancellation normalize, so the datapath is about twice as wide as `zkf_add` and the operator is
-necessarily larger and somewhat slower than a `zkf_mul` + `zkf_add` chain (which discards the low product bits into
+necessarily larger and possibly slower than a `zkf_mul` + `zkf_add` chain (which discards the low product bits into
 a sticky bit). Use it when the single-rounding accuracy matters (dot products, Horner evaluation); use the separate
-operators when it does not. Default latency is 5 register stages. Five optional pipeline knobs each add one stage to
-help timing closure: `STAGE_PRODUCT` (split the DSP product), `STAGE_DECODE` (register the decoded operands before
-the magnitude compare/select), `STAGE_ALIGN` (split the alignment shifter), `STAGE_NORMALIZE` (register the packer
-inputs after the close-cancellation normalize), and `STAGE_OUTPUT` (register the packed output). At WEXP=6/WMAN=18
-the default closes ~100 MHz on ECP5; the wide WEXP=8/WMAN=36 datapath has two long cones (the magnitude
-compare/select and the normalize/round) and needs `STAGE_DECODE` and `STAGE_NORMALIZE` (with `STAGE_PRODUCT` and
-`STAGE_ALIGN`) to close there. Special cases compose `zkf_mul` then `zkf_add`: `0*inf -> +0`,
-`inf*finite -> signed inf`, `inf + (-inf) -> +0`.
+operators when it does not.
 
 ---
 
