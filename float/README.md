@@ -58,6 +58,10 @@ to enable tuning for the target chip. Common options seen in most modules are:
 `STAGE_INPUT` -- latch inputs (no combinational paths at the input);
 `STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
 others control various computation stages.
+Some modules offer to split long multiplication into two stages via `STAGE_PRODUCT`;
+sometimes it helps, but sometimes it prevents the synthesizer from mapping the product do DSP slices,
+worsening the performance.
+Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
 
 Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
 other modules since they always canonicalize inputs, but it is worth noting.
