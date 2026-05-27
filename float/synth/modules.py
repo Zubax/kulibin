@@ -153,15 +153,17 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_fma",
-        label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_PRODUCT=1 split multiply + "
+        label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_INPUT=1 latched operands + "
               "STAGE_ALIGN=1 split aligner + STAGE_NORMALIZE=2 FMA-local 3-segment normalizer: closes every "
-              "datapath cone on Yosys and on the more pessimistic Diamond/LSE)",
+              "datapath cone on Yosys and the more pessimistic Diamond/LSE using a single MULT18X18D. "
+              "STAGE_PRODUCT=1 would split the 18x18 into a 2x2 grid costing 4 DSPs for no timing benefit; "
+              "registering the operands closes the Yosys-binding product cone instead.)",
         top="zkf_fma_synth_top",
         kind="fma",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        stage_product=1,
+        stage_input=1,
         stage_align=1,
         stage_normalize=2,
     ),
