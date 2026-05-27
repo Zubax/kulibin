@@ -270,9 +270,10 @@ def _per_pr(sim, out: list) -> None:
     # dominated WEU corner - and at a wider WMAN=18 so CI covers both the guard edge and the +1-stage timing.
     out.append(_fma(sim, "pr", "w4m7_sn2", 4, 7, "random", 384, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(sim, "pr", "w6m18_sn2", 6, 18, "random", 384, sp=1, sd=1, sa=1, sn=2))
-    # The narrow synth/CI config ships as STAGE_PRODUCT=1 + STAGE_NORMALIZE=2 (closes all four W6/M18 datapath cones);
-    # gate that exact stage combination so correctness of the shipped config is tested directly, not just inferred.
-    out.append(_fma(sim, "pr", "w6m18_sp1_sn2", 6, 18, "random", 384, sp=1, sn=2))
+    # The narrow synth/CI config ships as STAGE_PRODUCT=1 + STAGE_ALIGN=1 + STAGE_NORMALIZE=2 (closes every W6/M18
+    # datapath cone on both Yosys and the more pessimistic Diamond/LSE); gate that exact stage combination so the
+    # shipped config's correctness is tested directly, not just inferred from the per-knob sweeps.
+    out.append(_fma(sim, "pr", "w6m18_sp1_sa1_sn2", 6, 18, "random", 384, sp=1, sa=1, sn=2))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))

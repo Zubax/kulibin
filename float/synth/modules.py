@@ -143,13 +143,15 @@ MODULES = [
     ModuleSpec(
         name="zkf_fma",
         label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_PRODUCT=1 split multiply + "
-              "STAGE_NORMALIZE=2 FMA-local 3-segment normalizer: closes the product, normalize and pack cones)",
+              "STAGE_ALIGN=1 split aligner + STAGE_NORMALIZE=2 FMA-local 3-segment normalizer: closes every "
+              "datapath cone on Yosys and on the more pessimistic Diamond/LSE)",
         top="zkf_fma_synth_top",
         kind="fma",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         stage_product=1,
+        stage_align=1,
         stage_normalize=2,
     ),
     ModuleSpec(
