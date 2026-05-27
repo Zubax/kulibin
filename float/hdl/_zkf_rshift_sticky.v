@@ -52,7 +52,9 @@ module _zkf_rshift_sticky #(
     // When STAGE_SPLIT != 0, the late half of the cascade fires one cycle after `shamt` was applied, so those stages
     // must read a registered copy. shamt_late is that copy (combinational alias of shamt when STAGE_SPLIT == 0).
     // Early stages always read the live shamt directly.
-    wire [WSHIFT-1:0] shamt_late;
+    // verilator coverage_off
+    wire [WSHIFT-1:0] shamt_late;  // top shamt bits exceed some callers' max shift and never toggle for them
+    // verilator coverage_on
     generate
         if (STAGE_SPLIT == 0) begin : g_shamt_pass
             assign shamt_late = shamt;

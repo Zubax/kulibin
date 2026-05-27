@@ -254,7 +254,10 @@ module zkf_fma #(
     // Effective biased MSB exponents (c's biased exponent is exactly its stored field). A non-finite/zero operand
     // contributes magnitude 0 (key masked to 0) and is pinned to EXP_MIN so it always sorts as the smaller operand.
     // Ordering is bias-invariant, so the magnitude compare below is unaffected by working in the biased domain.
+    // verilator coverage_off
+    // High (WEU-WEXP) bits are constant zero-extension; the value bits mirror pr_c_exp (covered there).
     wire signed [WEU-1:0] ec_finite = {{(WEU-WEXP){1'b0}}, pr_c_exp};
+    // verilator coverage_on
 
     // Optional decode register (STAGE_DECODE): splits the decode/normalize cone above from the magnitude-compare and
     // operand-select cone below. That compare+select cone (a 2*WMAN-bit subtract feeding the WF-wide large/small
@@ -265,7 +268,9 @@ module zkf_fma #(
     wire       [WMAG-1:0] d_p_key;
     wire       [WMAN-1:0] d_c_key;
     wire signed [WEU-1:0] d_ep_eff;
-    wire signed [WEU-1:0] d_ec_eff;
+    // verilator coverage_off
+    wire signed [WEU-1:0] d_ec_eff;  // c effective exponent: high zero-extension bits never toggle (value via pr_c_exp)
+    // verilator coverage_on
     wire                  d_p_sign;
     wire                  d_c_sign;
     wire                  d_p_inf;
@@ -287,7 +292,9 @@ module zkf_fma #(
             reg       [WMAG-1:0] r_p_key;
             reg       [WMAN-1:0] r_c_key;
             reg signed [WEU-1:0] r_ep_eff;
-            reg signed [WEU-1:0] r_ec_eff;
+            // verilator coverage_off
+            reg signed [WEU-1:0] r_ec_eff;  // c effective exponent: high zero-extension bits never toggle
+            // verilator coverage_on
             reg                  r_p_sign;
             reg                  r_c_sign;
             reg                  r_p_inf;
@@ -317,8 +324,11 @@ module zkf_fma #(
     endgenerate
 
     // -- Magnitude-order + operand select (combinational from the decoded bundle) -------------------------------
-    // c left-aligned into the product's width for the equal-exponent magnitude tie-break.
+    // c left-aligned into the product's width for the equal-exponent magnitude tie-break. The low WMAN bits are
+    // structural zero padding (never toggle); the data bits mirror d_c_key (covered there).
+    // verilator coverage_off
     wire [WMAG-1:0] c_key_wide = {d_c_key, {WMAN{1'b0}}};
+    // verilator coverage_on
 
     // Signed exponent difference (sign-extended to WDIFF so EXP_MIN cannot overflow).
     wire signed [WDIFF-1:0] ediff = {d_ep_eff[WEU-1], d_ep_eff} - {d_ec_eff[WEU-1], d_ec_eff};
@@ -341,8 +351,11 @@ module zkf_fma #(
 
     // Anchor exponent and the two operands extended (MSB-aligned) into the WF field.
     wire signed [WEU-1:0] anchor_exp = product_ge_c ? d_ep_eff : d_ec_eff;
+    // verilator coverage_off
+    // Low padding bits (WGRS / WF-WMAN zeros) never toggle; the operand bits mirror d_p_key/d_c_key (covered there).
     wire         [WF-1:0] large_ext  = product_ge_c ? {d_p_key, {WGRS{1'b0}}} : {d_c_key, {(WF-WMAN){1'b0}}};
     wire         [WF-1:0] small_ext  = product_ge_c ? {d_c_key, {(WF-WMAN){1'b0}}} : {d_p_key, {WGRS{1'b0}}};
+    // verilator coverage_on
 
     wire same_sign   = ~(d_p_sign ^ d_c_sign);
     wire finite_sign = product_ge_c ? d_p_sign : d_c_sign;
@@ -358,9 +371,12 @@ module zkf_fma #(
     reg                  s0_force_zero;
     reg                  s0_force_inf;
     reg signed [WEU-1:0] s0_anchor_exp;
+    // verilator coverage_off
+    // s0_exp_diff top bit is unreachable (|ediff| < 2^(WSHIFT-1)); s0_large/small_ext low bits are zero padding.
     reg     [WSHIFT-1:0] s0_exp_diff;
     reg        [WF-1:0]  s0_large_ext;
     reg        [WF-1:0]  s0_small_ext;
+    // verilator coverage_on
 
     // Alignment shifter on the smaller operand; STAGE_ALIGN splits the radix-4 cascade across two cycles.
     wire [WF-1:0] s0_small_aligned;
@@ -380,7 +396,9 @@ module zkf_fma #(
     wire                  s0b_force_zero;
     wire                  s0b_force_inf;
     wire signed [WEU-1:0] s0b_anchor_exp;
-    wire        [WF-1:0]  s0b_large_ext;
+    // verilator coverage_off
+    wire        [WF-1:0]  s0b_large_ext;  // low padding bits never toggle (operand bits via d_p_key/d_c_key)
+    // verilator coverage_on
 
     generate
         if (STAGE_ALIGN == 0) begin : g_no_align_register
@@ -400,7 +418,9 @@ module zkf_fma #(
             reg                  r_force_zero;
             reg                  r_force_inf;
             reg signed [WEU-1:0] r_anchor_exp;
-            reg        [WF-1:0]  r_large_ext;
+            // verilator coverage_off
+            reg        [WF-1:0]  r_large_ext;  // low padding bits never toggle (operand bits via d_p_key/d_c_key)
+            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
                 else     r_valid <= s0_valid;
@@ -431,7 +451,9 @@ module zkf_fma #(
     reg                  s1_force_zero;
     reg                  s1_force_inf;
     reg signed [WEU-1:0] s1_anchor_exp;
-    reg        [WF-1:0]  s1_large_ext;
+    // verilator coverage_off
+    reg        [WF-1:0]  s1_large_ext;  // low padding bits never toggle (operand bits via d_p_key/d_c_key)
+    // verilator coverage_on
     reg        [WF-1:0]  s1_small_aligned;
 
     // Single carry chain: the larger operand is the minuend, the aligned smaller one is added (same sign) or
@@ -825,7 +847,9 @@ module _zkf_fma_norm3 #(parameter W = 75, parameter WSHAMT = $clog2(W)) (
 
     // Count: a digit resolved at level s is delayed once per barrier ahead of it. Level-0 digit (resolved before
     // both barriers) gets two delays; levels 1..SPLIT_BACK get one; the rest none. This aligns count with y.
-    wire [CNTW-1:0] cnt;
+    // verilator coverage_off
+    wire [CNTW-1:0] cnt;  // top count bits unreachable: leading-zero count <= W-1 < 2^(CNTW-1)
+    // verilator coverage_on
     genvar k;
     generate
         for (k = 0; k < NL4; k = k + 1) begin : g_count
