@@ -30,8 +30,8 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
-    stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize
-    stage_product: int = 0   # zkf_mul
+    stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize / zkf_mul / zkf_fma
+    stage_product: int = 0   # zkf_mul / zkf_fma
     stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma (alignment shifter split)
     stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma (decoded-signal pipeline register)
     stage_normalize: int = 0 # zkf_fma (register packer inputs, splitting the normalize/round cone)

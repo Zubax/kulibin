@@ -149,6 +149,7 @@ module {spec.top} (
     zkf_mul #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
@@ -366,6 +367,7 @@ module {spec.top} (
     zkf_fma #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),

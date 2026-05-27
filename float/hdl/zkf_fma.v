@@ -1,9 +1,12 @@
 /// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
-/// Register stages: 5+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT end-to-end.
+/// Register stages: 5+STAGE_INPUT+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT end-to-end.
 ///
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add
 /// The structure mirrors zkf_add with operand A replaced by the multiplier's full product.
+///
+/// STAGE_INPUT=0: operands feed the datapath combinationally (default).
+/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication (combinational a*b into the product register, default).
 /// STAGE_PRODUCT=1: split the product into a 2*2 grid of partial products registered one stage earlier and
@@ -28,6 +31,7 @@
 module zkf_fma #(
     parameter WEXP            = 6,  // exponent field width
     parameter WMAN            = 18, // significand precision including the hidden bit
+    parameter STAGE_INPUT     = 0,  // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
     parameter STAGE_PRODUCT   = 0,  // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
@@ -84,16 +88,26 @@ module zkf_fma #(
     // magnitude is forced to 0) is always selected as the "small" operand and contributes nothing.
     localparam signed [WEU-1:0] EXP_MIN = {1'b1, {(WEU-1){1'b0}}};
 
+    // Optional input register stage: latch the operands before any combinational logic (+1 cycle when STAGE_INPUT=1).
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    wire [WFULL-1:0] b_q;
+    wire [WFULL-1:0] c_q;
+    _zkf_pipe #(.W(3*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({c, b, a}),
+        .out_valid(in_valid_q), .out({c_q, b_q, a_q})
+    );
+
     // -- Operand decode/classification --------------------------------------------------------------------------
-    wire             a_sign = a[WFULL-1];
-    wire             b_sign = b[WFULL-1];
-    wire             c_sign = c[WFULL-1];
-    wire [WEXP-1:0]  a_exp  = a[WFULL-2:WFRAC];
-    wire [WEXP-1:0]  b_exp  = b[WFULL-2:WFRAC];
-    wire [WEXP-1:0]  c_exp  = c[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
-    wire [WFRAC-1:0] c_frac = c[WFRAC-1:0];
+    wire             a_sign = a_q[WFULL-1];
+    wire             b_sign = b_q[WFULL-1];
+    wire             c_sign = c_q[WFULL-1];
+    wire [WEXP-1:0]  a_exp  = a_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0]  b_exp  = b_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0]  c_exp  = c_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a_q[WFRAC-1:0];
+    wire [WFRAC-1:0] b_frac = b_q[WFRAC-1:0];
+    wire [WFRAC-1:0] c_frac = c_q[WFRAC-1:0];
 
     wire a_zero = ~|a_exp;
     wire b_zero = ~|b_exp;
@@ -142,7 +156,7 @@ module zkf_fma #(
     generate
         if (STAGE_PRODUCT == 0) begin : g_mul_unsplit
             assign mag          = a_sig * b_sig;
-            assign mag_valid    = in_valid;
+            assign mag_valid    = in_valid_q;
             assign m_p_sign     = p_sign;
             assign m_p_zero     = p_zero;
             assign m_p_inf      = p_inf;
@@ -181,7 +195,7 @@ module zkf_fma #(
 
             always @(posedge clk) begin
                 if (rst) g_valid <= 1'b0;
-                else     g_valid <= in_valid;
+                else     g_valid <= in_valid_q;
                 g_p_sign     <= p_sign;
                 g_p_zero     <= p_zero;
                 g_p_inf      <= p_inf;

@@ -33,6 +33,7 @@ filesets:
   rtl_mul:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/zkf_mul.v
     file_type: verilogSource
 
@@ -47,6 +48,7 @@ filesets:
   rtl_fma:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_fma.v
@@ -433,6 +435,7 @@ targets:
     parameters: &float_binary_params_sp
       - WEXP
       - WMAN
+      - STAGE_INPUT
       - STAGE_PRODUCT
       - STAGE_OUTPUT
       - ZKF_WEXP
@@ -441,6 +444,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
       - ZKF_STAGE_OUTPUT
 
@@ -509,6 +513,7 @@ targets:
     parameters: &float_fma_params
       - WEXP
       - WMAN
+      - STAGE_INPUT
       - STAGE_PRODUCT
       - STAGE_DECODE
       - STAGE_ALIGN
@@ -520,6 +525,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN

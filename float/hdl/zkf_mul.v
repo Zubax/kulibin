@@ -1,5 +1,8 @@
 /// Streamed Zubax Kulibin float multiplier.
-/// Register stages: 1+STAGE_PRODUCT+STAGE_OUTPUT end-to-end (default 1+STAGE_PRODUCT).
+/// Register stages: 1+STAGE_INPUT+STAGE_PRODUCT+STAGE_OUTPUT end-to-end.
+///
+/// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
+/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
 ///   is one combinational hop into the s1_mag register. Use this when the inferred cascade closes timing in one cycle.
@@ -17,6 +20,7 @@
 module zkf_mul #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
+    parameter STAGE_INPUT   = 0,
     parameter STAGE_PRODUCT = 0,
     parameter STAGE_OUTPUT  = 0
 ) (
@@ -49,13 +53,22 @@ module zkf_mul #(
     localparam signed [WEXP_UNBIASED-1:0] ZERO_EXT = {WEXP_UNBIASED{1'b0}};
     localparam signed [WEXP_UNBIASED-1:0] ONE_EXT  = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
 
+    // Optional input register stage: latch the operands before any combinational logic (+1 cycle when STAGE_INPUT=1).
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    wire [WFULL-1:0] b_q;
+    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}),
+        .out_valid(in_valid_q), .out({b_q, a_q})
+    );
+
     // Operand decode/classification.
-    wire             a_sign = a[WFULL-1];
-    wire             b_sign = b[WFULL-1];
-    wire [WEXP-1:0]  a_exp  = a[WFULL-2:WFRAC];
-    wire [WEXP-1:0]  b_exp  = b[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_frac = b[WFRAC-1:0];
+    wire             a_sign = a_q[WFULL-1];
+    wire             b_sign = b_q[WFULL-1];
+    wire [WEXP-1:0]  a_exp  = a_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0]  b_exp  = b_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a_q[WFRAC-1:0];
+    wire [WFRAC-1:0] b_frac = b_q[WFRAC-1:0];
 
     wire            a_zero        = a_exp == {WEXP{1'b0}};
     wire            b_zero        = b_exp == {WEXP{1'b0}};
@@ -93,7 +106,7 @@ module zkf_mul #(
     generate
         if (STAGE_PRODUCT == 0) begin : g_mul_unsplit
             assign mag_src            = a_significand * b_significand;
-            assign mag_src_valid      = in_valid;
+            assign mag_src_valid      = in_valid_q;
             assign mag_src_sign       = pre_sign;
             assign mag_src_exp_base   = exp_unbiased_in;
             assign mag_src_force_zero = pre_force_zero;
@@ -129,7 +142,7 @@ module zkf_mul #(
                 if (rst) begin
                     s0_valid <= 1'b0;
                 end else begin
-                    s0_valid <= in_valid;
+                    s0_valid <= in_valid_q;
                 end
                 s0_sign       <= pre_sign;
                 s0_exp_base   <= exp_unbiased_in;

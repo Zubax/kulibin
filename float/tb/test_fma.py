@@ -240,10 +240,11 @@ async def fma_runtime_cases(dut) -> None:
     dut.b.value = 0
     dut.c.value = 0
 
-    # zkf_fma: 5 stages (product, order, align-capture, add, normalize+pack) + STAGE_PRODUCT (split multiply)
-    # + STAGE_DECODE (register decoded operands before compare/select) + STAGE_ALIGN (split alignment shifter)
-    # + STAGE_NORMALIZE (register packer inputs) + STAGE_OUTPUT (registered pack output). Each knob clamps to 1.
-    register_stages = (5 + (1 if context.stage_product >= 1 else 0)
+    # zkf_fma: 5 stages (product, order, align-capture, add, normalize+pack) + STAGE_INPUT (latched inputs)
+    # + STAGE_PRODUCT (split multiply) + STAGE_DECODE (register decoded operands before compare/select)
+    # + STAGE_ALIGN (split alignment shifter) + STAGE_NORMALIZE (register packer inputs)
+    # + STAGE_OUTPUT (registered pack output). Each knob clamps to 1 except STAGE_NORMALIZE (0/1/2).
+    register_stages = (5 + context.stage_input + (1 if context.stage_product >= 1 else 0)
                        + (1 if context.stage_decode >= 1 else 0)
                        + (1 if context.stage_align >= 1 else 0)
                        + context.stage_normalize + context.stage_output)

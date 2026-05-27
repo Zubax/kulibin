@@ -201,9 +201,9 @@ async def mul_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    # zkf_mul: 1 (product) + STAGE_OUTPUT (registered pack output) + STAGE_PRODUCT (DSP cascade split, >1 clamps to 1).
-    # Default STAGE_OUTPUT=1 -> 2 stages; STAGE_OUTPUT=0 (combinational output) -> 1 stage.
-    register_stages = 1 + context.stage_output + (1 if context.stage_product >= 1 else 0)
+    # zkf_mul: 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split, >1 clamps to 1)
+    # + STAGE_OUTPUT (registered pack output). Default all-zero -> 1 stage.
+    register_stages = 1 + context.stage_input + (1 if context.stage_product >= 1 else 0) + context.stage_output
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: BinaryCase) -> dict[str, int]:

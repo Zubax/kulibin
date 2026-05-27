@@ -48,13 +48,16 @@ The two main parameters are WEXP and WMAN setting the bit width of the biased ex
 the most significant bit of the significand is not stored, but there is a sign bit,
 so the total bit width is simply WFULL=WEXP+WMAN.
 
-The modules are entirely self-contained -- no external dependencies; simply drag-and-drop into your project.
+The modules are entirely self-contained -- no external dependencies; simply drag-and-drop the directory into your project.
 There are private helper modules named `_zkf_*`;
 they are not supposed to be instantiated by the user but the public modules depend on them.
 They do not offer any of the guarantees that are valid for the public modules.
 
 Most modules provide pipelining knobs, like output register selection, internal registers, etc,
-to enable tuning for the target chip.
+to enable tuning for the target chip. Common options seen in most modules are:
+`STAGE_INPUT` -- latch inputs (no combinational paths at the input);
+`STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
+others control various computation stages.
 
 Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
 other modules since they always canonicalize inputs, but it is worth noting.

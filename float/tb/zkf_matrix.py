@@ -192,11 +192,13 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
                 target=target, root_module=root_module)
 
 
-def _fma(sim, tier, base, w, m, kind, count, *, sp=None, sd=None, sa=None, sn=None, so=None) -> Run:
+def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if si is not None:
+        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sd is not None:
         vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
     if sa is not None:
@@ -252,8 +254,9 @@ def _per_pr(sim, out: list) -> None:
                 for cfg, w, m, k, c in BINARY:
                     out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
     for sp in (0, 1):
-        for cfg, w, m, k, c in BINARY:
-            out.append(_binary("mul", sim, "pr", cfg, w, m, k, c, sp=sp))
+        for si in (0, 1):
+            for cfg, w, m, k, c in BINARY:
+                out.append(_binary("mul", sim, "pr", cfg, w, m, k, c, sp=sp, si=si))
     for si in (0, 1):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
@@ -261,9 +264,10 @@ def _per_pr(sim, out: list) -> None:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob exercised once (plus all-on) on a fast format. Results are staging-independent, so this
     # validates the out_valid timing of every STAGE_* register without re-running the slow formats.
-    for sp, sd, sa, sn, so in [(0, 0, 0, 0, 0), (1, 0, 0, 0, 0), (0, 1, 0, 0, 0), (0, 0, 1, 0, 0),
-                               (0, 0, 0, 1, 0), (0, 0, 0, 0, 1), (1, 1, 1, 1, 1)]:
-        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
+    for si, sp, sd, sa, sn, so in [(0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0),
+                                   (0, 0, 1, 0, 0, 0), (0, 0, 0, 1, 0, 0), (0, 0, 0, 0, 1, 0),
+                                   (0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1)]:
+        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3, i.e. WMAN >= 7
     # (smaller WMAN collapses its two register barriers and is rejected at elaboration), so it cannot use the w4/m6
     # knob format above. Exercise it at the WMAN=7 guard boundary - the smallest format permitted, and a WINDEX-
@@ -295,15 +299,17 @@ def _per_pr(sim, out: list) -> None:
 def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs, swept across every format in its deep list, so every
     # parameter combination is exercised for correctness. (Coverage closure lives in _deep_coverage under merged-union
-    # semantics.) Knob axes: mul = STAGE_PRODUCT x STAGE_OUTPUT; add/addsub = STAGE_DECODE x STAGE_ALIGN x STAGE_OUTPUT;
+    # semantics.) Knob axes: mul = STAGE_INPUT x STAGE_PRODUCT x STAGE_OUTPUT;
+    # add/addsub = STAGE_DECODE x STAGE_ALIGN x STAGE_OUTPUT;
     # div/from_int/resize = STAGE_INPUT x STAGE_OUTPUT; to_int = STAGE_INPUT only (no STAGE_OUTPUT); pack = STAGE_OUTPUT
     # x EXP_IS_BIASED; mul_ilog2_const = STAGE_DECODE x K (K already fanned out by its wrapper).
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
         for sp in (0, 1):
-            for so in (0, 1):
-                out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, so=so))
+            for si in (0, 1):
+                for so in (0, 1):
+                    out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, si=si, so=so))
         for op in ("add", "addsub"):
             for sd in (0, 1):
                 for sa in (0, 1):
@@ -317,15 +323,18 @@ def _deep_correctness(out: list) -> None:
     for w, m, k, c in FMA_EXT:
         out.append(_fma(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
     for sp in (0, 1):
-        for sd in (0, 1):
-            for sa in (0, 1):
-                for sn in (0, 1):
-                    for so in (0, 1):
-                        out.append(_fma(s, "deep", "w4m6_knobs", 4, 6, "random", 256,
-                                        sp=sp, sd=sd, sa=sa, sn=sn, so=so))
+        for si in (0, 1):
+            for sd in (0, 1):
+                for sa in (0, 1):
+                    for sn in (0, 1):
+                        for so in (0, 1):
+                            out.append(_fma(s, "deep", "w4m6_knobs", 4, 6, "random", 256,
+                                            sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
-    for sp, sd, sa, sn, so in ((0, 0, 0, 0, 0), (1, 1, 1, 1, 1)):
-        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, sd=sd, sa=sa, sn=sn, so=so))
+    out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
+    for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
+        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0,
+                        sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     for w, m, k, c in DIV_EXT:
         for si in (0, 1):
             for so in (0, 1):
@@ -464,6 +473,7 @@ _FAST = [
     ("mul_sp0", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 0)]),
     ("mul_sp1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 1)]),
     ("mul_so1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 1)]),
+    ("mul_si1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
     ("div_si0", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
     ("div_si1", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
     ("from_int_si0", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
