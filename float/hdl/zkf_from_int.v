@@ -113,7 +113,6 @@ module zkf_from_int #(
         .in_valid(s1_valid),
         .sign(s1_sign),
         .force_inf(1'b0),
-        .force_zero(1'b0),
         .mag(s1_mag_ext),
         .sb_in(1'b0),
         .out_valid(out_valid),

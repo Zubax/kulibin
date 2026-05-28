@@ -77,10 +77,10 @@ module zkf_exp2 #(
     wire             rb_valid;
     // verilator coverage_off
     // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
-    // feed r0_f directly. The wide intermediate carrier matches zkf_to_int's existing coverage pattern.
+    // feed r0_f directly. rb_guard_unused is structurally zero for FF>0 and intentionally ignored.
     wire [WEU+FF-1:0] rb_mag;
-    // verilator coverage_on
     wire             rb_guard_unused;          // FF>0 -> structurally 0; not consumed
+    // verilator coverage_on
     wire             rb_lost_sticky;
     wire             rb_sign;
     wire             rb_is_inf_unused;         // folded into rb_oor by the helper

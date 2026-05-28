@@ -225,7 +225,6 @@ module zkf_log2 #(
         .in_valid(p1_valid),
         .sign(p1_sign),
         .force_inf(p1_special),
-        .force_zero(1'b0),
         .mag(p1_mag),
         .sb_in({p1_pole, p1_de}),
         .out_valid(out_valid),

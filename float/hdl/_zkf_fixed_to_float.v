@@ -1,6 +1,6 @@
 /// Streamed signed-magnitude fixed-point -> normalized float.
 /// Internalizes the _zkf_normshift + sideband delay + pack-input combine + _zkf_pack pipeline. The caller forms the
-/// unsigned magnitude (and registers it), resolves the special-case sign/force flags ahead of the helper, and passes
+/// unsigned magnitude (and registers it), resolves the special-case sign and force_inf ahead of the helper, and passes
 /// generic sideband through sb_in / sb_out for outputs that don't fit the y / valid channels (e.g., zkf_log2's pole
 /// and domain_error flags).
 ///
@@ -37,7 +37,6 @@ module _zkf_fixed_to_float #(
     input  wire                 in_valid,
     input  wire                 sign,
     input  wire                 force_inf,
-    input  wire                 force_zero,
     input  wire     [WMAG-1:0]  mag,
     input  wire     [SB_W-1:0]  sb_in,
 
@@ -88,20 +87,18 @@ module _zkf_fixed_to_float #(
         .y(norm_aligned)
     );
 
-    // -- Delay {sign, force_inf, force_zero, sb_in} alongside the normshift so they land with norm_aligned. _zkf_pipe
-    // resets only the valid flag; the payload free-runs (project reset policy). For STAGE_NORMALIZE=0 the pipe is a
-    // pure passthrough.
-    localparam PIPE_W = 3 + SB_W;
+    // -- Delay {sign, force_inf, sb_in} alongside the normshift so they land with norm_aligned. _zkf_pipe resets only
+    // the valid flag; the payload free-runs (project reset policy). For STAGE_NORMALIZE=0 the pipe is a passthrough.
+    localparam PIPE_W = 2 + SB_W;
     wire              sb_valid;
     wire [PIPE_W-1:0] sb_pipe_out;
     _zkf_pipe #(.W(PIPE_W), .N(STAGE_NORMALIZE)) u_sb_pipe (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .in({sign, force_inf, force_zero, sb_in}),
+        .in_valid(in_valid), .in({sign, force_inf, sb_in}),
         .out_valid(sb_valid), .out(sb_pipe_out)
     );
     wire             sign_d       = sb_pipe_out[PIPE_W-1];
     wire             force_inf_d  = sb_pipe_out[PIPE_W-2];
-    wire             force_zero_d = sb_pipe_out[PIPE_W-3];
     wire [SB_W-1:0]  sb_d         = sb_pipe_out[SB_W-1:0];
 
     // -- Pack-input combine (combinational). Slicing follows zkf_from_int's pattern exactly: the leading WMAN bits
@@ -124,7 +121,7 @@ module _zkf_fixed_to_float #(
     // verilator coverage_on
 
     wire pre_force_inf  = force_inf_d;
-    wire pre_force_zero = force_zero_d | (~force_inf_d & norm_zero);
+    wire pre_force_zero = ~force_inf_d & norm_zero;
 
     // -- The packer owns its optional input register (STAGE_INPUT=STAGE_PACK) and its optional output
     // register (STAGE_OUTPUT). When STAGE_PACK=1, the rounder is insulated from the wide normshift output

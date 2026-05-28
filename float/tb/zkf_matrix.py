@@ -370,6 +370,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("exp2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
+    # STAGE_PACK+STAGE_OUTPUT drives _zkf_fixed_to_float's _zkf_pack_delay with N=2, covering the delay-chain shift.
+    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
