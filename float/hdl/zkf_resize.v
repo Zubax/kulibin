@@ -1,6 +1,7 @@
 /// Streamed cast between two Zubax Kulibin float formats.
 ///
-/// Register stages: STAGE_INPUT+STAGE_OUTPUT end-to-end.
+/// Register stages: STAGE_INPUT+STAGE_OUTPUT
+/// If no stages are enabled, the module behaves combinationally; clk, rst are ignored.
 ///
 /// STAGE_INPUT=0: input combinational paths are exposed.
 /// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
