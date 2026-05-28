@@ -1,6 +1,6 @@
 /// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
 ///
-/// Register stages: 5+STAGE_INPUT+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT
+/// Register stages: 5+STAGE_INPUT+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT
 ///
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add.
@@ -19,11 +19,10 @@
 /// STAGE_ALIGN=0: single-cycle alignment shifter (default).
 /// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
 ///
-/// STAGE_NORMALIZE selects how deeply the close-cancellation normalize/round path is pipelined (0, 1 or 2):
-///   0: the normalize + exponent correction feed the packer combinationally (default).
-///   1: register the packer inputs, splitting that cone from the rounding adder (+1 cycle).
-///   2: deepen the normalizer to its 3-segment form (_zkf_normshift STAGE_SPLIT=2) and realign the carried payload
-///      through the extra cycle of normalizer latency (+2 cycles total vs SN=0).
+/// STAGE_NORMALIZE={0,1,2} adds exactly one register stage per unit (+STAGE_NORMALIZE cycles).
+///
+/// STAGE_PACK=0: packer reads its inputs combinationally (default).
+/// STAGE_PACK=1: register the packer inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
 ///
 /// STAGE_OUTPUT=0: combinational packed output (default).
 /// STAGE_OUTPUT=1: registered output (+1 cycle).
@@ -37,7 +36,8 @@ module zkf_fma #(
     parameter STAGE_PRODUCT   = 0,  // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
-    parameter STAGE_NORMALIZE = 0,  // 0 = comb; 1 = register pack inputs (+1); 2 = +deepen normalizer to 3 stages (+2)
+    parameter STAGE_NORMALIZE = 0,  // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
+    parameter STAGE_PACK      = 0,  // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
     parameter STAGE_OUTPUT    = 0   // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
@@ -500,24 +500,37 @@ module zkf_fma #(
     wire                  s2_add_sticky = s2_add_carry ? (|s2_raw_result[WF-WMAN-2:0]) : (|s2_raw_result[WF-WMAN-3:0]);
 
     // Opposite-sign subtraction can cancel down into the product's low half, so the close-cancellation normalize
-    // scans the FULL WF-bit magnitude (this full width is the irreducible cost of correct FMA rounding). The
-    // normshift's STAGE_SPLIT=1 register sits on the s2->s3 boundary, so its outputs are valid in the s3 cone.
-    wire              s3_sub_zero;
-    wire [WINDEX-1:0] s3_sub_shift;
+    // scans the FULL WF-bit magnitude (this full width is the irreducible cost of correct FMA rounding).
+    // STAGE_NORMALIZE forwards directly to _zkf_normshift.STAGE_SPLIT (0/1/2 internal register barriers). For
+    // SN=0 the cascade is combinational; the explicit s3-boundary register block below brings the outputs into
+    // the s3 cycle. For SN=1 the normshift's internal register IS the s3 boundary (today's silent-SS=1 behavior).
+    // For SN=2 the normshift has 2 internal stages and the s2x_* register block further below catches the add
+    // path up to the same total delay.
+    wire              norm_sub_zero;
+    wire [WINDEX-1:0] norm_sub_shift;
     // verilator coverage_off
-    wire     [WF-1:0] s3_sub_aligned;
+    wire     [WF-1:0] norm_sub_aligned;
     // verilator coverage_on
-    // STAGE_NORMALIZE controls only the normshift's internal cascade depth: SS=1 for the 1- or 2-stage configs
-    // (STAGE_NORMALIZE 0/1, both still feed s3 one cycle after s2), SS=2 for the deeper close-cancellation pipeline
-    // (STAGE_NORMALIZE 2, two cycles after s2). The s3-bound payload realignment that lines the sub path up with the
-    // add path is handled by the s2x_* register block further below.
-    _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT((STAGE_NORMALIZE < 2) ? 1 : 2)) u_sub_norm (
+    _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE)) u_sub_norm (
         .clk(clk),
         .x(s2_raw_result[WF-1:0]),
-        .zero(s3_sub_zero),
-        .count(s3_sub_shift),
-        .y(s3_sub_aligned)
+        .zero(norm_sub_zero),
+        .count(norm_sub_shift),
+        .y(norm_sub_aligned)
     );
+
+    // The sub-path is ALWAYS registered at the s3 boundary. Total sub-path delay from s2 is STAGE_NORMALIZE + 1
+    // (normshift internal + s3 register), matching the add-path's s2x (depth STAGE_NORMALIZE) + s3 register.
+    reg               s3_sub_zero;
+    reg  [WINDEX-1:0] s3_sub_shift;
+    // verilator coverage_off
+    reg      [WF-1:0] s3_sub_aligned;
+    // verilator coverage_on
+    always @(posedge clk) begin
+        s3_sub_zero    <= norm_sub_zero;
+        s3_sub_shift   <= norm_sub_shift;
+        s3_sub_aligned <= norm_sub_aligned;
+    end
     wire [WMAN-1:0] s3_sub_sig    = s3_sub_aligned[WF-1 -: WMAN];
     wire            s3_sub_guard  = s3_sub_aligned[WF-WMAN-1];
     wire            s3_sub_round  = s3_sub_aligned[WF-WMAN-2];
@@ -550,242 +563,129 @@ module zkf_fma #(
     wire            s3_pack_round      = s3_same_sign ? s3_add_round  : s3_sub_round;
     wire            s3_pack_sticky     = s3_same_sign ? s3_add_sticky : s3_sub_sticky;
 
-    // Optional packer-input register (STAGE_NORMALIZE): splits the close-cancellation normalize + exponent
-    // correction cone from the packer's rounding adder (the s3 critical path at large WMAN). The packer is
-    // instantiated inside each branch so STAGE_NORMALIZE=0 feeds it the s3 results directly with no intermediate
-    // alias net, keeping the default path structurally identical to a combinational normalize -> pack.
-    generate
-        if (STAGE_NORMALIZE == 0) begin : g_no_norm_register
-            _zkf_pack #(
-                .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
-            ) u_pack (
-                .clk(clk),
-                .rst(rst),
-                .in_valid(s3_valid),
-                .sign(s3_sign),
-                .force_zero(s3_pack_force_zero),
-                .force_inf(s3_force_inf),
-                .exp_unbiased(s3_pack_exp),
-                .significand(s3_pack_sig),
-                .guard(s3_pack_guard),
-                .round(s3_pack_round),
-                .sticky(s3_pack_sticky),
-                .out_valid(out_valid),
-                .y(y)
-            );
-        end else begin : g_norm_register
-            reg                  r_valid;
-            reg                  r_sign;
-            reg                  r_force_zero;
-            reg                  r_force_inf;
-            reg signed [WEU-1:0] r_exp;
-            reg       [WMAN-1:0] r_sig;
-            reg                  r_guard;
-            reg                  r_round;
-            reg                  r_sticky;
-            always @(posedge clk) begin
-                if (rst) r_valid <= 1'b0;
-                else     r_valid <= s3_valid;
-                r_sign       <= s3_sign;
-                r_force_zero <= s3_pack_force_zero;
-                r_force_inf  <= s3_force_inf;
-                r_exp        <= s3_pack_exp;
-                r_sig        <= s3_pack_sig;
-                r_guard      <= s3_pack_guard;
-                r_round      <= s3_pack_round;
-                r_sticky     <= s3_pack_sticky;
-            end
-            _zkf_pack #(
-                .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
-            ) u_pack (
-                .clk(clk),
-                .rst(rst),
-                .in_valid(r_valid),
-                .sign(r_sign),
-                .force_zero(r_force_zero),
-                .force_inf(r_force_inf),
-                .exp_unbiased(r_exp),
-                .significand(r_sig),
-                .guard(r_guard),
-                .round(r_round),
-                .sticky(r_sticky),
-                .out_valid(out_valid),
-                .y(y)
-            );
-        end
-    endgenerate
+    // Optional packer-input register (STAGE_PACK): splits the close-cancellation normalize + exponent correction
+    // cone from the packer's rounding adder (the s3 critical path at large WMAN). The packer owns this register via
+    // its STAGE_INPUT parameter; STAGE_PACK=0 keeps it disabled (default).
+    _zkf_pack #(
+        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1),
+        .STAGE_INPUT(STAGE_PACK),
+        .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_pack (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(s3_valid),
+        .sign(s3_sign),
+        .force_zero(s3_pack_force_zero),
+        .force_inf(s3_force_inf),
+        .exp_unbiased(s3_pack_exp),
+        .significand(s3_pack_sig),
+        .guard(s3_pack_guard),
+        .round(s3_pack_round),
+        .sticky(s3_pack_sticky),
+        .out_valid(out_valid),
+        .y(y)
+    );
 
     // Stream pipeline. Reset clears only stream validity; payload registers free-run (s0b_valid is reset inside its
-    // own generate block under STAGE_ALIGN). The two branches differ only in whether an extra realignment register
-    // (s2x_*) is threaded between s2 and s3 -- the SN<2 branch wires s3 directly from s2, the SN==2 branch routes it
-    // through s2x so the add path catches up with the extra cycle of normalizer latency. The pr/s0/s1/s2 captures
-    // are otherwise identical between the two branches.
-    generate
-        if (STAGE_NORMALIZE < 2) begin : g_norm2_off
-            always @(posedge clk) begin
-                if (rst) begin
-                    pr_valid <= 1'b0;
-                    s0_valid <= 1'b0;
-                    s1_valid <= 1'b0;
-                    s2_valid <= 1'b0;
-                    s3_valid <= 1'b0;
-                end else begin
-                    pr_valid <= mag_valid;
-                    s0_valid <= d_valid;
-                    s1_valid <= s0b_valid;
-                    s2_valid <= s1_valid;
-                    s3_valid <= s2_valid;
-                end
-
-                // Product stage capture.
-                pr_product_norm <= mag_norm;
-                pr_p_sign       <= m_p_sign;
-                pr_p_zero       <= m_p_zero;
-                pr_p_inf        <= m_p_inf;
-                pr_ep_finite    <= mag_ep_finite;
-                pr_c_sig        <= m_c_sig;
-                pr_c_exp        <= m_c_exp;
-                pr_c_sign       <= m_c_sign;
-                pr_c_zero       <= m_c_zero;
-                pr_c_inf        <= m_c_inf;
-
-                // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
-                s0_finite_sign <= finite_sign;
-                s0_inf_sign    <= inf_sign;
-                s0_same_sign   <= same_sign;
-                s0_force_zero  <= force_zero;
-                s0_force_inf   <= force_inf;
-                s0_anchor_exp  <= anchor_exp;
-                s0_exp_diff    <= {{(WSHIFT-WDIFF){1'b0}}, exp_diff_abs};
-                s0_large_ext   <= large_ext;
-                s0_small_ext   <= small_ext;
-
-                // Stage 1 capture: aligned operands from s0b (s0_* directly or one-cycle-delayed when STAGE_ALIGN).
-                s1_finite_sign   <= s0b_finite_sign;
-                s1_inf_sign      <= s0b_inf_sign;
-                s1_same_sign     <= s0b_same_sign;
-                s1_force_zero    <= s0b_force_zero;
-                s1_force_inf     <= s0b_force_inf;
-                s1_anchor_exp    <= s0b_anchor_exp;
-                s1_large_ext     <= s0b_large_ext;
-                s1_small_aligned <= s0_small_aligned;
-
-                // Stage 2 capture: the raw add/subtract result.
-                s2_sign       <= s1_result_sign;
-                s2_same_sign  <= s1_same_sign;
-                s2_force_zero <= s1_force_zero;
-                s2_force_inf  <= s1_force_inf;
-                s2_anchor_exp <= s1_anchor_exp;
-                s2_raw_result <= s1_raw_result;
-
-                // Stage 3 capture: add-path normalization (sub path lives in the normalizer's internal registers).
-                s3_sign       <= s2_sign;
-                s3_same_sign  <= s2_same_sign;
-                s3_force_zero <= s2_force_zero;
-                s3_force_inf  <= s2_force_inf;
-                s3_anchor_exp <= s2_anchor_exp;
-                s3_add_exp    <= s2_add_exp;
-                s3_add_sig    <= s2_add_sig;
-                s3_add_guard  <= s2_add_guard;
-                s3_add_round  <= s2_add_round;
-                s3_add_sticky <= s2_add_sticky;
-            end
-        end else begin : g_norm2_on
-            reg                  s2x_valid;
-            reg                  s2x_sign;
-            reg                  s2x_same_sign;
-            reg                  s2x_force_zero;
-            reg                  s2x_force_inf;
-            reg signed [WEU-1:0] s2x_anchor_exp;
-            reg signed [WEU-1:0] s2x_add_exp;
-            reg       [WMAN-1:0] s2x_add_sig;
-            reg                  s2x_add_guard;
-            reg                  s2x_add_round;
-            reg                  s2x_add_sticky;
-            always @(posedge clk) begin
-                if (rst) begin
-                    pr_valid  <= 1'b0;
-                    s0_valid  <= 1'b0;
-                    s1_valid  <= 1'b0;
-                    s2_valid  <= 1'b0;
-                    s2x_valid <= 1'b0;
-                    s3_valid  <= 1'b0;
-                end else begin
-                    pr_valid  <= mag_valid;
-                    s0_valid  <= d_valid;
-                    s1_valid  <= s0b_valid;
-                    s2_valid  <= s1_valid;
-                    s2x_valid <= s2_valid;
-                    s3_valid  <= s2x_valid;
-                end
-
-                // Product stage capture.
-                pr_product_norm <= mag_norm;
-                pr_p_sign       <= m_p_sign;
-                pr_p_zero       <= m_p_zero;
-                pr_p_inf        <= m_p_inf;
-                pr_ep_finite    <= mag_ep_finite;
-                pr_c_sig        <= m_c_sig;
-                pr_c_exp        <= m_c_exp;
-                pr_c_sign       <= m_c_sign;
-                pr_c_zero       <= m_c_zero;
-                pr_c_inf        <= m_c_inf;
-
-                // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
-                s0_finite_sign <= finite_sign;
-                s0_inf_sign    <= inf_sign;
-                s0_same_sign   <= same_sign;
-                s0_force_zero  <= force_zero;
-                s0_force_inf   <= force_inf;
-                s0_anchor_exp  <= anchor_exp;
-                s0_exp_diff    <= {{(WSHIFT-WDIFF){1'b0}}, exp_diff_abs};
-                s0_large_ext   <= large_ext;
-                s0_small_ext   <= small_ext;
-
-                // Stage 1 capture: aligned operands from s0b (s0_* directly or one-cycle-delayed when STAGE_ALIGN).
-                s1_finite_sign   <= s0b_finite_sign;
-                s1_inf_sign      <= s0b_inf_sign;
-                s1_same_sign     <= s0b_same_sign;
-                s1_force_zero    <= s0b_force_zero;
-                s1_force_inf     <= s0b_force_inf;
-                s1_anchor_exp    <= s0b_anchor_exp;
-                s1_large_ext     <= s0b_large_ext;
-                s1_small_aligned <= s0_small_aligned;
-
-                // Stage 2 capture: the raw add/subtract result.
-                s2_sign       <= s1_result_sign;
-                s2_same_sign  <= s1_same_sign;
-                s2_force_zero <= s1_force_zero;
-                s2_force_inf  <= s1_force_inf;
-                s2_anchor_exp <= s1_anchor_exp;
-                s2_raw_result <= s1_raw_result;
-
-                // Stage 2.5: realignment register between s2 and s3 (the 3-segment normalizer is +1 cycle).
-                s2x_sign       <= s2_sign;
-                s2x_same_sign  <= s2_same_sign;
-                s2x_force_zero <= s2_force_zero;
-                s2x_force_inf  <= s2_force_inf;
-                s2x_anchor_exp <= s2_anchor_exp;
-                s2x_add_exp    <= s2_add_exp;
-                s2x_add_sig    <= s2_add_sig;
-                s2x_add_guard  <= s2_add_guard;
-                s2x_add_round  <= s2_add_round;
-                s2x_add_sticky <= s2_add_sticky;
-
-                // Stage 3 capture from the realignment register.
-                s3_sign       <= s2x_sign;
-                s3_same_sign  <= s2x_same_sign;
-                s3_force_zero <= s2x_force_zero;
-                s3_force_inf  <= s2x_force_inf;
-                s3_anchor_exp <= s2x_anchor_exp;
-                s3_add_exp    <= s2x_add_exp;
-                s3_add_sig    <= s2x_add_sig;
-                s3_add_guard  <= s2x_add_guard;
-                s3_add_round  <= s2x_add_round;
-                s3_add_sticky <= s2x_add_sticky;
-            end
+    // own generate block under STAGE_ALIGN). The pr/s0/s1/s2 captures are unconditional; the add-path s2x catch-up
+    // is a STAGE_NORMALIZE-deep register pipe that keeps the add path aligned with the normshift's internal
+    // register cycles. STAGE_NORMALIZE=0 is a pure passthrough (no s2x registers); each unit adds 1 cycle.
+    always @(posedge clk) begin
+        if (rst) begin
+            pr_valid <= 1'b0;
+            s0_valid <= 1'b0;
+            s1_valid <= 1'b0;
+            s2_valid <= 1'b0;
+        end else begin
+            pr_valid <= mag_valid;
+            s0_valid <= d_valid;
+            s1_valid <= s0b_valid;
+            s2_valid <= s1_valid;
         end
-    endgenerate
+
+        // Product stage capture.
+        pr_product_norm <= mag_norm;
+        pr_p_sign       <= m_p_sign;
+        pr_p_zero       <= m_p_zero;
+        pr_p_inf        <= m_p_inf;
+        pr_ep_finite    <= mag_ep_finite;
+        pr_c_sig        <= m_c_sig;
+        pr_c_exp        <= m_c_exp;
+        pr_c_sign       <= m_c_sign;
+        pr_c_zero       <= m_c_zero;
+        pr_c_inf        <= m_c_inf;
+
+        // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
+        s0_finite_sign <= finite_sign;
+        s0_inf_sign    <= inf_sign;
+        s0_same_sign   <= same_sign;
+        s0_force_zero  <= force_zero;
+        s0_force_inf   <= force_inf;
+        s0_anchor_exp  <= anchor_exp;
+        s0_exp_diff    <= {{(WSHIFT-WDIFF){1'b0}}, exp_diff_abs};
+        s0_large_ext   <= large_ext;
+        s0_small_ext   <= small_ext;
+
+        // Stage 1 capture: aligned operands from s0b (s0_* directly or one-cycle-delayed when STAGE_ALIGN).
+        s1_finite_sign   <= s0b_finite_sign;
+        s1_inf_sign      <= s0b_inf_sign;
+        s1_same_sign     <= s0b_same_sign;
+        s1_force_zero    <= s0b_force_zero;
+        s1_force_inf     <= s0b_force_inf;
+        s1_anchor_exp    <= s0b_anchor_exp;
+        s1_large_ext     <= s0b_large_ext;
+        s1_small_aligned <= s0_small_aligned;
+
+        // Stage 2 capture: the raw add/subtract result.
+        s2_sign       <= s1_result_sign;
+        s2_same_sign  <= s1_same_sign;
+        s2_force_zero <= s1_force_zero;
+        s2_force_inf  <= s1_force_inf;
+        s2_anchor_exp <= s1_anchor_exp;
+        s2_raw_result <= s1_raw_result;
+    end
+
+    // Add-path s2x catch-up: a STAGE_NORMALIZE-deep register pipe that delays the s2 add-path signals so they
+    // arrive at the s3 register boundary aligned with the sub-path's normshift internal register cycles.
+    // Bundle: {sign, same_sign, force_zero, force_inf, anchor_exp, add_exp, add_sig, add_guard, add_round,
+    // add_sticky}.
+    localparam Q_W = 4 + 2*WEU + WMAN + 3;
+    wire [Q_W-1:0] s2_q_in = {s2_sign, s2_same_sign, s2_force_zero, s2_force_inf,
+                              s2_anchor_exp, s2_add_exp, s2_add_sig,
+                              s2_add_guard, s2_add_round, s2_add_sticky};
+    wire           q_valid;
+    wire [Q_W-1:0] q_out;
+    _zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
+        .clk(clk), .rst(rst),
+        .in_valid(s2_valid), .in(s2_q_in),
+        .out_valid(q_valid), .out(q_out)
+    );
+    wire                  q_sign         = q_out[Q_W-1];
+    wire                  q_same_sign    = q_out[Q_W-2];
+    wire                  q_force_zero   = q_out[Q_W-3];
+    wire                  q_force_inf    = q_out[Q_W-4];
+    wire signed [WEU-1:0] q_anchor_exp   = $signed(q_out[Q_W-5 -: WEU]);
+    wire signed [WEU-1:0] q_add_exp      = $signed(q_out[Q_W-5-WEU -: WEU]);
+    wire        [WMAN-1:0] q_add_sig     = q_out[Q_W-5-2*WEU -: WMAN];
+    wire                  q_add_guard    = q_out[2];
+    wire                  q_add_round    = q_out[1];
+    wire                  q_add_sticky   = q_out[0];
+
+    // Stage 3 register: captures from q_* (= s2 add-path delayed by STAGE_NORMALIZE cycles).
+    always @(posedge clk) begin
+        if (rst) s3_valid <= 1'b0;
+        else     s3_valid <= q_valid;
+        s3_sign       <= q_sign;
+        s3_same_sign  <= q_same_sign;
+        s3_force_zero <= q_force_zero;
+        s3_force_inf  <= q_force_inf;
+        s3_anchor_exp <= q_anchor_exp;
+        s3_add_exp    <= q_add_exp;
+        s3_add_sig    <= q_add_sig;
+        s3_add_guard  <= q_add_guard;
+        s3_add_round  <= q_add_round;
+        s3_add_sticky <= q_add_sticky;
+    end
 endmodule
 
 `default_nettype wire

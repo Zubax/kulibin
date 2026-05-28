@@ -1,6 +1,8 @@
 /// Streamed base-2 logarithm for the Zubax Kulibin float format: y = log2(x).
-/// Register stages: STAGE_INPUT + 6 + STAGE_PRODUCT + STAGE_NORMALIZE + D*(2+STAGE_PRODUCT) + STAGE_OUTPUT,
+///
+/// Register stages: STAGE_INPUT+4+STAGE_PRODUCT+STAGE_NORMALIZE+STAGE_PACK+D*(2+STAGE_PRODUCT)+STAGE_OUTPUT,
 /// where D depends on WMAN per the table below.
+///
 /// Zero-bubble, throughput-1, no backpressure.
 /// Behavior:
 ///
@@ -17,10 +19,13 @@
 ///     log2(m) = t*P(t) (t = stored fraction) as a fixed-point fraction in [0,1), factoring out the exact t for full
 ///     relative accuracy near m == 1.
 ///
-///  3. The signed fixed-point sum R = e + log2(m) is renormalized with _zkf_normshift and rounded by _zkf_pack.
-///     Results are always representable for finite x, so no overflow path is needed.
+///  3. The signed fixed-point sum R = e + log2(m) is renormalized and rounded by _zkf_fixed_to_float, which owns the
+///     _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input register,
+///     and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path is needed.
 ///
-/// STAGE_PRODUCT={0,1} splits the Horner multiply for timing closure (like zkf_mul).
+/// STAGE_PRODUCT={0,1,2} splits the Horner multiply for timing closure (like zkf_mul).
+/// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
+/// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
 /// STAGE_OUTPUT={0,1} registers the output.
 
 `default_nettype none
@@ -30,7 +35,8 @@ module zkf_log2 #(
     parameter WMAN            = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT     = 0,    // 0: combinational inputs;   1: latch inputs before any logic (+1 stage)
     parameter STAGE_PRODUCT   = 0,    // 0: single Horner multiply; 1: 2x2 split (+1 stage/deg); 2: 3x3 split (+2/deg)
-    parameter STAGE_NORMALIZE = 0,    // 0: single normalizer barrier; 1: extra top barrier (+1 stage)
+    parameter STAGE_NORMALIZE = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
+    parameter STAGE_PACK      = 0,    // 0: comb pack input; 1: register pack input (insulates rounder from normshift)
     parameter STAGE_OUTPUT    = 0     // 0: combinational outputs;     1: registered outputs, +1 stage
 ) (
     input wire clk,
@@ -63,7 +69,6 @@ module zkf_log2 #(
     localparam F2     = WFRAC + CF;             // fractional bits of log2(1+t) and of the R accumulator
     localparam WNORM  = WEXP + F2 + 1;          // magnitude width fed to the normalizer
     localparam WR     = WNORM + 1;              // signed R = e + log2(m) width
-    localparam WIDX   = $clog2(WNORM);          // normalize shift-count width
     localparam WE     = WEXP + 1;               // signed e = exp - BIAS
     // Signed unbiased result exponent in [-F2, WEXP-1]; also kept >= WEXP+2 because _zkf_pack requires its
     // exponent field to be at least WEXP+1 bits wide for its internal bias arithmetic.
@@ -177,117 +182,58 @@ module zkf_log2 #(
     wire     [WNORM-1:0] mag    = r_abs[WNORM-1:0];
     // verilator coverage_on
 
-    // -- Stage P1: register the magnitude and the sideband ahead of the (split) normalizer.
+    // Resolve the final sign at the P1 input: when the evaluator flagged a special result (+/-inf), the resolved
+    // sign is the special-case sign carried in the sideband; otherwise it is the sign of R = e + log2(m).
+    wire resolved_sign = e_special ? e_ssign : r_sign;
+
+    // -- Stage P1: register the magnitude, the resolved sign, and the special-case sideband ahead of the
+    // _zkf_fixed_to_float helper. Reset only validity; payload free-runs.
     reg                  p1_valid;
     // verilator coverage_off
     reg      [WNORM-1:0] p1_mag;
     // verilator coverage_on
     reg                  p1_sign;
     reg                  p1_special;
-    reg                  p1_ssign;
     reg                  p1_pole;
     reg                  p1_de;
     always @(posedge clk) begin
         if (rst) p1_valid <= 1'b0;
         else     p1_valid <= ev_valid;
         p1_mag     <= mag;
-        p1_sign    <= r_sign;
+        p1_sign    <= resolved_sign;
         p1_special <= e_special;
-        p1_ssign   <= e_ssign;
         p1_pole    <= e_pole;
         p1_de      <= e_de;
     end
 
-    // Normalizer with internal register barriers.
-    wire              norm_zero;
-    wire [WIDX-1:0]   norm_count;
-    // verilator coverage_off
-    wire [WNORM-1:0]  norm_aligned;
-    // verilator coverage_on
-    _zkf_normshift #(.W(WNORM), .STAGE_SPLIT(1 + STAGE_NORMALIZE)) u_norm (
-        .clk(clk),
-        .x(p1_mag),
-        .zero(norm_zero),
-        .count(norm_count),
-        .y(norm_aligned)
-    );
-
-    // -- Stage P1b: delay the sideband (1 + STAGE_NORMALIZE) cycles to line up with the normalizer's output.
-    localparam P1B_W = 5;  // {sign, special, ssign, pole, de}
-    wire             p1b_valid;
-    wire [P1B_W-1:0] p1b_sb;
-    _zkf_pipe #(.W(P1B_W), .N(1 + STAGE_NORMALIZE)) u_p1b (
+    // -- Normalize, combine, and pack via the shared back-end. The helper owns the _zkf_normshift instance
+    // (STAGE_SPLIT = 1 + STAGE_NORMALIZE), the GRS extraction, exp_unbiased = (WNORM-1-F2) - shamt, the optional P2
+    // pack-input register (STAGE_PACK_INPUT=1 since zkf_log2 needs the extra cycle for fmax closure), and the
+    // _zkf_pack output. The pole / domain_error flags ride the SB_W=2 sideband and emerge in lockstep with y.
+    wire [1:0] sb_out_flags;
+    _zkf_fixed_to_float #(
+        .WEXP(WEXP), .WMAN(WMAN),
+        .WMAG(WNORM), .WEU(WEU),
+        .EXP_OFFSET(WNORM - 1 - F2),
+        .EXP_IS_BIASED(0),
+        .SB_W(2),
+        .STAGE_NORMALIZE(STAGE_NORMALIZE),
+        .STAGE_PACK(STAGE_PACK),
+        .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_fixed_to_float (
         .clk(clk), .rst(rst),
         .in_valid(p1_valid),
-        .in({p1_sign, p1_special, p1_ssign, p1_pole, p1_de}),
-        .out_valid(p1b_valid),
-        .out(p1b_sb)
-    );
-    wire p1b_sign    = p1b_sb[4];
-    wire p1b_special = p1b_sb[3];
-    wire p1b_ssign   = p1b_sb[2];
-    wire p1b_pole    = p1b_sb[1];
-    wire p1b_de      = p1b_sb[0];
-
-    wire [WMAN-1:0] norm_sig    =  norm_aligned[WNORM-1 -: WMAN];
-    wire            norm_guard  =  norm_aligned[WNORM-WMAN-1];
-    wire            norm_round  =  norm_aligned[WNORM-WMAN-2];
-    wire            norm_sticky = |norm_aligned[WNORM-WMAN-3:0];
-    // Result exponent (unbiased) = leading-one position - F2 = ((WNORM-1) - count) - F2.
-    // verilator coverage_off
-    wire signed [WEU-1:0] exp_unbiased = $signed((WNORM - 1 - F2)) - $signed({{(WEU-WIDX){1'b0}}, norm_count});
-    // verilator coverage_on
-    wire pack_force_inf  = p1b_special;
-    wire pack_force_zero = ~p1b_special & norm_zero;   // R == 0 (x == 1.0) -> +0
-    wire pack_sign       = p1b_special ? p1b_ssign : p1b_sign;
-
-    // -- Stage P2: register the packer inputs, isolating the normalizer's second half from the rounder.
-    reg                  p2_valid;
-    reg                  p2_sign;
-    reg                  p2_force_inf;
-    reg                  p2_force_zero;
-    reg signed [WEU-1:0] p2_exp;
-    reg        [WMAN-1:0] p2_sig;
-    reg                  p2_guard;
-    reg                  p2_round;
-    reg                  p2_sticky;
-    reg                  p2_de;
-    reg                  p2_pole;
-    always @(posedge clk) begin
-        if (rst) p2_valid <= 1'b0;
-        else     p2_valid <= p1b_valid;
-        p2_sign       <= pack_sign;
-        p2_force_inf  <= pack_force_inf;
-        p2_force_zero <= pack_force_zero;
-        p2_exp        <= exp_unbiased;
-        p2_sig        <= norm_sig;
-        p2_guard      <= norm_guard;
-        p2_round      <= norm_round;
-        p2_sticky     <= norm_sticky;
-        p2_de         <= p1b_de;
-        p2_pole       <= p1b_pole;
-    end
-
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(p2_valid),
-        .sign(p2_sign),
-        .force_zero(p2_force_zero),
-        .force_inf(p2_force_inf),
-        .exp_unbiased(p2_exp),
-        .significand(p2_sig),
-        .guard(p2_guard),
-        .round(p2_round),
-        .sticky(p2_sticky),
+        .sign(p1_sign),
+        .force_inf(p1_special),
+        .force_zero(1'b0),
+        .mag(p1_mag),
+        .sb_in({p1_pole, p1_de}),
         .out_valid(out_valid),
-        .y(y)
+        .y(y),
+        .sb_out(sb_out_flags)
     );
-
-    // Carry domain_error/pole through the same output stage as the packer so they land with out_valid.
-    _zkf_pack_delay #(.W(2), .STAGE_OUTPUT(STAGE_OUTPUT)) u_flags (
-        .clk(clk), .rst(rst), .x({p2_de, p2_pole}), .y({domain_error, pole})
-    );
+    assign pole         = sb_out_flags[1];
+    assign domain_error = sb_out_flags[0];
 endmodule
 
 `default_nettype wire

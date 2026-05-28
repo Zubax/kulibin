@@ -25,6 +25,8 @@ filesets:
       - hdl/zkf_fma.v
       - hdl/_zkf_horner.v
       - hdl/_zkf_log2_final_mul.v
+      - hdl/_zkf_to_fixpoint.v
+      - hdl/_zkf_fixed_to_float.v
       - hdl/_tables/_zkf_exp2_m4_d2.v
       - hdl/_tables/_zkf_exp2_m5_d2.v
       - hdl/_tables/_zkf_exp2_m6_d2.v
@@ -68,6 +70,7 @@ filesets:
   rtl_add:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -142,6 +145,7 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -158,6 +162,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
       - hdl/_zkf_normshift.v
+      - hdl/_zkf_fixed_to_float.v
       - hdl/zkf_from_int.v
     file_type: verilogSource
 
@@ -165,6 +170,7 @@ filesets:
     files:
       - hdl/_zkf_pipe.v
       - hdl/_zkf_rshift_sticky.v
+      - hdl/_zkf_to_fixpoint.v
       - hdl/zkf_to_int.v
     file_type: verilogSource
 
@@ -179,6 +185,8 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
+      - hdl/_zkf_rshift_sticky.v
+      - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_horner.v
       - hdl/_tables/_zkf_exp2_m4_d2.v
       - hdl/_tables/_zkf_exp2_m5_d2.v
@@ -200,6 +208,7 @@ filesets:
       - hdl/_zkf_pack.v
       - hdl/_zkf_pipe.v
       - hdl/_zkf_normshift.v
+      - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_horner.v
       - hdl/_zkf_log2_final_mul.v
       - hdl/_tables/_zkf_log2_m4_d5.v

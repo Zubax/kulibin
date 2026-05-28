@@ -39,7 +39,8 @@ class ModuleSpec:
     stage_product: int = 0   # zkf_mul, zkf_fma: 0 or 1.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
-    stage_normalize: int = 0 # zkf_fma: 0, 1, or 2 (1 = register packer inputs; 2 = + 3-segment normalizer).
+    stage_normalize: int = 0 # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
+    stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
 
@@ -138,16 +139,17 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_add_w8m36_sd1_sa1",
-        label="zkf_add (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18, STAGE_DECODE=1 register decoded operands, "
-              "STAGE_ALIGN=1 split align shifter)",
-        top="zkf_add_w8m36_sd1_sa1_synth_top",
+        name="zkf_add_w8m36_sd1_sa1_sn1",
+        label="zkf_add (WEXP=8, WMAN=36, FPGA-optimal: STAGE_DECODE=1 register decoded operands, STAGE_ALIGN=1 "
+              "split align shifter, STAGE_NORMALIZE=1 split close-cancellation normshift)",
+        top="zkf_add_w8m36_sd1_sa1_sn1_synth_top",
         kind="add",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_decode=1,
         stage_align=1,
+        stage_normalize=1,
     ),
     ModuleSpec(
         name="zkf_addsub",
@@ -161,10 +163,9 @@ MODULES = [
     ModuleSpec(
         name="zkf_fma",
         label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_INPUT=1 latched operands + "
-              "STAGE_ALIGN=1 split aligner + STAGE_NORMALIZE=2 FMA-local 3-segment normalizer: closes every "
-              "datapath cone on Yosys and the more pessimistic Diamond/LSE using a single MULT18X18D. "
-              "STAGE_PRODUCT=1 would split the 18x18 into a 2x2 grid costing 4 DSPs for no timing benefit; "
-              "registering the operands closes the Yosys-binding product cone instead.)",
+              "STAGE_ALIGN=1 split aligner + STAGE_NORMALIZE=2 FMA-local 3-segment normalizer + STAGE_PACK=1 "
+              "registered packer inputs: closes every datapath cone on Yosys and the more pessimistic "
+              "Diamond/LSE using a single MULT18X18D.)",
         top="zkf_fma_synth_top",
         kind="fma",
         wexp=6,
@@ -173,12 +174,14 @@ MODULES = [
         stage_input=1,
         stage_align=1,
         stage_normalize=2,
+        stage_pack=1,
     ),
     ModuleSpec(
-        name="zkf_fma_w8m36_sp1_sd1_sa1_sn2",
+        name="zkf_fma_w8m36_sp1_sd1_sa1_sn2_pa1",
         label="zkf_fma (WEXP=8, WMAN=36, STAGE_PRODUCT=1 quad 18x18, STAGE_DECODE=1, STAGE_ALIGN=1, "
-              "STAGE_NORMALIZE=2: register pack inputs + FMA-local 3-segment normalizer so both wide cones close)",
-        top="zkf_fma_w8m36_sp1_sd1_sa1_sn2_synth_top",
+              "STAGE_NORMALIZE=2, STAGE_PACK=1: register pack inputs + FMA-local 3-segment normalizer so both "
+              "wide cones close)",
+        top="zkf_fma_w8m36_sp1_sd1_sa1_sn2_pa1_synth_top",
         kind="fma",
         wexp=8,
         wman=36,
@@ -187,13 +190,14 @@ MODULES = [
         stage_decode=1,
         stage_align=1,
         stage_normalize=2,
+        stage_pack=1,
     ),
     ModuleSpec(
-        name="zkf_fma_w8m36_si1_sp1_sd1_sa1_sn2",
+        name="zkf_fma_w8m36_si1_sp1_sd1_sa1_sn2_pa1",
         label="zkf_fma (WEXP=8, WMAN=36, STAGE_INPUT=1 latched inputs + STAGE_PRODUCT=1 quad 18x18, "
-              "STAGE_DECODE=1, STAGE_ALIGN=1, STAGE_NORMALIZE=2: input register shields the wide operand bus "
-              "while the rest closes both wide datapath cones)",
-        top="zkf_fma_w8m36_si1_sp1_sd1_sa1_sn2_synth_top",
+              "STAGE_DECODE=1, STAGE_ALIGN=1, STAGE_NORMALIZE=2, STAGE_PACK=1: input register shields the wide "
+              "operand bus while the rest closes both wide datapath cones)",
+        top="zkf_fma_w8m36_si1_sp1_sd1_sa1_sn2_pa1_synth_top",
         kind="fma",
         wexp=8,
         wman=36,
@@ -203,6 +207,7 @@ MODULES = [
         stage_decode=1,
         stage_align=1,
         stage_normalize=2,
+        stage_pack=1,
     ),
     ModuleSpec(
         name="_zkf_div_core",
@@ -300,35 +305,38 @@ MODULES = [
         stage_decode=1,
     ),
     ModuleSpec(
-        name="zkf_from_int",
-        label="zkf_from_int (WINT=32)",
-        top="zkf_from_int_synth_top",
+        name="zkf_from_int_sn1",
+        label="zkf_from_int (WINT=32, STAGE_NORMALIZE=1 split normshift)",
+        top="zkf_from_int_sn1_synth_top",
         kind="from_int",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         wint=32,
+        stage_normalize=1,
     ),
     ModuleSpec(
-        name="zkf_from_int_si1",
-        label="zkf_from_int (WINT=32, STAGE_INPUT=1)",
-        top="zkf_from_int_si1_synth_top",
+        name="zkf_from_int_si1_sn1",
+        label="zkf_from_int (WINT=32, STAGE_INPUT=1 + STAGE_NORMALIZE=1)",
+        top="zkf_from_int_si1_sn1_synth_top",
         kind="from_int",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         wint=32,
         stage_input=1,
+        stage_normalize=1,
     ),
     ModuleSpec(
-        name="zkf_from_int_w8m36",
-        label="zkf_from_int (WEXP=8, WMAN=36, WINT=32)",
-        top="zkf_from_int_w8m36_synth_top",
+        name="zkf_from_int_w8m36_sn1",
+        label="zkf_from_int (WEXP=8, WMAN=36, WINT=32, STAGE_NORMALIZE=1 split normshift)",
+        top="zkf_from_int_w8m36_sn1_synth_top",
         kind="from_int",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         wint=32,
+        stage_normalize=1,
     ),
     ModuleSpec(
         name="zkf_to_int",
@@ -464,21 +472,26 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2",
-        label="zkf_log2 (log2(x), table+polynomial; single narrow multiply per Horner step, DSP-mapped by both tools)",
+        label="zkf_log2 (log2(x), table+polynomial; STAGE_NORMALIZE=1 + STAGE_PACK=1 keep both wide pre-pack cones "
+              "below the 100 MHz gate)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+        stage_normalize=1,
+        stage_pack=1,
     ),
     ModuleSpec(
         name="zkf_log2_so1",
-        label="zkf_log2 (STAGE_OUTPUT=1, registered output -- higher timing margin)",
+        label="zkf_log2 (STAGE_NORMALIZE=1 + STAGE_PACK=1 + STAGE_OUTPUT=1 registered output -- higher timing margin)",
         top="zkf_log2_so1_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+        stage_normalize=1,
+        stage_pack=1,
         stage_output=1,
     ),
     # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The single wide multiply per step (SP=0) and
@@ -502,8 +515,8 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_NORMALIZE=1 (extra top "
-              "normshift barrier) + STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_NORMALIZE=2 (deep "
+              "normshift split) + STAGE_PACK=1 (register pack inputs) + STAGE_OUTPUT=1; LFE5U-45F)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
@@ -511,7 +524,8 @@ MODULES = [
         wexp_unbiased=0,
         stage_input=1,
         stage_product=2,
-        stage_normalize=1,
+        stage_normalize=2,
+        stage_pack=1,
         stage_output=1,
         synth_device="45k",
     ),
@@ -533,6 +547,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "add":
         return [
             hdl / "_zkf_pack.v",
+            hdl / "_zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
@@ -540,6 +555,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "addsub":
         return [
             hdl / "_zkf_pack.v",
+            hdl / "_zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
@@ -573,12 +589,14 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_pack.v",
             hdl / "_zkf_pipe.v",
             hdl / "_zkf_normshift.v",
+            hdl / "_zkf_fixed_to_float.v",
             hdl / "zkf_from_int.v",
         ]
     if spec.kind == "to_int":
         return [
             hdl / "_zkf_pipe.v",
             hdl / "_zkf_rshift_sticky.v",
+            hdl / "_zkf_to_fixpoint.v",
             hdl / "zkf_to_int.v",
         ]
     if spec.kind == "resize":
@@ -598,9 +616,14 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         DEFAULT_WMAN = 18  # the default WMAN of zkf_exp2 / zkf_log2
         tables = [table(w) for w in sorted({DEFAULT_WMAN, spec.wman})]
         sources = [hdl / "_zkf_pack.v", hdl / "_zkf_pipe.v"]
+        if spec.kind == "exp2":
+            # exp2's _zkf_to_fixpoint helper uses _zkf_rshift_sticky for the right-shift path; the helper itself
+            # owns the decode + folded-constant predicate cone shared with zkf_to_int.
+            sources += [hdl / "_zkf_rshift_sticky.v", hdl / "_zkf_to_fixpoint.v"]
         if spec.kind == "log2":
-            # log2 uses _zkf_normshift directly with STAGE_SPLIT = 1 + STAGE_NORMALIZE.
-            sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_log2_final_mul.v"]
+            # log2's _zkf_fixed_to_float helper owns the _zkf_normshift instance (STAGE_SPLIT = 1 + STAGE_NORMALIZE)
+            # plus the normshift -> pack-input combine -> _zkf_pack pipeline shared with zkf_from_int.
+            sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v", hdl / "_zkf_log2_final_mul.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -622,13 +645,18 @@ def register_stages(spec: ModuleSpec) -> int:
         # 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split) + STAGE_OUTPUT (pack output).
         return 1 + spec.stage_input + spec.stage_output + (1 if spec.stage_product >= 1 else 0)
     if spec.kind in {"add", "addsub"}:
-        return 4 + spec.stage_output + spec.stage_decode + spec.stage_align
+        # 4 base + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_OUTPUT. STAGE_NORMALIZE adds 1 cycle per
+        # unit symmetrically to both sub-path (normshift internal) and add-path (s2x catch-up).
+        return (4 + spec.stage_output + spec.stage_decode + spec.stage_align
+                + spec.stage_normalize)
     if spec.kind == "fma":
         # 5 base (product, order, align-capture, add, normalize+pack) + STAGE_INPUT (latched inputs)
         # + STAGE_PRODUCT (DSP split) + STAGE_DECODE (decode/compare split) + STAGE_ALIGN (align split)
-        # + STAGE_NORMALIZE (pack-input register) + STAGE_OUTPUT (pack output register).
+        # + STAGE_NORMALIZE (sub-path normshift internal + add-path s2x catch-up) + STAGE_PACK (pack-input
+        # register) + STAGE_OUTPUT (pack output register).
         return (5 + spec.stage_input + (1 if spec.stage_product >= 1 else 0)
-                + spec.stage_decode + spec.stage_align + spec.stage_normalize + spec.stage_output)
+                + spec.stage_decode + spec.stage_align + spec.stage_normalize
+                + spec.stage_pack + spec.stage_output)
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
@@ -638,21 +666,22 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "mul_ilog2_const":
         return 1 + spec.stage_decode
     if spec.kind == "from_int":
-        return 2 + spec.stage_output + spec.stage_input   # 2 front stages + STAGE_OUTPUT pack output
+        # 1 (S1 register) + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
+        return (1 + spec.stage_input + spec.stage_normalize + spec.stage_pack + spec.stage_output)
     if spec.kind == "to_int":
         return 4 + spec.stage_input          # does not use _zkf_pack; unaffected by the packer pipeline
     if spec.kind == "resize":
         # Both the widen-only fast path and the _zkf_pack path honor STAGE_OUTPUT; STAGE_INPUT adds the input pipe.
         return spec.stage_output + spec.stage_input
     if spec.kind in {"exp2", "log2"}:
-        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + (STAGE_PRODUCT + STAGE_NORMALIZE for log2,
-        # the t*P split and the extra normalizer barrier) + STAGE_OUTPUT, where D = degree(WMAN) comes from the
-        # generated table. Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has those plus the t*P baseline
-        # stage + 3 back-end = 6 (matches the testbenches).
+        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + extras + STAGE_PACK + STAGE_OUTPUT.
+        # Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has 1 P1 + 3 base for the back-end = 4.
+        # log2 extras: STAGE_PRODUCT (t*P split) + STAGE_NORMALIZE (normshift internal barriers).
         degree = TRANS_SPECS[(spec.kind, spec.wman)]["d"]
-        front = 5 if spec.kind == "exp2" else 6
+        front = 5 if spec.kind == "exp2" else 4
         log2_extra = (spec.stage_product + spec.stage_normalize) if spec.kind == "log2" else 0
-        return spec.stage_input + front + log2_extra + degree * (2 + spec.stage_product) + spec.stage_output
+        return (spec.stage_input + front + log2_extra + degree * (2 + spec.stage_product)
+                + spec.stage_pack + spec.stage_output)
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -685,6 +714,10 @@ def _sn_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_NORMALIZE={spec.stage_normalize}" if spec.stage_normalize else ""
 
 
+def _pa_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_PACK={spec.stage_pack}" if spec.stage_pack else ""
+
+
 def params(spec: ModuleSpec) -> str:
     if spec.kind == "pack":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WEXP_UNBIASED={spec.wexp_unbiased}"
@@ -700,7 +733,7 @@ def params(spec: ModuleSpec) -> str:
         )
     if spec.kind == "mul_ilog2_const":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_sd_suffix(spec)}"
-    if spec.kind in {"from_int", "to_int"}:
+    if spec.kind == "to_int":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
     if spec.kind == "resize":
         return (
@@ -712,12 +745,17 @@ def params(spec: ModuleSpec) -> str:
     if spec.kind == "mul":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_si_suffix(spec)}{_so_suffix(spec)}"
     if spec.kind in {"add", "addsub"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}"
+    if spec.kind == "from_int":
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}"
+                f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}")
     if spec.kind in {"exp2", "log2"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_so_suffix(spec)}"
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_sp_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind == "fma":
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
-                f"{_sp_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}{_so_suffix(spec)}")
+                f"{_sp_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}"
+                f"{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 

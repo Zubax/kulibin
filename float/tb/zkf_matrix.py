@@ -192,7 +192,7 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
 
 
 # --- builders that mirror the former bash helpers -------------------------------------------------
-def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None,
+def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None,
             so=None, target=None, root_module=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
@@ -204,13 +204,15 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
         vlog += [("STAGE_DECODE", sd), ("STAGE_ALIGN", sa)]; suffix += f"_sd{sd}_sa{sa}"
     elif sd is not None:
         vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+    if sn is not None:
+        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count,
                 target=target, root_module=root_module)
 
 
-def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, so=None) -> Run:
+def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
@@ -223,6 +225,8 @@ def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=No
         vlog.append(("STAGE_ALIGN", sa)); suffix += f"_sa{sa}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+    if pa is not None:
+        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
@@ -238,9 +242,13 @@ def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None) -> Run:
     return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
-def _cast(module, sim, tier, base, w, m, wint, kind, count, si, so=None) -> Run:
+def _cast(module, sim, tier, base, w, m, wint, kind, count, si, *, sn=None, pa=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WINT", wint), ("STAGE_INPUT", si)]
     suffix = f"_si{si}"
+    if sn is not None:
+        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+    if pa is not None:
+        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run(module, sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
@@ -259,7 +267,7 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
                 plus_names={"W": "ZKF_PIPE_W", "N": "ZKF_PIPE_N"})
 
 
-def _trans(module, sim, tier, base, w, m, kind, count, *, si=None, sp=None, sn=None, so=None) -> Run:
+def _trans(module, sim, tier, base, w, m, kind, count, *, si=None, sp=None, sn=None, pa=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if si is not None:
@@ -268,6 +276,8 @@ def _trans(module, sim, tier, base, w, m, kind, count, *, si=None, sp=None, sn=N
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+    if pa is not None:
+        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count)
@@ -285,6 +295,12 @@ def _per_pr(sim, out: list) -> None:
             for sa in (0, 1):
                 for cfg, w, m, k, c in BINARY:
                     out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
+        # STAGE_NORMALIZE knob (new): forwards to _zkf_normshift.STAGE_SPLIT for the close-cancel path. SN=1
+        # matches today's silent SS=1 (same latency, different register placement); SN=2 adds an s2x catch-up
+        # cycle. The normshift needs NL4 >= 3 for SN=2, which requires NINPUT = WMAN+3 >= 11 -> WMAN >= 8.
+        for sn in (1,):
+            out.append(_binary(op, sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=sn))
+        out.append(_binary(op, sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
     for sp in (0, 1):
         for si in (0, 1):
             for cfg, w, m, k, c in BINARY:
@@ -296,10 +312,11 @@ def _per_pr(sim, out: list) -> None:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob exercised once (plus all-on) on a fast format. Results are staging-independent, so this
     # validates the out_valid timing of every STAGE_* register without re-running the slow formats.
-    for si, sp, sd, sa, sn, so in [(0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0),
-                                   (0, 0, 1, 0, 0, 0), (0, 0, 0, 1, 0, 0), (0, 0, 0, 0, 1, 0),
-                                   (0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1)]:
-        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
+    for si, sp, sd, sa, sn, pa, so in [(0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0, 0),
+                                       (0, 0, 1, 0, 0, 0, 0), (0, 0, 0, 1, 0, 0, 0), (0, 0, 0, 0, 1, 0, 0),
+                                       (0, 0, 0, 0, 0, 1, 0), (0, 0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1, 1)]:
+        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256,
+                        sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
     # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3, i.e. WMAN >= 7
     # (smaller WMAN collapses its two register barriers and is rejected at elaboration), so it cannot use the w4/m6
     # knob format above. Exercise it at the WMAN=7 guard boundary - the smallest format permitted, and a WINDEX-
@@ -328,10 +345,15 @@ def _per_pr(sim, out: list) -> None:
         out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, sp=1))
         out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, sp=2))
         out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, si=1, sp=1, so=1))
-    # STAGE_NORMALIZE is a log2-only knob (controls the normalizer's STAGE_SPLIT). Cover it on a fast small format
-    # (it needs the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
+    # STAGE_NORMALIZE for log2 controls the normalizer's STAGE_SPLIT. Cover it on a fast small format (it needs
+    # the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sp=1, sn=1))
+    # STAGE_PACK is a new uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2. Exercise it on small
+    # exhaustive formats: standalone and in combination with the other staging knobs.
+    out.append(_trans("exp2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_trans("log2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -342,6 +364,11 @@ def _per_pr(sim, out: list) -> None:
             out.append(_cast("to_int", sim, "pr", cfg, w, m, wint, k, c, si))
         for cfg, wi, mi, wo, mo, k, c in RESIZE:
             out.append(_resize(sim, "pr", cfg, wi, mi, wo, mo, k, c, si))
+    # New uniform knobs on zkf_from_int (STAGE_NORMALIZE forwarded to _zkf_normshift.STAGE_SPLIT, STAGE_PACK
+    # forwarded to _zkf_pack.STAGE_INPUT). Exercise on a fast exhaustive format.
+    out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, sn=1))
+    out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, pa=1))
+    out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=1, sn=1, pa=1))
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))  # one-off
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))

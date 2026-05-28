@@ -1,6 +1,6 @@
 /// Streamed base-2 exponential for the Zubax Kulibin float format: y = 2**x.
 /// Zero-bubble, throughput-1, no backpressure.
-/// Register stages: STAGE_INPUT + 5 + D*(2+STAGE_PRODUCT) + STAGE_OUTPUT, where D depends on WMAN per the table below.
+/// Register stages: STAGE_INPUT+5+D*(2+STAGE_PRODUCT)+STAGE_PACK+STAGE_OUTPUT, where D depends on WMAN.
 /// Behavior:
 ///
 ///   exp2(-inf)   = +0
@@ -11,8 +11,7 @@
 ///
 /// Algorithm:
 ///
-///  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point
-///     value (the zkf_to_int float->fixed front end, keeping the fraction).
+///  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point.
 ///
 ///  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
 ///     table+polynomial core selected by the generate-if below (hdl/_tables/_zkf_exp2_m<WMAN>_d<D>.v).
@@ -23,6 +22,7 @@
 /// ROM read is registered, so no single stage carries both a wide carry chain and a multiply.
 ///
 /// STAGE_PRODUCT={0,1} splits the Horner multiply for timing closure (like zkf_mul).
+/// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
 /// STAGE_OUTPUT={0,1} registers the output.
 
 `default_nettype none
@@ -32,6 +32,7 @@ module zkf_exp2 #(
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
     parameter STAGE_PRODUCT = 0,    // 0: single Horner multiply; 1: split (2x2), +1 stage per degree
+    parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
     parameter STAGE_OUTPUT  = 0     // 0: combinational outputs;  1: registered outputs, +1 stage
 ) (
     input wire clk,
@@ -48,8 +49,8 @@ module zkf_exp2 #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // BIAS / threshold constants below use unsized integer shifts on WEXP; WEXP >= 31 would overflow Verilog's
-        // 32-bit integer constant arithmetic.
+        // BIAS / OOR_THRESHOLD constants below use unsized integer shifts on WEXP; WEXP >= 31 would overflow
+        // Verilog's 32-bit integer constant arithmetic.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_exp2_wexp_too_wide_unportable u_invalid();
         end
@@ -60,131 +61,67 @@ module zkf_exp2 #(
     localparam WFULL = WEXP + WMAN;
     // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
     localparam FF        = WMAN + 12;
-    localparam SHIFT_OFF = FF - WFRAC;          // = 13: shift = e + SHIFT_OFF places the binary point at bit FF
     localparam WEU       = WEXP + 2;            // signed unbiased exponent fed to _zkf_pack
-    localparam WV        = WMAN + WEXP + 14;    // fixed-point value width (>= sig<<lshamt_max and >= i*2^FF)
-    // Signed shift accumulator: must hold shift = e + SHIFT_OFF over e in [-(2^(WEXP-1)), 2^(WEXP-1)] and the
-    // constant SHIFT_OFF = 13, so it needs more than WEXP bits at small WEXP (where 13 dominates).
-    localparam WSH       = WEXP + 7;
-    localparam LSHAMT_MAX = WEXP + 11;          // largest useful left shift (in-range e); larger e is forced anyway
-    localparam WLS       = $clog2(LSHAMT_MAX + 1);
-    localparam WRS       = $clog2(WMAN + 1);    // right shift saturates at WMAN (beyond it the magnitude is 0)
     localparam SBW       = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
 
     localparam integer BIAS    = (1 << (WEXP - 1)) - 1;
     // |x| >= 2^(WEXP-1) is always out of range. exp >= OOR_THRESHOLD <=> e >= WEXP-1 (also true for +/-inf).
     localparam integer OOR_THRESHOLD = BIAS + WEXP - 1;
 
-    // -- Optional input register stage (latch x ahead of the decode/reduction cone).
-    wire             in_valid_q;
-    wire [WFULL-1:0] x_q;
-    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
-        .clk(clk), .rst(rst), .in_valid(in_valid), .in(x), .out_valid(in_valid_q), .out(x_q)
+    // -- Float -> signed fixed-point reduction. _zkf_to_fixpoint owns the decode, the folded-constant shift
+    // predicates (left/right shift selection, left/right overflow clamps), the radix-4 right shifter, the raw left
+    // shifter, and the two internal register stages (S1 decode+clamps; S2 post-shift magnitude+sticky+specials).
+    // WI=WEU and FF=WMAN+12 give the (i, f) layout we need; OOR_EXP_THRESHOLD=OOR_THRESHOLD makes the helper
+    // saturate the magnitude when the integer part of x would not fit in WEU unbiased bits (the result exponent
+    // range), matching the OOR semantics today's hand-rolled front-end implements.
+    wire             rb_valid;
+    // verilator coverage_off
+    // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
+    // feed r0_f directly. The wide intermediate carrier matches zkf_to_int's existing coverage pattern.
+    wire [WEU+FF-1:0] rb_mag;
+    // verilator coverage_on
+    wire             rb_guard_unused;          // FF>0 -> structurally 0; not consumed
+    wire             rb_lost_sticky;
+    wire             rb_sign;
+    wire             rb_is_inf_unused;         // folded into rb_oor by the helper
+    wire             rb_is_zero;
+    wire             rb_oor;
+    _zkf_to_fixpoint #(
+        .WEXP(WEXP), .WMAN(WMAN),
+        .WI(WEU), .FF(FF),
+        .STAGE_INPUT(STAGE_INPUT),
+        .OOR_EXP_THRESHOLD(OOR_THRESHOLD)
+    ) u_to_fixpoint (
+        .clk(clk), .rst(rst),
+        .in_valid(in_valid), .a(x),
+        .out_valid(rb_valid),
+        .mag(rb_mag),
+        .guard(rb_guard_unused),
+        .lost_sticky(rb_lost_sticky),
+        .sign(rb_sign),
+        .is_inf(rb_is_inf_unused),
+        .is_zero(rb_is_zero),
+        .oor(rb_oor)
     );
-
-    // -- Decode and classify.
-    wire             sign_in       = x_q[WFULL-1];
-    wire [WEXP-1:0]  exp_in        = x_q[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] frac_in       = x_q[WFRAC-1:0];
-    wire             is_zero       = ~|exp_in;
-    wire [WMAN-1:0]  sig_in        = {1'b1, frac_in};
-    wire             oor           = exp_in >= OOR_THRESHOLD[WEXP-1:0]; // covers +/-inf and gross over/underflow
-    wire             force_inf_in  = oor & ~sign_in;                    // +inf or positive overflow
-    wire             force_zero_in = oor &  sign_in;                    // -inf or negative underflow
-
-    // -- Argument reduction, stage RA (combinational): compute the shift amounts as parallel single subtracts/compares
-    // of exp against folded constants (the zkf_to_int approach), instead of a dependent e->shift->abs->clamp chain.
-    // The binary point goes at bit FF, so shift = (e - WFRAC) + FF = e + SHIFT_OFF = exp - C_SHIFT.
-    localparam integer C_SHIFT = BIAS - SHIFT_OFF;   // shift = exp - C_SHIFT
-    localparam integer RUNDER  = C_SHIFT - WMAN;     // exp < RUNDER  => the right shift saturates (amount > WMAN)
-    localparam integer MAX_EXP = (1 << WEXP) - 1;
     // verilator coverage_off
-    wire signed [WSH-1:0] exp_ext   = $signed({1'b0, exp_in});
-    wire signed [WSH-1:0] c_shift_s = $signed(C_SHIFT[WSH-1:0]);
-    wire signed [WSH-1:0] left_amt  = exp_ext - c_shift_s;          // = shift (>= 0 for a left shift)
-    wire signed [WSH-1:0] right_amt = c_shift_s - exp_ext;          // = -shift (> 0 for a right shift)
-    wire is_left;
-    wire rsh_over;
-    // verilator coverage_on
-    generate
-        if (C_SHIFT <= 0)           begin : g_left_always  assign is_left  = 1'b1; end
-        else if (C_SHIFT > MAX_EXP) begin : g_left_never   assign is_left  = 1'b0; end
-        else                        begin : g_left_cmp     assign is_left  = exp_in >= C_SHIFT[WEXP-1:0]; end
-        if (RUNDER <= 0)            begin : g_rover_never  assign rsh_over = 1'b0; end
-        else if (RUNDER > MAX_EXP)  begin : g_rover_always assign rsh_over = 1'b1; end
-        else                        begin : g_rover_cmp    assign rsh_over = exp_in < RUNDER[WEXP-1:0]; end
-    endgenerate
-    // The left shift saturates exactly when the input is out of range (LSHAMT_MAX = the max in-range left shift), so
-    // lsh_over == oor. lshamt/rshamt are don't-care for the non-selected direction (mag_v picks one), so the clamps
-    // need only be correct in their own direction.
-    wire [WLS-1:0] lshamt = oor      ? LSHAMT_MAX[WLS-1:0] : left_amt[WLS-1:0];
-    wire [WRS-1:0] rshamt = rsh_over ? WMAN[WRS-1:0]       : right_amt[WRS-1:0];
-
-    // -- Stage RA register: capture the shift amounts and significand, separating the amount computation from the
-    // barrel shift so neither stage carries both a wide carry chain and a wide variable shift.
-    reg                 ra_valid;
-    reg                 ra_sign;
-    reg                 ra_is_left;
-    reg [WMAN-1:0]      ra_sig;
-    reg [WLS-1:0]       ra_lshamt;
-    reg [WRS-1:0]       ra_rshamt;
-    reg                 ra_force_inf;
-    reg                 ra_force_zero;
-    reg                 ra_is_zero;
-    always @(posedge clk) begin
-        if (rst) ra_valid <= 1'b0;
-        else     ra_valid <= in_valid_q;
-        ra_sign       <= sign_in;
-        ra_is_left    <= is_left;
-        ra_sig        <= sig_in;
-        ra_lshamt     <= lshamt;
-        ra_rshamt     <= rshamt;
-        ra_force_inf  <= force_inf_in;
-        ra_force_zero <= force_zero_in;
-        ra_is_zero    <= is_zero;
-    end
-
-    // -- Stage RB1 (combinational): apply the barrel shift to form the magnitude |x| * 2^FF.
-    // verilator coverage_off
-    wire [WMAN-1:0]  f_right        = ra_sig >> ra_rshamt;
-    wire [WMAN-1:0]  drop_mask      = ~({WMAN{1'b1}} << ra_rshamt);     // low ra_rshamt bits set
-    wire             right_lost     = |(ra_sig & drop_mask);
-    wire [WV-1:0]    mag_left       = {{(WV-WMAN){1'b0}}, ra_sig} << ra_lshamt;
-    wire [WV-1:0]    mag_right      = {{(WV-WMAN){1'b0}}, f_right};
-    wire [WV-1:0]    mag_v          = ra_is_left ? mag_left : mag_right;
-    wire             lost_sticky_in = ra_is_left ? 1'b0 : right_lost;
+    wire _unused_exp2 = &{1'b0, rb_guard_unused, rb_is_inf_unused, 1'b0};
     // verilator coverage_on
 
-    // -- Stage RB1 register: capture the shifted magnitude, separating the barrel shift from the negate/split.
-    reg                  rb_valid;
+    // -- RB2 combinational: form the signed two's-complement value, then split into the signed integer part i and
+    // the unsigned fraction f. Negating an unsigned magnitude gives correct signed floor semantics for negative x:
+    // floor(-3.25) maps to -4 because the slice picks up the sign-extended integer bits. The OOR cases are routed
+    // via rb_oor downstream (force_inf for positive overflow, force_zero for negative), so the magnitude and split
+    // for those inputs are don't-care.
     // verilator coverage_off
-    reg        [WV-1:0]  rb_mag;
+    wire signed [WEU+FF:0]   v_signed = rb_sign ? (~{1'b0, rb_mag} + {{(WEU+FF){1'b0}}, 1'b1}) : {1'b0, rb_mag};
+    wire signed [WEU:0]      i_full   = v_signed[WEU+FF:FF];
+    wire [FF-1:0]            f_bits   = v_signed[FF-1:0];
     // verilator coverage_on
-    reg                  rb_sign;
-    reg                  rb_force_inf;
-    reg                  rb_force_zero;
-    reg                  rb_is_zero;
-    reg                  rb_lost;
-    always @(posedge clk) begin
-        if (rst) rb_valid <= 1'b0;
-        else     rb_valid <= ra_valid;
-        rb_mag        <= mag_v;
-        rb_sign       <= ra_sign;
-        rb_force_inf  <= ra_force_inf;
-        rb_force_zero <= ra_force_zero;
-        rb_is_zero    <= ra_is_zero;
-        rb_lost       <= lost_sticky_in;
-    end
+    wire signed [WEU-1:0]    i_clamped     = i_full[WEU-1:0];   // |i| < 2^(WEXP-1) for in-range inputs (oor=0)
+    wire                     force_inf_in  = rb_oor & ~rb_sign; // +inf / positive overflow
+    wire                     force_zero_in = rb_oor &  rb_sign; // -inf / negative underflow
 
-    // -- Stage RB2 (combinational): two's-complement value, split into i = floor and the FF-bit fraction f.
-    // verilator coverage_off
-    wire signed [WV:0]    v_signed = rb_sign ? (~{1'b0, rb_mag} + {{WV{1'b0}}, 1'b1}) : {1'b0, rb_mag};
-    wire signed [WV-FF:0] i_full   = v_signed[WV:FF];              // = floor(x) (oversized; truncated to WEU below)
-    wire [FF-1:0]         f_bits   = v_signed[FF-1:0];
-    // verilator coverage_on
-    wire signed [WEU-1:0] i_clamped = i_full[WEU-1:0];             // |i| < 2^(WEXP-1) for in-range inputs
-
-    // -- Stage RB2 register: the reduction result feeding the pipelined evaluator.
+    // -- Stage r0 register: the reduction result feeding the pipelined evaluator. Mirrors today's r0 layout.
     reg                  r0_valid;
     reg signed [WEU-1:0] r0_i;
     reg        [FF-1:0]  r0_f;
@@ -197,10 +134,10 @@ module zkf_exp2 #(
         else     r0_valid <= rb_valid;
         r0_i          <= i_clamped;
         r0_f          <= f_bits;
-        r0_force_inf  <= rb_force_inf;
-        r0_force_zero <= rb_force_zero;
+        r0_force_inf  <= force_inf_in;
+        r0_force_zero <= force_zero_in;
         r0_is_zero    <= rb_is_zero;
-        r0_lost       <= rb_lost;
+        r0_lost       <= rb_lost_sticky;
     end
 
     // -- Pipelined evaluator: 2**f significand + GRS. The sideband {i, force_inf, force_zero, is_zero, lost} is delayed
@@ -290,7 +227,10 @@ module zkf_exp2 #(
     wire                  pack_r   = e_is_zero ? 1'b0 : eval_round;
     wire                  pack_s   = e_is_zero ? 1'b0 : (eval_sticky | e_lost);
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
+    _zkf_pack #(
+        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU),
+        .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(ev_valid),

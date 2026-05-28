@@ -1,29 +1,28 @@
 /// Streamed Zubax Kulibin float adder.
-/// Register stages: 4+STAGE_DECODE+STAGE_ALIGN+STAGE_OUTPUT end-to-end.
+///
+/// Register stages: 4+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT
 ///
 /// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).
-/// STAGE_OUTPUT=1: one register stage at the output; good if the module feeds long external combinational paths.
+/// STAGE_OUTPUT=1: one register stage at the output (+1 cycle).
 ///
-/// STAGE_DECODE=0: per-operand decode (sign, exponent classification, significand extraction, exponent compare)
-/// feeds the s0 capture combinationally — input flop → decode → mux/subtract → s0 register sits in one clock period.
-///
-/// STAGE_DECODE=1: registers the full decoded-operand bundle (per-operand keys, classification flags, exponent
-/// compare results) between the raw decode and the s0 capture. Costs one extra pipeline cycle.
-/// Useful when the pre-shifter exponent-compare/mux/subtract chain misses timing at wide WMAN.
+/// STAGE_DECODE=0: per-operand decode feeds the s0 capture combinationally.
+/// STAGE_DECODE=1: registers the full decoded-operand bundle between the raw decode and the s0 capture (+1 cycle).
 ///
 /// STAGE_ALIGN=0: single-cycle alignment shifter (radix-4 cascade combinational).
+/// STAGE_ALIGN=1: registers one stage inside the alignment shifter, splitting the radix-4 cascade  (+1 cycle).
 ///
-/// STAGE_ALIGN=1: registers one stage inside the alignment shifter, splitting the radix-4 cascade across two clock
-/// periods. Costs one extra pipeline cycle. Useful when the wide-WMAN alignment path misses timing.
+/// STAGE_NORMALIZE={0,1,2}: number of internal register barriers in the close-cancellation _zkf_normshift cascade
+/// (direct forward to _zkf_normshift.STAGE_SPLIT). Adds STAGE_NORMALIZE cycles.
 
 `default_nettype none
 
 module zkf_add #(
-    parameter WEXP         = 6,    // exponent field width
-    parameter WMAN         = 18,   // significand precision including the hidden bit
-    parameter STAGE_DECODE = 0,    // 0 = decode feeds s0 combinationally; 1 = registered decoded bundle (+1 cycle)
-    parameter STAGE_ALIGN  = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
-    parameter STAGE_OUTPUT = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter WEXP            = 6,    // exponent field width
+    parameter WMAN            = 18,   // significand precision including the hidden bit
+    parameter STAGE_DECODE    = 0,    // 0 = decode feeds s0 combinationally; 1 = registered decoded bundle (+1 cycle)
+    parameter STAGE_ALIGN     = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
+    parameter STAGE_NORMALIZE = 0,    // {0,1,2} internal close-cancel normshift barriers
+    parameter STAGE_OUTPUT    = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
     input wire rst,
@@ -301,12 +300,38 @@ module zkf_add #(
     wire s2_add_round  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-2]    :   s2_raw_result[NORM_TOP-WMAN-1];
     wire s2_add_sticky = s2_add_carry ? (|s2_raw_result[WRAW-WMAN-3:0]) : (|s2_raw_result[NORM_TOP-WMAN-2:0]);
 
-    // The sub path's close-cancellation normalize is the fused _zkf_normshift instantiated in the s3 region below: its
-    // internal STAGE_SPLIT register sits on the s2->s3 boundary (replacing the former s3_raw_result and shift-count
-    // registers), so it scans and shifts the same low NINPUT = WMAN+3 bits of the raw result a separate LOD used to
-    // scan. A leading 1 above bit NORM_TOP is impossible after a close-cancellation subtraction. Only the add path's
-    // exponent adjust is resolved in this s2 cone; the sub path's exponent correction moves to the s3 cone where the
-    // normalize count becomes available.
+    // Add-path s2x catch-up chain: a STAGE_NORMALIZE-deep register pipe that delays the s2 add-path signals by
+    // exactly the same number of cycles the sub-path spends inside the normshift, so both paths arrive at the s3
+    // register boundary aligned. STAGE_NORMALIZE=0 is a pure passthrough (no registers); each unit adds 1 cycle.
+    // Bundle: {sign, same_sign, force_zero, force_inf} + exp_biased + add_exp_biased + add_significand + GRS.
+    localparam Q_W = 4 + 2*WEXP + WMAN + 3;
+    wire [Q_W-1:0] s2_q_in  = {s2_sign, s2_same_sign, s2_force_zero, s2_force_inf,
+                                s2_exp_biased, s2_add_exp_biased, s2_add_significand,
+                                s2_add_guard, s2_add_round, s2_add_sticky};
+    wire           q_valid;
+    wire [Q_W-1:0] q_out;
+    _zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
+        .clk(clk), .rst(rst),
+        .in_valid(s2_valid), .in(s2_q_in),
+        .out_valid(q_valid), .out(q_out)
+    );
+    wire                q_sign              = q_out[Q_W-1];
+    wire                q_same_sign         = q_out[Q_W-2];
+    wire                q_force_zero        = q_out[Q_W-3];
+    wire                q_force_inf         = q_out[Q_W-4];
+    wire     [WEXP-1:0] q_exp_biased        = q_out[Q_W-5 -: WEXP];
+    wire     [WEXP-1:0] q_add_exp_biased    = q_out[Q_W-5-WEXP -: WEXP];
+    wire     [WMAN-1:0] q_add_significand   = q_out[Q_W-5-2*WEXP -: WMAN];
+    wire                q_add_guard         = q_out[2];
+    wire                q_add_round         = q_out[1];
+    wire                q_add_sticky        = q_out[0];
+
+    // The sub path's close-cancellation normalize lives in the s3 region below. STAGE_NORMALIZE directly forwards
+    // to its STAGE_SPLIT (0/1/2 internal register barriers). For SN=0 the cascade is combinational and an explicit
+    // s3-boundary register is added below so its zero/count/aligned outputs are aligned with the registered
+    // add-path; for SN>=1 the normshift's internal register provides that alignment. A leading 1 above bit NORM_TOP
+    // is impossible after a close-cancellation subtraction. Only the add path's exponent adjust is resolved in this
+    // s2 cone; the sub path's exponent correction moves to the s3 cone where the normalize count becomes available.
     localparam NORM_TOP_INT = WMAN + 2;
     localparam NINPUT       = NORM_TOP_INT + 1;
 
@@ -323,23 +348,35 @@ module zkf_add #(
     reg                            s3_add_round;
     reg                            s3_add_sticky;
 
-    // Sub-path close-cancellation normalize: fused leading-zero count + left shift. STAGE_SPLIT=1 puts one register
-    // inside the cascade on the s2->s3 boundary, so its zero/count/aligned outputs are valid in this s3 cone, aligned
-    // with the registered add-path results. The input is the same low NINPUT = WMAN+3 bits of the raw result; the
-    // count it reports is the left-shift that brings the leading 1 to bit NORM_TOP, exactly as the former LOD+shift.
-    wire                s3_sub_zero;
-    wire   [WINDEX-1:0] s3_sub_shift;
+    // Sub-path close-cancellation normalize: fused leading-zero count + left shift. STAGE_NORMALIZE forwards
+    // directly to _zkf_normshift.STAGE_SPLIT (0/1/2 internal register barriers).
+    wire                norm_sub_zero;
+    wire   [WINDEX-1:0] norm_sub_shift;
     // verilator coverage_off
     // Normalized magnitude; its slices feed the covered significand/GRS below.
-    wire   [NINPUT-1:0] s3_sub_aligned;
+    wire   [NINPUT-1:0] norm_sub_aligned;
     // verilator coverage_on
-    _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(1)) u_sub_norm (
+    _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE)) u_sub_norm (
         .clk(clk),
         .x(s2_raw_result[NINPUT-1:0]),
-        .zero(s3_sub_zero),
-        .count(s3_sub_shift),
-        .y(s3_sub_aligned)
+        .zero(norm_sub_zero),
+        .count(norm_sub_shift),
+        .y(norm_sub_aligned)
     );
+
+    // s3-aligned sub-path signals. The sub-path is ALWAYS registered at the s3 boundary, even when STAGE_NORMALIZE
+    // is 0 (normshift combinational), so the total sub-path delay from s2 is STAGE_NORMALIZE + 1 cycles, matching
+    // the add-path's s2x (depth STAGE_NORMALIZE) + s3 register.
+    reg                 s3_sub_zero;
+    reg    [WINDEX-1:0] s3_sub_shift;
+    // verilator coverage_off
+    reg    [NINPUT-1:0] s3_sub_aligned;
+    // verilator coverage_on
+    always @(posedge clk) begin
+        s3_sub_zero    <= norm_sub_zero;
+        s3_sub_shift   <= norm_sub_shift;
+        s3_sub_aligned <= norm_sub_aligned;
+    end
     wire [WMAN-1:0] s3_sub_significand = s3_sub_aligned[NINPUT-1 -: WMAN];
     wire            s3_sub_guard       = s3_sub_aligned[2];
     wire            s3_sub_round       = s3_sub_aligned[1];
@@ -388,7 +425,8 @@ module zkf_add #(
     );
 
     // Reset only stream validity. Payload registers intentionally free-run. s0b_valid is reset
-    // inside the generate block above when STAGE_ALIGN!=0; this always block only manages s0/s1/s2/s3.
+    // inside the generate block above when STAGE_ALIGN!=0; this always block only manages s0/s1/s2/s3. s2x is its
+    // own conditional generate block (above) and resets its valid there when STAGE_NORMALIZE==2.
     always @(posedge clk) begin
         if (rst) begin
             s0_valid <= 1'b0;
@@ -399,7 +437,7 @@ module zkf_add #(
             s0_valid <= d_valid;
             s1_valid <= s0b_valid;
             s2_valid <= s1_valid;
-            s3_valid <= s2_valid;
+            s3_valid <= q_valid;
         end
 
         // Stage 0 capture: magnitude-ordered operands, exponent delta, and special-case controls.
@@ -437,17 +475,19 @@ module zkf_add #(
         s2_exp_biased        <= s1_exp_biased;
         s2_raw_result        <= s1_raw_result;
 
-        // Stage 3 capture: add-path normalization and subtract-path shift metadata.
-        s3_sign              <= s2_sign;
-        s3_same_sign         <= s2_same_sign;
-        s3_force_zero        <= s2_force_zero;
-        s3_force_inf         <= s2_force_inf;
-        s3_exp_biased        <= s2_exp_biased;
-        s3_add_exp_biased    <= s2_add_exp_biased;
-        s3_add_significand   <= s2_add_significand;
-        s3_add_guard         <= s2_add_guard;
-        s3_add_round         <= s2_add_round;
-        s3_add_sticky        <= s2_add_sticky;
+        // Stage 3 capture: add-path normalization and subtract-path shift metadata. Inputs come from q_*, which is
+        // the s2 add-path delayed by STAGE_NORMALIZE cycles through the s2x catch-up pipe, so it stays aligned
+        // with the sub-path's normshift output at the s3 register boundary.
+        s3_sign              <= q_sign;
+        s3_same_sign         <= q_same_sign;
+        s3_force_zero        <= q_force_zero;
+        s3_force_inf         <= q_force_inf;
+        s3_exp_biased        <= q_exp_biased;
+        s3_add_exp_biased    <= q_add_exp_biased;
+        s3_add_significand   <= q_add_significand;
+        s3_add_guard         <= q_add_guard;
+        s3_add_round         <= q_add_round;
+        s3_add_sticky        <= q_add_sticky;
     end
 endmodule
 

@@ -55,6 +55,26 @@ other modules since they always canonicalize inputs, but it is worth noting.
 | `zkf_exp2`            | `2**x`                                                         | Faithful rounding, see below|
 | `zkf_log2`            | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
 
+### Notably absent modules
+
+The following modules are expected to appear because they are the missing primitives needed to access a huge variety
+of transcendental and trigonometric functions:
+`zkf_divmod`, `zkf_sincos` (maybe `zkf_sincos_phase(phi)` for some fixed-point phase modulo 1), `zkf_atan2`.
+Modulo-pi range reduction is needed for basic trig operators and is provided by divmod.
+From these we get:
+
+    exp(x)      = exp2(x * log2(e))
+    log_b(x)    = log2(x) / log2(b)
+    pow(a,b)    = exp2(b * log2(a))
+    sqrt(x)     = exp2(log2(x) * 2^-1)
+
+    tan(x)      = sin(x) / cos(x)
+    atan(x)     = atan2(x, 1)
+    asin(x)     = atan2(x, sqrt(1 - x*x))
+    acos(x)     = atan2(sqrt(1 - x*x), x)
+
+And so on.
+
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`

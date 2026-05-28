@@ -358,10 +358,11 @@ async def add_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    # zkf_add: 4 stages + STAGE_OUTPUT (registered pack output) + STAGE_DECODE (decoded-operand register)
-    # + STAGE_ALIGN (alignment shifter split). Each knob clamps to 1 when set >1.
+    # zkf_add: 4 stages + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_OUTPUT.
     register_stages = (4 + context.stage_output
-                       + (1 if context.stage_decode >= 1 else 0) + (1 if context.stage_align >= 1 else 0))
+                       + (1 if context.stage_decode >= 1 else 0)
+                       + (1 if context.stage_align >= 1 else 0)
+                       + context.stage_normalize)
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddCase) -> dict[str, int]:

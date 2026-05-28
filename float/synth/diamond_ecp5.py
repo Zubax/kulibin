@@ -132,7 +132,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_LST_MaxFanout": "1000",
         "PROP_LST_MuxStyle": "Auto",
         "PROP_LST_NumCriticalPaths": "10",
-        "PROP_LST_OptimizeGoal": "Balanced",
+        "PROP_LST_OptimizeGoal": "Timing",
         "PROP_LST_PropagatConst": "True",
         "PROP_LST_RAMStyle": "Auto",
         "PROP_LST_ROMStyle": "Auto",
@@ -166,7 +166,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_PAR_MultiSeedSortMode": "Worst Slack",
         "PROP_PAR_NewRouteParDes": "NBR",
         "PROP_PAR_PARClockSkew": "Off",
-        "PROP_PAR_PlcIterParDes": "2",
+        "PROP_PAR_PlcIterParDes": "5",
         "PROP_PAR_PlcStCostTblParDes": "1",
         "PROP_PAR_PrefErrorOut": "False",
         "PROP_PAR_RoutePassParDes": str(DIAMOND_ROUTE_PASSES),
@@ -494,9 +494,9 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
         + f"<p>Flow: Lattice Diamond LSE (device per module; default {escape(DIAMOND_DEVICE)}) at "
-        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Balanced, "
-        + f"MAP register retiming is enabled, PAR placement effort is {DIAMOND_PAR_EFFORT}, and routing passes are "
-        + f"{DIAMOND_ROUTE_PASSES}.</p>"
+        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Timing, "
+        + f"MAP register retiming is enabled, PAR placement effort is {DIAMOND_PAR_EFFORT} with 5 placement seeds, "
+        + f"and routing passes are {DIAMOND_ROUTE_PASSES}.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
 every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead

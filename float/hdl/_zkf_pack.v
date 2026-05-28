@@ -1,12 +1,19 @@
 /// Pack a normalized unsigned significand into float with infinity and rounding to nearest.
 /// The exact finite input value before rounding is: (-1)^sign * 1.significand_fraction * 2^exp_unbiased
 ///
+/// Number of stages = STAGE_INPUT+STAGE_OUTPUT. Pure comb is possible, in which case clk/rst are ignored.
+///
 /// The significand input includes the hidden bit. The guard/round/sticky inputs carry the discarded tail bits.
 /// force_zero and force_inf override the finite value; force_zero wins if both are asserted.
 ///
 /// The output is canonical zero for zero or finite magnitudes below 0.5*MIN_NORMAL, signed MIN_NORMAL for finite
 /// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
 /// canonical signed infinity for exponent overflow. Subnormals are not generated.
+///
+/// STAGE_INPUT=0: the packer's combinational cone starts immediately at the input ports (default).
+/// STAGE_INPUT=1: insert one register stage in front of the rounding/saturation cone. Useful when the caller wants
+///     to isolate the packer's rounder from a wide upstream cone (e.g. a close-cancellation normalize). The
+///     accompanying `_zkf_pack_delay` accepts the same parameter so any sideband payload can ride the same delay.
 ///
 /// STAGE_OUTPUT=0: the output is combinational, zero cycle latency (default).
 /// STAGE_OUTPUT=1: one register stage at the output.
@@ -23,6 +30,7 @@ module _zkf_pack #(
     parameter WMAN          = 18,         // significand precision including the hidden bit
     parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
     parameter EXP_IS_BIASED = 0,          // see above
+    parameter STAGE_INPUT   = 0,          // 0 = combinational inputs (default); 1 = one register stage at the input
     parameter STAGE_OUTPUT  = 0           // 0 = combinational output (default); 1 = registered output (one stage)
 )(
     input  wire clk,
@@ -57,13 +65,71 @@ module _zkf_pack #(
     localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
     localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
+    // Optional input register stage. When STAGE_INPUT=1, the input ports are captured here and the rest of the
+    // packer's combinational cone runs from the registered copies; this isolates a wide upstream cone (e.g. a
+    // close-cancellation normalize) from the rounder/saturation cone below. Reset clears only stream validity;
+    // payload registers free-run per project policy (control-only reset).
+    wire                            i_valid;
+    wire                            i_sign;
+    wire                            i_force_zero;
+    wire                            i_force_inf;
+    wire signed [WEXP_UNBIASED-1:0] i_exp_unbiased;
+    wire                 [WMAN-1:0] i_significand;
+    wire                            i_guard;
+    wire                            i_round;
+    wire                            i_sticky;
+    generate
+        if (STAGE_INPUT != 0) begin : g_in_reg
+            reg                            valid_r;
+            reg                            sign_r;
+            reg                            force_zero_r;
+            reg                            force_inf_r;
+            reg signed [WEXP_UNBIASED-1:0] exp_r;
+            reg                 [WMAN-1:0] sig_r;
+            reg                            guard_r;
+            reg                            round_r;
+            reg                            sticky_r;
+            always @(posedge clk) begin
+                if (rst) valid_r <= 1'b0;
+                else     valid_r <= in_valid;
+                sign_r       <= sign;
+                force_zero_r <= force_zero;
+                force_inf_r  <= force_inf;
+                exp_r        <= exp_unbiased;
+                sig_r        <= significand;
+                guard_r      <= guard;
+                round_r      <= round;
+                sticky_r     <= sticky;
+            end
+            assign i_valid        = valid_r;
+            assign i_sign         = sign_r;
+            assign i_force_zero   = force_zero_r;
+            assign i_force_inf    = force_inf_r;
+            assign i_exp_unbiased = exp_r;
+            assign i_significand  = sig_r;
+            assign i_guard        = guard_r;
+            assign i_round        = round_r;
+            assign i_sticky       = sticky_r;
+        end else begin : g_in_comb
+            assign i_valid        = in_valid;
+            assign i_sign         = sign;
+            assign i_force_zero   = force_zero;
+            assign i_force_inf    = force_inf;
+            assign i_exp_unbiased = exp_unbiased;
+            assign i_significand  = significand;
+            assign i_guard        = guard;
+            assign i_round        = round;
+            assign i_sticky       = sticky;
+        end
+    endgenerate
+
     // Input combinational exponent classification. Values exactly one exponent below the normal range are at or above
     // the zero/MIN_NORMAL midpoint, so they round directly to MIN_NORMAL. Lower exponents round to canonical zero.
     // bias_ext is a compile-time-constant bias widened with constant padding.
     // verilator coverage_off
     wire signed [WEXP_BIASED_EXT-1:0] bias_ext         = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
     // verilator coverage_on
-    wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext = {exp_unbiased[WEXP_UNBIASED-1], exp_unbiased};
+    wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext = {i_exp_unbiased[WEXP_UNBIASED-1], i_exp_unbiased};
     // EXP_IS_BIASED callers pass the signed biased exponent directly (already sign-extended by the wider field), so the
     // bias add is skipped; the parameter is constant so this is a compile-time select, not a runtime mux.
     wire signed [WEXP_BIASED_EXT-1:0] exp_biased_ext = EXP_IS_BIASED ? exp_unbiased_ext : (exp_unbiased_ext + bias_ext);
@@ -87,24 +153,24 @@ module _zkf_pack #(
     // denormalized input stays out of the exponent, matching the reference. A round-carry at exp_biased ==
     // EXP_MAX_FINITE lands the exponent on EXP_INF with fraction 0 - canonical infinity - on the normal path.
     localparam WEXPSIG = WEXP + WMAN;
-    wire               round_increment = guard && (round || sticky || significand[0]);
-    wire [WEXPSIG-1:0] expsig          = {exp_biased, significand};
+    wire               round_increment = i_guard && (i_round || i_sticky || i_significand[0]);
+    wire [WEXPSIG-1:0] expsig          = {exp_biased, i_significand};
     wire [WEXPSIG-1:0] expsig_rounded  = expsig + {{(WEXPSIG-1){1'b0}}, round_increment};
     wire    [WEXP-1:0] exp_rounded     = expsig_rounded[WEXPSIG-1 -: WEXP];
     wire   [WFRAC-1:0] frac_rounded    = expsig_rounded[WFRAC-1:0];
-    wire               infinity        = force_inf || exp_overflow;
+    wire               infinity        = i_force_inf || exp_overflow;
 
     // Result classification. force_zero wins over force_inf; a tiny finite magnitude exactly one exponent below the
     // normal range rounds to signed MIN_NORMAL, anything lower to canonical +0.
-    wire result_zero       = force_zero || (!force_inf && exp_underflow_zero);
+    wire result_zero       = i_force_zero || (!i_force_inf && exp_underflow_zero);
     wire result_infinity   = !result_zero && infinity;
-    wire result_min_normal = !result_zero && !force_inf && exp_one_below_min;
+    wire result_min_normal = !result_zero && !i_force_inf && exp_one_below_min;
     wire result_normal     = !result_zero && !result_infinity && !result_min_normal;
 
     // Canonicalize by masking instead of a full-width 4:1 output mux: the stored fraction is nonzero only for normal
     // results, so it collapses to an AND-mask; the exponent selects one of three small constants or the rounded
     // exponent; the sign is forced to 0 only for canonical +0. This keeps the wide fraction field off the mux tree.
-    wire             out_sign = sign & ~result_zero;
+    wire             out_sign = i_sign & ~result_zero;
     wire [WEXP-1:0]  out_exp  = result_zero       ? {WEXP{1'b0}} :
                                 result_infinity   ? EXP_INF :
                                 result_min_normal ? {{(WEXP-1){1'b0}}, 1'b1} :
@@ -118,7 +184,7 @@ module _zkf_pack #(
             reg [WFULL-1:0] y_r;
             always @(posedge clk) begin
                 if (rst) out_valid_r <= 1'b0;
-                else     out_valid_r <= in_valid;
+                else     out_valid_r <= i_valid;
                 y_r <= {out_sign, out_exp, out_frac};
             end
             assign out_valid = out_valid_r;
@@ -126,27 +192,35 @@ module _zkf_pack #(
         end else begin : g_out_comb
             // Combinational output: out_valid is gated by rst so the stream-control contract (no output during reset)
             // still holds without a register; the payload y is reset-independent, as on the registered path.
-            assign out_valid = in_valid & ~rst;
+            assign out_valid = i_valid & ~rst;
             assign y         = {out_sign, out_exp, out_frac};
         end
     endgenerate
 endmodule
 
-/// Delay a sideband payload through the same output stage as _zkf_pack: pass STAGE_OUTPUT to match it.
-/// When changing the packer pipeline, update this one as well.
+/// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
+/// to match it. When changing the packer pipeline, update this one as well.
 /// The reset can be tied off to zero if the delay is not used for carrying control signals.
-module _zkf_pack_delay#(parameter W = 1, parameter STAGE_OUTPUT = 0)(
+/// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
+module _zkf_pack_delay#(parameter W = 1, parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0)(
     input wire clk, input wire rst, input wire [W-1:0] x, output wire [W-1:0] y);
+    localparam N = STAGE_INPUT + STAGE_OUTPUT;
     generate
-        if (STAGE_OUTPUT != 0) begin : g_reg
-            reg [W-1:0] y_r;
+        if (N != 0) begin : g_reg
+            reg [W-1:0] y_r [0:N-1];
+            integer i;
             always @(posedge clk) begin
                 // verilator coverage_off
-                if (rst) y_r <= {W{1'b0}};
+                if (rst) begin
+                    for (i = 0; i < N; i = i + 1) y_r[i] <= {W{1'b0}};
+                end
                 // verilator coverage_on
-                else     y_r <= x;
+                else begin
+                    y_r[0] <= x;
+                    for (i = 1; i < N; i = i + 1) y_r[i] <= y_r[i-1];
+                end
             end
-            assign y = y_r;
+            assign y = y_r[N-1];
         end else begin : g_comb
             assign y = x;
         end

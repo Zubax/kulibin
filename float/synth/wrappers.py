@@ -221,6 +221,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -294,6 +295,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -372,6 +374,7 @@ module {spec.top} (
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -867,6 +870,8 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .WINT({wint}),
         .STAGE_INPUT({spec.stage_input}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -1061,6 +1066,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -1136,6 +1142,7 @@ module {spec.top} (
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),

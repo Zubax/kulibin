@@ -1,20 +1,28 @@
 /// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
-/// Register stages: 2+STAGE_INPUT+STAGE_OUTPUT end-to-end.
+///
+/// Register stages: 1+STAGE_INPUT+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT.
 ///
 /// STAGE_INPUT=0: input combinational paths are exposed.
-/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
+/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (+1 cycle).
 ///
-/// STAGE_OUTPUT=0: outputs are combinational (default)
-/// STAGE_OUTPUT=1: registered (one extra cycle).
+/// STAGE_NORMALIZE=0/1/2: number of internal register stages inside normshift (forward to _zkf_normshift.STAGE_SPLIT).
+///
+/// STAGE_PACK=0: pack inputs are combinational (default).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+///
+/// STAGE_OUTPUT=0: outputs are combinational (default).
+/// STAGE_OUTPUT=1: registered (+1 cycle).
 
 `default_nettype none
 
 module zkf_from_int #(
-    parameter WEXP         = 6,
-    parameter WMAN         = 18,
-    parameter WINT         = 32,
-    parameter STAGE_INPUT  = 0,
-    parameter STAGE_OUTPUT = 0
+    parameter WEXP            = 6,
+    parameter WMAN            = 18,
+    parameter WINT            = 32,
+    parameter STAGE_INPUT     = 0,
+    parameter STAGE_NORMALIZE = 0,
+    parameter STAGE_PACK      = 0,
+    parameter STAGE_OUTPUT    = 0
 ) (
     input wire clk,
     input wire rst,
@@ -36,11 +44,11 @@ module zkf_from_int #(
     // Magnitude container width: must be at least WINT (to hold |a|, including |INT_MIN| = 2^(WINT-1))
     // and at least WMAN+3 so a static slice of [WX-WMAN-3:0] always provides at least one sticky bit.
     localparam WX    = (WINT > (WMAN + 3)) ? WINT : (WMAN + 3);
-    localparam WIDX  = $clog2(WX);
-    // The biased exponent fed to _zkf_pack is the leading-one position plus BIAS, maxing at (WX-1)+BIAS. WEU must hold
-    // that as a non-negative signed value so the packer reads it positive (and its overflow detector fires) for the
-    // widest operands, and must also meet the packer's internal minimum of WEXP+2 signed bits. Sizing from the bare
-    // position (WIDX+1) under-counts by BIAS and silently wraps wide-WINT operands to a spurious negative (underflow).
+    // The biased exponent fed to _zkf_pack is the leading-one position plus BIAS, maxing at (WX-1)+BIAS. WEU must
+    // hold that as a non-negative signed value so the packer reads it positive (and its overflow detector fires)
+    // for the widest operands, and must also meet the packer's intrinsic minimum of WEXP+2 signed bits. Sizing
+    // from the bare position (clog2(WX)+1) under-counts by BIAS and silently wraps wide-WINT operands to a
+    // spurious negative (underflow).
     localparam EXP_BIASED_MAX = (WX - 1) + ((1 << (WEXP - 1)) - 1);
     localparam WEU_LOD        = $clog2(EXP_BIASED_MAX + 1) + 1;
     localparam WEU            = (WEU_LOD > (WEXP + 2)) ? WEU_LOD : (WEXP + 2);
@@ -58,7 +66,8 @@ module zkf_from_int #(
     // verilator coverage_off
     // Magnitude formation: the WX-wide carrier zero-extends the WINT magnitude (WX>WINT padding is
     // constant), and at wide WINT the random stimulus does not toggle every high bit both ways. The
-    // magnitude flows into the LOD and the significand/GRS extraction below, which stay covered.
+    // magnitude flows into the normshift inside _zkf_fixed_to_float and the significand/GRS extraction
+    // stays covered through the y output.
     wire [WINT-1:0] inv_in     = a_q ^ {WINT{sign_in}};
     wire [WINT-1:0] mag_in     = inv_in + {{(WINT-1){1'b0}}, sign_in};
     wire [WX-1:0]   mag_ext_in = {{(WX-WINT){1'b0}}, mag_in};
@@ -72,78 +81,44 @@ module zkf_from_int #(
     reg [WX-1:0]   s1_mag_ext;
     // verilator coverage_on
 
-    // Fused leading-zero normalize + left shift on the registered magnitude. STAGE_SPLIT=1 places one register
-    // inside the cascade, so zero/shamt/aligned all arrive one cycle later (stage 2), matching the s2_sign/s2_valid
-    // pipeline. shamt is the left-shift count that brings the leading 1 to bit (WX-1); zero is the magnitude
-    // OR-reduction, which _zkf_pack uses as force_zero. This replaces the former _zkf_lod plus a separate barrel shift.
-    wire            s2_zero;
-    wire [WIDX-1:0] s2_shamt;
-    // left-justified magnitude; its slices feed the covered significand/GRS below.
-    // verilator coverage_off
-    wire   [WX-1:0] s2_aligned;
-    // verilator coverage_on
-    _zkf_normshift #(.W(WX), .STAGE_SPLIT(1)) u_norm (
-        .clk(clk),
-        .x(s1_mag_ext),
-        .zero(s2_zero),
-        .count(s2_shamt),
-        .y(s2_aligned)
-    );
-
-    // Stage 2: register sign alongside the normalize pipeline. Reset only validity; payload free-runs.
-    reg            s2_valid;
-    reg            s2_sign;
-
     always @(posedge clk) begin
         if (rst) begin
             s1_valid <= 1'b0;
-            s2_valid <= 1'b0;
         end else begin
             s1_valid <= in_valid_q;
-            s2_valid <= s1_valid;
         end
         s1_sign    <= sign_in;
         s1_mag_ext <= mag_ext_in;
-        s2_sign    <= s1_sign;
     end
 
-    // Stage 2 -> _zkf_pack inputs combinational: GRS extraction and exponent derivation from the normalized
-    // magnitude. Significand carries the hidden leading 1 at the top; the next two bits feed guard/round, and any
-    // remaining bits below OR-reduce into sticky.
-    wire [WMAN-1:0] s2_significand =  s2_aligned[WX-1 -: WMAN];
-    wire            s2_guard       =  s2_aligned[WX-WMAN-1];
-    wire            s2_round       =  s2_aligned[WX-WMAN-2];
-    wire            s2_sticky      = |s2_aligned[WX-WMAN-3:0];
-
-    // Biased exponent = leading-one position + BIAS = ((WX-1) - shamt) + BIAS = (WX-1 + BIAS) - shamt, formed as a
-    // single subtraction so _zkf_pack can skip its own bias add (EXP_IS_BIASED). Folding the bias in here keeps the
-    // pre-pack cone short enough for the single-stage packer; the value is always >= BIAS (positive). For all-zero
-    // input the result is don't-care because force_zero (= s2_zero) overrides it.
-    //
-    // shamt is the radix-4 normalize count; for nonzero input it is in [0, WX-1], so s2_exp_biased is in
-    // [BIAS, WX-1+BIAS] and never underflows. WEU is sized above to hold WX-1+BIAS as a positive signed value, giving
-    // _zkf_pack the headroom its overflow detection needs even for the widest operands.
-    localparam [WEU-1:0] EXP_BIASED_TOP = EXP_BIASED_MAX;
+    // -- Normalize-and-pack. _zkf_fixed_to_float owns the _zkf_normshift instance, the combinational significand /
+    // G / R / sticky extraction, the exp_unbiased = EXP_BIASED_TOP - shamt arithmetic (forwarded to _zkf_pack with
+    // EXP_IS_BIASED=1 so the packer skips the bias add), and the _zkf_pack output stage. STAGE_NORMALIZE and
+    // STAGE_PACK forward directly to the helper. SB_W=1 is unused; sb_in is tied to 1'b0 and sb_out is discarded.
+    localparam integer EXP_BIASED_TOP = EXP_BIASED_MAX;
     // verilator coverage_off
-    // s2_shamt zero-extended to WEU; the pad bits and (for valid inputs) the top of s2_exp_biased are constant.
-    wire        [WEU-1:0] s2_shamt_ext  = {{(WEU-WIDX){1'b0}}, s2_shamt};
-    wire signed [WEU-1:0] s2_exp_biased = EXP_BIASED_TOP - s2_shamt_ext;
+    wire sb_out_unused;
     // verilator coverage_on
-
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(s2_valid),
-        .sign(s2_sign),
-        .force_zero(s2_zero),
+    _zkf_fixed_to_float #(
+        .WEXP(WEXP), .WMAN(WMAN),
+        .WMAG(WX), .WEU(WEU),
+        .EXP_OFFSET(EXP_BIASED_TOP),
+        .EXP_IS_BIASED(1),
+        .SB_W(1),
+        .STAGE_NORMALIZE(STAGE_NORMALIZE),
+        .STAGE_PACK(STAGE_PACK),
+        .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_fixed_to_float (
+        .clk(clk), .rst(rst),
+        .in_valid(s1_valid),
+        .sign(s1_sign),
         .force_inf(1'b0),
-        .exp_unbiased(s2_exp_biased),
-        .significand(s2_significand),
-        .guard(s2_guard),
-        .round(s2_round),
-        .sticky(s2_sticky),
+        .force_zero(1'b0),
+        .mag(s1_mag_ext),
+        .sb_in(1'b0),
         .out_valid(out_valid),
-        .y(y)
+        .y(y),
+        .sb_out(sb_out_unused)
     );
 endmodule
 
