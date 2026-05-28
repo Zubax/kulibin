@@ -4,10 +4,13 @@
 ///
 /// Zero-bubble; the sideband and valid pipe along the same register stages as the data.
 ///
-/// STAGE_PRODUCT selects the same split strategy as ``_zkf_horner``, with one register stage per split level:
-///   STAGE_PRODUCT = 0: single multiply, 1 register stage.
-///   STAGE_PRODUCT = 1: 2x2 split of the operands, 2 register stages (partials registered, then summed and truncated).
-///   STAGE_PRODUCT = 2: 3x3 split, 3 register stages (sub-products | per-acc-chunk row sums | combine + truncate).
+/// The operands are always latched in a shared input register first, so the multiply has registers on BOTH sides (the
+/// input register maps to the DSP input register; the partial-product registers are the output side). This keeps the
+/// long route from the upstream Horner accumulator off the multiply's combinational cone. Total register stages =
+/// 1 (input) + the STAGE_PRODUCT split levels below:
+///   STAGE_PRODUCT = 0: single multiply -> 2 register stages.
+///   STAGE_PRODUCT = 1: 2x2 split of the operands -> 3 register stages (partials registered, then summed and truncated).
+///   STAGE_PRODUCT = 2: 3x3 split -> 4 register stages (sub-products | per-acc-chunk row sums | combine + truncate).
 
 `default_nettype none
 
@@ -48,20 +51,37 @@ module _zkf_log2_final_mul #(
     localparam integer WAC1 = (ACCW + 1) / 3;
     localparam integer WAC2 = (ACCW - WAC0 - WAC1 > 0) ? (ACCW - WAC0 - WAC1) : 1;
 
+    // -- Input register stage: latch the operands at the module boundary so the multiply has registers on BOTH sides
+    // (this register maps to the DSP's input register; the partial-product registers below are the output side). The
+    // Horner accumulator otherwise drives the multiply across a long unregistered route -- the placement-critical
+    // path at wide WMAN, where route + multiply + route land in one period. Adds one register stage. Datapath
+    // operands free-run (only valid is reset), per the project reset policy.
+    reg  [WFRAC-1:0]       i_frac;
+    reg  signed [ACCW-1:0] i_acc;
+    reg                    i_v;
+    reg  [SBW-1:0]         i_sb;
+    always @(posedge clk) begin
+        if (rst) i_v <= 1'b0;
+        else     i_v <= in_valid;
+        i_frac <= frac;
+        i_acc  <= acc;
+        i_sb   <= sb_in;
+    end
+
     generate
         if (STAGE_PRODUCT == 0) begin : g_single
-            // -- 1 register stage: single combinational multiply, truncate to F2, register. --
+            // -- 1 multiply stage (after the shared input register): single combinational multiply, truncate, register. --
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] prod = frac * acc;
+            wire [WFRAC+ACCW-1:0] prod = i_frac * i_acc;
             // verilator coverage_on
             reg [F2-1:0]  r_l;
             reg           r_v;
             reg [SBW-1:0] r_sb;
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
-                else     r_v <= in_valid;
+                else     r_v <= i_v;
                 r_l  <= prod[F2-1:0];
-                r_sb <= sb_in;
+                r_sb <= i_sb;
             end
             assign l_fix     = r_l;
             assign out_valid = r_v;
@@ -69,10 +89,10 @@ module _zkf_log2_final_mul #(
         end else if (STAGE_PRODUCT == 1) begin : g_split2
             // -- 2 register stages: 4 half-width sub-products | sum + truncate. --
             // verilator coverage_off
-            wire [WFA_LO-1:0]            fa_lo = frac[WFA_LO-1:0];
-            wire [WFA_HI-1:0]            fa_hi = frac[WFRAC-1:WFA_LO];
-            wire [WAC_LO-1:0]            ac_lo = acc[WAC_LO-1:0];
-            wire [WAC_HI-1:0]            ac_hi = acc[ACCW-1:WAC_LO];
+            wire [WFA_LO-1:0]            fa_lo = i_frac[WFA_LO-1:0];
+            wire [WFA_HI-1:0]            fa_hi = i_frac[WFRAC-1:WFA_LO];
+            wire [WAC_LO-1:0]            ac_lo = i_acc[WAC_LO-1:0];
+            wire [WAC_HI-1:0]            ac_hi = i_acc[ACCW-1:WAC_LO];
             wire [WFA_LO+WAC_LO-1:0]     q_ll  = fa_lo * ac_lo;
             wire [WFA_LO+WAC_HI-1:0]     q_lh  = fa_lo * ac_hi;
             wire [WFA_HI+WAC_LO-1:0]     q_hl  = fa_hi * ac_lo;
@@ -86,12 +106,12 @@ module _zkf_log2_final_mul #(
             reg  [SBW-1:0]               m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
-                else     m_v <= in_valid;
+                else     m_v <= i_v;
                 m_q_ll <= q_ll;
                 m_q_lh <= q_lh;
                 m_q_hl <= q_hl;
                 m_q_hh <= q_hh;
-                m_sb   <= sb_in;
+                m_sb   <= i_sb;
             end
             // verilator coverage_off
             wire [WFRAC+ACCW-1:0] sum2 = ({{(WFRAC+ACCW-WFA_HI-WAC_HI){1'b0}}, m_q_hh} << (WFA_LO + WAC_LO))
@@ -114,12 +134,12 @@ module _zkf_log2_final_mul #(
         end else begin : g_split3
             // -- 3 register stages: 9 third-width sub-products | per-acc-chunk row sums (3) | combine + truncate. --
             // verilator coverage_off
-            wire [WFA0-1:0] fa0 = frac[WFA0-1:0];
-            wire [WFA1-1:0] fa1 = frac[WFA0+WFA1-1:WFA0];
-            wire [WFA2-1:0] fa2 = frac[WFRAC-1:WFA0+WFA1];
-            wire [WAC0-1:0] ac0 = acc[WAC0-1:0];
-            wire [WAC1-1:0] ac1 = acc[WAC0+WAC1-1:WAC0];
-            wire [WAC2-1:0] ac2 = acc[ACCW-1:WAC0+WAC1];
+            wire [WFA0-1:0] fa0 = i_frac[WFA0-1:0];
+            wire [WFA1-1:0] fa1 = i_frac[WFA0+WFA1-1:WFA0];
+            wire [WFA2-1:0] fa2 = i_frac[WFRAC-1:WFA0+WFA1];
+            wire [WAC0-1:0] ac0 = i_acc[WAC0-1:0];
+            wire [WAC1-1:0] ac1 = i_acc[WAC0+WAC1-1:WAC0];
+            wire [WAC2-1:0] ac2 = i_acc[ACCW-1:WAC0+WAC1];
             wire [WFA0+WAC0-1:0] q00 = fa0 * ac0;
             wire [WFA0+WAC1-1:0] q01 = fa0 * ac1;
             wire [WFA0+WAC2-1:0] q02 = fa0 * ac2;
@@ -144,11 +164,11 @@ module _zkf_log2_final_mul #(
             reg  [SBW-1:0]       m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
-                else     m_v <= in_valid;
+                else     m_v <= i_v;
                 m_q00 <= q00; m_q01 <= q01; m_q02 <= q02;
                 m_q10 <= q10; m_q11 <= q11; m_q12 <= q12;
                 m_q20 <= q20; m_q21 <= q21; m_q22 <= q22;
-                m_sb  <= sb_in;
+                m_sb  <= i_sb;
             end
             // -- Stage 2: row sums (each sums 3 sub-products with frac-chunk shifts <= WFRAC). --
             // verilator coverage_off

@@ -557,7 +557,8 @@ def exp2_reference(fmt: ZkfFormat, bits: int) -> int:
         return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)
 
     spec = _trans_spec("exp2", fmt.wman)
-    ff, cf, rw = spec["argbits"], spec["cf"], spec["rw"]
+    cf, rw = spec["cf"], spec["rw"]
+    ff = spec["k"] + rw                          # full reduced-argument width FF = K + RW (was the emitted argbits)
     sig = significand(fmt, bits)
     shift = e - fmt.wfrac + ff
     if shift >= 0:

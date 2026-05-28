@@ -1,7 +1,7 @@
 /// Streamed base-2 logarithm for the Zubax Kulibin float format: y = log2(x).
 ///
-/// Register stages: STAGE_INPUT+4+STAGE_PRODUCT+STAGE_NORMALIZE+STAGE_PACK+D*(2+STAGE_PRODUCT)+STAGE_OUTPUT,
-/// where D depends on WMAN per the table below.
+/// Register stages = STAGE_INPUT+5+STAGE_PRODUCT+STAGE_NORMALIZE+STAGE_PACK+D*(2+STAGE_PRODUCT)+STAGE_OUTPUT,
+/// where polynomial degree D = ceil((WMAN+8)/9)-1
 ///
 /// Zero-bubble, throughput-1, no backpressure.
 /// Behavior:
@@ -112,13 +112,6 @@ module zkf_log2 #(
             .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
     generate
         if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
-        `ZKF_LOG2_TABLE( 4, 5)
-        `ZKF_LOG2_TABLE( 5, 4)
-        `ZKF_LOG2_TABLE( 6, 3)
-        `ZKF_LOG2_TABLE( 7, 2)
-        `ZKF_LOG2_TABLE( 8, 2)
-        `ZKF_LOG2_TABLE( 9, 2)
-        `ZKF_LOG2_TABLE(10, 2)
         `ZKF_LOG2_TABLE(11, 2)
         `ZKF_LOG2_TABLE(12, 2)
         `ZKF_LOG2_TABLE(13, 2)

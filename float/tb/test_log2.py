@@ -94,11 +94,12 @@ async def log2_runtime_cases(dut) -> None:
     dut.x.value = 0
 
     from zkf_trans_tables import SPECS
-    # Register stages: STAGE_INPUT + 2 ROM-read + D*(2+SP) Horner + (1+SP) final-multiply (_zkf_log2_final_mul split)
-    # + 1 P1 + STAGE_NORMALIZE normshift + STAGE_PACK packer-input + STAGE_OUTPUT.
+    # Register stages: STAGE_INPUT + 2 ROM-read + D*(2+SP) Horner + (2+SP) final-multiply (_zkf_log2_final_mul:
+    # registered inputs + the STAGE_PRODUCT split levels) + 1 P1 + STAGE_NORMALIZE normshift + STAGE_PACK packer-input
+    # + STAGE_OUTPUT.
     poly_degree = SPECS[("log2", context.wman)]["d"]
     sp, sn = context.stage_product, context.stage_normalize
-    register_stages = (context.stage_input + 4 + sp + sn + context.stage_pack
+    register_stages = (context.stage_input + 5 + sp + sn + context.stage_pack
                        + poly_degree * (2 + sp) + context.stage_output)
     scoreboard = RegisterStageScoreboard(
         dut,

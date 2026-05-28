@@ -1,6 +1,9 @@
 /// Streamed base-2 exponential for the Zubax Kulibin float format: y = 2**x.
+///
+/// Register stages: STAGE_INPUT+5+D*(2+STAGE_PRODUCT)+STAGE_PACK+STAGE_OUTPUT,
+/// where polynomial degree D = ceil((WMAN+8)/9)-1
+///
 /// Zero-bubble, throughput-1, no backpressure.
-/// Register stages: STAGE_INPUT+5+D*(2+STAGE_PRODUCT)+STAGE_PACK+STAGE_OUTPUT, where D depends on WMAN.
 /// Behavior:
 ///
 ///   exp2(-inf)   = +0
@@ -159,13 +162,6 @@ module zkf_exp2 #(
             .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));
     generate
         if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
-        `ZKF_EXP2_TABLE( 4, 2)
-        `ZKF_EXP2_TABLE( 5, 2)
-        `ZKF_EXP2_TABLE( 6, 2)
-        `ZKF_EXP2_TABLE( 7, 2)
-        `ZKF_EXP2_TABLE( 8, 2)
-        `ZKF_EXP2_TABLE( 9, 2)
-        `ZKF_EXP2_TABLE(10, 2)
         `ZKF_EXP2_TABLE(11, 2)
         `ZKF_EXP2_TABLE(12, 2)
         `ZKF_EXP2_TABLE(13, 2)

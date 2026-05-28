@@ -27,29 +27,21 @@ filesets:
       - hdl/_zkf_log2_final_mul.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_fixed_to_float.v
-      - hdl/_tables/_zkf_exp2_m4_d2.v
-      - hdl/_tables/_zkf_exp2_m5_d2.v
-      - hdl/_tables/_zkf_exp2_m6_d2.v
-      - hdl/_tables/_zkf_exp2_m7_d2.v
-      - hdl/_tables/_zkf_exp2_m8_d2.v
       - hdl/_tables/_zkf_exp2_m11_d2.v
-      - hdl/_tables/_zkf_exp2_m17_d2.v
+      - hdl/_tables/_zkf_exp2_m16_d2.v
       - hdl/_tables/_zkf_exp2_m18_d2.v
-      - hdl/_tables/_zkf_exp2_m23_d3.v
       - hdl/_tables/_zkf_exp2_m24_d3.v
+      - hdl/_tables/_zkf_exp2_m27_d3.v
       - hdl/_tables/_zkf_exp2_m36_d4.v
+      - hdl/_tables/_zkf_exp2_m48_d6.v
       - hdl/_tables/_zkf_exp2_m53_d6.v
-      - hdl/_tables/_zkf_log2_m4_d5.v
-      - hdl/_tables/_zkf_log2_m5_d4.v
-      - hdl/_tables/_zkf_log2_m6_d3.v
-      - hdl/_tables/_zkf_log2_m7_d2.v
-      - hdl/_tables/_zkf_log2_m8_d2.v
       - hdl/_tables/_zkf_log2_m11_d2.v
-      - hdl/_tables/_zkf_log2_m17_d2.v
+      - hdl/_tables/_zkf_log2_m16_d2.v
       - hdl/_tables/_zkf_log2_m18_d2.v
-      - hdl/_tables/_zkf_log2_m23_d3.v
       - hdl/_tables/_zkf_log2_m24_d3.v
+      - hdl/_tables/_zkf_log2_m27_d3.v
       - hdl/_tables/_zkf_log2_m36_d4.v
+      - hdl/_tables/_zkf_log2_m48_d6.v
       - hdl/_tables/_zkf_log2_m53_d6.v
       - hdl/zkf_exp2.v
       - hdl/zkf_log2.v
@@ -191,17 +183,13 @@ filesets:
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_horner.v
-      - hdl/_tables/_zkf_exp2_m4_d2.v
-      - hdl/_tables/_zkf_exp2_m5_d2.v
-      - hdl/_tables/_zkf_exp2_m6_d2.v
-      - hdl/_tables/_zkf_exp2_m7_d2.v
-      - hdl/_tables/_zkf_exp2_m8_d2.v
       - hdl/_tables/_zkf_exp2_m11_d2.v
-      - hdl/_tables/_zkf_exp2_m17_d2.v
+      - hdl/_tables/_zkf_exp2_m16_d2.v
       - hdl/_tables/_zkf_exp2_m18_d2.v
-      - hdl/_tables/_zkf_exp2_m23_d3.v
       - hdl/_tables/_zkf_exp2_m24_d3.v
+      - hdl/_tables/_zkf_exp2_m27_d3.v
       - hdl/_tables/_zkf_exp2_m36_d4.v
+      - hdl/_tables/_zkf_exp2_m48_d6.v
       - hdl/_tables/_zkf_exp2_m53_d6.v
       - hdl/zkf_exp2.v
     file_type: verilogSource
@@ -214,17 +202,13 @@ filesets:
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_horner.v
       - hdl/_zkf_log2_final_mul.v
-      - hdl/_tables/_zkf_log2_m4_d5.v
-      - hdl/_tables/_zkf_log2_m5_d4.v
-      - hdl/_tables/_zkf_log2_m6_d3.v
-      - hdl/_tables/_zkf_log2_m7_d2.v
-      - hdl/_tables/_zkf_log2_m8_d2.v
       - hdl/_tables/_zkf_log2_m11_d2.v
-      - hdl/_tables/_zkf_log2_m17_d2.v
+      - hdl/_tables/_zkf_log2_m16_d2.v
       - hdl/_tables/_zkf_log2_m18_d2.v
-      - hdl/_tables/_zkf_log2_m23_d3.v
       - hdl/_tables/_zkf_log2_m24_d3.v
+      - hdl/_tables/_zkf_log2_m27_d3.v
       - hdl/_tables/_zkf_log2_m36_d4.v
+      - hdl/_tables/_zkf_log2_m48_d6.v
       - hdl/_tables/_zkf_log2_m53_d6.v
       - hdl/zkf_log2.v
     file_type: verilogSource

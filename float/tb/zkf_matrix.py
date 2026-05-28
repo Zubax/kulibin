@@ -72,22 +72,22 @@ UNARY = [
     ("w11_m53_random", 11, 53, "random", 384),
 ]
 # transcendental (exp2/log2): table+polynomial unary ops; tables exist only for the generator's supported WMAN
-# (4,5,6,7,8,11,17,18,23,24,36,53), so every config here must use one of those. (config, wexp, wman, kind, count)
+# (11,16,18,24,27,36,48,53 -- min is binary16's 11, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every
+# config here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m11. (config, wexp, wman, kind, count)
 TRANS = [
-    ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
-    ("w3_m4_exhaustive", 3, 4, "exhaustive", 0),
-    ("w4_m6_exhaustive", 4, 6, "exhaustive", 0),
-    ("w5_m11_random", 5, 11, "random", 512),
+    ("w2_m11_exhaustive", 2, 11, "exhaustive", 0),    # wfull=13: cheap exhaustive at the minimum WMAN
+    ("w3_m11_exhaustive", 3, 11, "exhaustive", 0),    # wfull=14: a second WEXP, still exhaustive
+    ("w5_m11_random", 5, 11, "random", 512),          # binary16 significand width
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
-    # Wide-exponent guard: WMAN=4 keeps the datapath tiny while WEXP=20 (vs <=11 elsewhere) and the directed
-    # overflow/underflow/inf/pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp arithmetic.
-    ("w20_m4_random", 20, 4, "random", 2000),
+    # Wide-exponent guard: WMAN=11 (the minimum) keeps the datapath small while WEXP=20 (vs <=11 elsewhere) and the
+    # directed overflow/underflow/inf/pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
+    ("w20_m11_random", 20, 11, "random", 2000),
 ]
 TRANS_EXT = [
-    (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (3, 6, "exhaustive", 0),
-    (6, 17, "random", 512), (8, 23, "random", 512),
-    (14, 4, "exhaustive", 0),  # full exhaustive over a wide exponent field (every WEXP=14 exponent value)
+    (2, 11, "exhaustive", 0), (3, 11, "exhaustive", 0),   # exhaustive at the minimum WMAN, two WEXP
+    (6, 16, "random", 512), (8, 27, "random", 512),       # mid-range supported WMAN (DSP-friendly sizes)
+    (14, 11, "random", 2000),  # wide exponent field (exhaustive infeasible at WMAN>=11), random sweep instead
 ]
 # pipe:     (config, width, stages, count)
 PIPE = [("w8_n0", 8, 0, 64), ("w8_n4", 8, 4, 96), ("w24_n2", 24, 2, 96)]
@@ -354,21 +354,21 @@ def _per_pr(sim, out: list) -> None:
     for op in ("exp2", "log2"):
         for cfg, w, m, k, c in TRANS:
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
-        # STAGE_INPUT / STAGE_PRODUCT (0,1,2) / STAGE_OUTPUT timing coverage on fast exhaustive formats (results are
-        # staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
-        out.append(_trans(op, sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, si=1))
-        out.append(_trans(op, sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, so=1))
-        out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, sp=1))
-        out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, sp=2))
-        out.append(_trans(op, sim, "pr", "w4_m6_exhaustive", 4, 6, "exhaustive", 0, si=1, sp=1, so=1))
+        # STAGE_INPUT / STAGE_PRODUCT (0,1,2) / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
+        # are staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1))
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, so=1))
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=1))
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=2))
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1, sp=1, so=1))
     # STAGE_NORMALIZE for log2 controls the normalizer's STAGE_SPLIT. Cover it on a fast small format (it needs
     # the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sp=1, sn=1))
-    # STAGE_PACK is a new uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2. Exercise it on small
-    # exhaustive formats: standalone and in combination with the other staging knobs.
-    out.append(_trans("exp2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
-    out.append(_trans("log2", sim, "pr", "w3_m4_exhaustive", 3, 4, "exhaustive", 0, pa=1))
+    # STAGE_PACK is a new uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2. Exercise it on the cheapest
+    # exhaustive format: standalone and in combination with the other staging knobs.
+    out.append(_trans("exp2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
+    out.append(_trans("log2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
     # STAGE_PACK+STAGE_OUTPUT drives _zkf_fixed_to_float's _zkf_pack_delay with N=2, covering the delay-chain shift.
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1, so=1))
@@ -507,14 +507,15 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
-    # exp2/log2 coverage: small exhaustive formats toggle the ROM/Horner; the so=1 run covers the registered pack output.
-    for w, m in [(4, 5), (3, 6)]:
+    # exp2/log2 coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run covers the
+    # registered pack output, the sp=1 run toggles the 2x2 split logic.
+    for w, m in [(2, 11), (3, 11)]:
         for op in ("exp2", "log2"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
-    out.append(_trans("exp2", s, "deep", "w3m5", 3, 5, "exhaustive", 0, so=1))
-    out.append(_trans("log2", s, "deep", "w3m5", 3, 5, "exhaustive", 0, so=1))
-    out.append(_trans("exp2", s, "deep", "w4m6", 4, 6, "exhaustive", 0, sp=1))  # toggle the 2x2 split logic
-    out.append(_trans("log2", s, "deep", "w4m6", 4, 6, "exhaustive", 0, sp=1))
+    out.append(_trans("exp2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
+    out.append(_trans("log2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
+    out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))  # toggle the 2x2 split logic
+    out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
     # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the
@@ -596,8 +597,8 @@ _FAST = [
     ("to_int_si1", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("resize_si0", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 0)]),
     ("resize_si1", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 1)]),
-    ("exp2", "exp2", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 0)]),
-    ("log2", "log2", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 0)]),
+    ("exp2", "exp2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
+    ("log2", "log2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
 ]
 
 

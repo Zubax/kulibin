@@ -18,7 +18,7 @@ is then the smallest segment count that meets the accuracy target with that degr
 This module is the single source of truth. ``--emit`` writes, per supported ``WMAN``, a self-contained per-table eval
 core ``hdl/_tables/_zkf_<func>_m<WMAN>_d<D>.v`` plus the Python data table ``tb/zkf_trans_tables.py`` that the bit-exact
 reference model imports. The public ``hdl/zkf_<func>.v`` modules carry a hand-written generate-if that enumerates every
-``WMAN`` in [4, 53] and instantiates the matching table module; an un-pregenerated ``WMAN`` fails elaboration loudly
+``WMAN`` in [11, 53] and instantiates the matching table module; an un-pregenerated ``WMAN`` fails elaboration loudly
 (the chosen table module is simply undefined). ``--check`` verifies the tables against an ``mpmath`` ground truth.
 
 The table content depends on ``WMAN`` only (never ``WEXP``): the helper functions live on the unit interval and the
@@ -28,26 +28,21 @@ exponent/integer part is handled outside the table by the renormalize/pack stage
 from __future__ import annotations
 
 import argparse
-import os
 from dataclasses import dataclass, field
+from math import ceil
+from pathlib import Path
 from textwrap import dedent
 
 import mpmath as mp
 
 mp.mp.prec = 280  # generous working precision for coefficient fitting and ground-truth rounding
 
-REPO = os.path.dirname(os.path.abspath(__file__))  # .../float
-HDL = os.path.join(REPO, "hdl")
-TABLES = os.path.join(HDL, "_tables")
-TB = os.path.join(REPO, "tb")
+REPO = Path(__file__).resolve().parent  # .../float
+HDL = REPO / "hdl"
+TABLES = HDL / "_tables"
+TB = REPO / "tb"
 
 FUNCS = ("exp2", "log2")
-
-# WMAN values shipped with pre-generated tables: the verification-matrix formats plus the headline 18/24/36/53.
-SUPPORTED_WMAN = [4, 5, 6, 7, 8, 11, 17, 18, 23, 24, 36, 53]
-# Closed-form WMAN range the public modules enumerate. Any WMAN here without a pre-generated table file fails
-# elaboration loudly (the selected _zkf_<func>_m<WMAN>_d<D> module is undefined); WMAN outside it hits a sentinel.
-WMAN_MIN, WMAN_MAX = 4, 53
 
 # Guard bits: fixed-point fractional headroom kept below the WMAN significand, common to both operators. Used as the
 # reduced-argument fraction width (exp2: FF = WMAN + GUARD) and the coefficient/result scale (both: CF = WMAN + GUARD).
@@ -62,12 +57,36 @@ WMAN_MIN, WMAN_MAX = 4, 53
 GUARD = 12
 ERR_GUARD = 8   # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
 
-K_CAP = 9       # max segment-index bits (table size 2**K)
+# Segment-index bits: the unit interval is split into 2**K_CAP equal segments, indexed by the top K_CAP bits of the
+# reduced argument; the remaining bits feed the per-segment polynomial. K_CAP is the single ROM-size knob (2**K_CAP
+# words) and, being constant for every supported WMAN, makes the per-segment degree a closed-form function of WMAN
+# alone (see degree()). BRAM is cheap, so this is a deliberate area-for-latency trade: a larger K_CAP would lower the
+# degree (shorter Horner pipeline) at the cost of a wider ROM.
+K_CAP = 9
 ACC_MARGIN = 3  # extra accumulator bits above the measured maximum, guarding against wrap
 
+# Minimum supported WMAN. degree() peels K_CAP segment-index bits off the reduced argument and needs >=1 bit left for
+# the in-segment coordinate, so the argument must be >= K_CAP + 1 bits wide. exp2's argument is the FF = WMAN + GUARD
+# bit reduced fraction (always wide enough); log2's is the stored fraction WFRAC = WMAN - 1, which needs WMAN - 1 >=
+# K_CAP + 1, i.e. WMAN >= K_CAP + 2 = 11 -- exactly binary16's significand precision (10 stored + 1 hidden). At and
+# above it both functions keep the full K_CAP segments and share one degree formula; below it log2's narrower fraction
+# can no longer fill K_CAP segments and would force a higher per-segment degree (the old per-function divergence).
+# The public hdl/zkf_<func>.v modules enumerate this closed-form range; a WMAN in it without a pre-generated table
+# fails elaboration loudly (the named _zkf_<func>_m<WMAN>_d<D> module is undefined), and WMAN outside it hits a sentinel.
+WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
 
-def wfrac(wman: int) -> int:
-    return wman - 1
+# WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
+# FPGA-friendly significand sizes and the standard IEEE 754 ones. New ones can be added easily.
+SUPPORTED_WMAN = [
+    11,     # IEEE 754 binary16
+    16,     # DSP tiles in Lattice iCE40 and similar
+    18,     # Classic FPGA DSP width, perhaps most common: ECP5, PolarFire, Trion, many Intel modes, etc.
+    24,     # IEEE 754 binary32; also fits Versal DSP58's 27x24 asymmetric multiplier side
+    27,     # Intel/Altera variable-precision DSPs; AMD/Xilinx DSP48E2/DSP58 large operand side, etc.
+    36,     # 2x18 (very common) or native Intel/Altera 36x36-style variable-precision mode
+    48,     # 2x24 or 3x16; with an 8-bit exponent amounts to 7 bytes exactly
+    53,     # IEEE 754 binary64
+]
 
 
 def ff_bits(wman: int) -> int:
@@ -78,27 +97,20 @@ def cf_bits(wman: int) -> int:
     return wman + GUARD
 
 
-def arg_bits(func: str, wman: int) -> int:
-    """Reduced-argument width feeding the table: exp2 reduces to the FF-bit fraction f, log2 uses the WFRAC-bit
-    stored fraction t. This is the *only* way the two functions differ in their shape selection."""
-    return ff_bits(wman) if func == "exp2" else wfrac(wman)
+def degree(wman: int) -> int:
+    """
+    Per-segment polynomial degree, a closed-form function of WMAN alone, so the Horner pipeline depth is too.
 
-
-def _ceil_div(a: int, b: int) -> int:
-    return -(-a // b)
-
-
-def degree(wman: int, argbits: int) -> int:
-    """Polynomial degree as a closed-form integer function of WMAN and the reduced-argument width (so the pipeline
-    depth is itself a closed-form function of WMAN, in the spirit of the divider's qfrac -- no chip-specific
-    quantities). The per-segment polynomial must span a 2**-K-wide segment to B = WMAN + ERR_GUARD bits; with K capped
-    by both K_CAP and the available argument bits (less one, so the reduced argument keeps >=1 bit), the minimal degree
-    is ceil(B/Keff) - 1, floored at 2. Larger WMAN raises it via precision; a very narrow argument raises it via the
-    coarse segmentation. There is deliberately no `func` selector: the dependence enters only through `argbits`, which
-    is why exp2 and log2 diverge for small WMAN (log2's WFRAC-bit argument is far narrower than exp2's FF-bit one, so
-    log2 needs a higher degree there) yet agree for WMAN >= 7."""
-    keff = min(K_CAP, argbits - 1)
-    return max(2, _ceil_div(wman + ERR_GUARD, keff) - 1)
+    Each of the 2**K_CAP segments spans 2**-K_CAP of the unit interval, and its polynomial must approximate the helper
+    there to B = WMAN + ERR_GUARD bits; the minimal degree spanning B bits across K_CAP segment-index bits is
+    ceil(B / K_CAP) - 1. There is no `func` selector and no argument-width parameter: for WMAN >= 11 (see WMAN_MIN)
+    both exp2 and log2 retain the full K_CAP segment-index bits.
+    """
+    if not (WMAN_MIN <= wman <= WMAN_MAX):
+        raise ValueError(f"Bad {wman=}")
+    d = ceil((wman + ERR_GUARD) / K_CAP) - 1
+    assert d >= 2, "Maybe WMAN is too small or K_CAP is too large?"
+    return d
 
 
 def table_module(func: str, wman: int, d: int) -> str:
@@ -112,8 +124,7 @@ class Spec:
     k: int               # segment-index bits
     d: int               # polynomial degree
     cf: int              # coefficient fractional bits (scale 2**-cf)
-    rw: int              # reduced-argument bits (wn = w / 2**rw)
-    argbits: int         # total argument bits (FF for exp2, WFRAC for log2); argbits == k + rw
+    rw: int              # reduced-argument bits (wn = w / 2**rw); the total argument width is k + rw
     cw: int              # signed coefficient width
     accw: int            # signed Horner accumulator width
     coeffs: list = field(default_factory=list)  # [2**k][d+1] signed ints, low degree first
@@ -153,24 +164,23 @@ def horner(coeffs_idx: list[int], w: int, rw: int) -> int:
     return acc
 
 
-def _arg_grid(argbits: int, k: int):
+def _arg_grid(width: int, k: int):
     """Argument values to probe: exhaustive when small, else dense segment-local sampling."""
-    if argbits <= 16:
-        return range(1 << argbits)
-    rw = argbits - k
+    if width <= 16:
+        return range(1 << width)
+    rw = width - k
     span = 1 << rw
     probes = sorted({0, span // 7, span // 4, span // 2, (5 * span) // 7, (3 * span) // 4, span - 1})
     return [(idx << rw) | w for idx in range(1 << k) for w in probes]
 
 
-def measure(func: str, wman: int, k: int, d: int, cf: int, coeffs: list[list[int]]):
+def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
     """Return (max relative helper error, max |accumulator| seen) over the probe grid, exercising the truncating
     Horner so that meeting the accuracy target guarantees faithful rounding by construction."""
-    argbits = arg_bits(func, wman)
-    rw = argbits - k
+    rw = width - k
     scale = mp.mpf(1 << cf)
     max_rel, max_acc = mp.mpf(0), 0
-    for a in _arg_grid(argbits, k):
+    for a in _arg_grid(width, k):
         idx, w = a >> rw, a & ((1 << rw) - 1)
         ci = coeffs[idx]
         acc = ci[-1]
@@ -179,7 +189,7 @@ def measure(func: str, wman: int, k: int, d: int, cf: int, coeffs: list[list[int
             acc = c + ((acc * w) >> rw)
             max_acc = max(max_acc, abs(acc))
         approx = mp.mpf(acc) / scale
-        true = helper_true(func, mp.mpf(a) / (1 << argbits))
+        true = helper_true(func, mp.mpf(a) / (1 << width))
         max_rel = max(max_rel, abs(approx / true - 1))
     return max_rel, max_acc
 
@@ -187,21 +197,22 @@ def measure(func: str, wman: int, k: int, d: int, cf: int, coeffs: list[list[int
 def choose_spec(func: str, wman: int) -> Spec:
     """With the degree fixed by the closed-form ``degree`` (so the pipeline depth is a closed-form function of WMAN),
     pick the smallest segment count K (smallest ROM) that meets the accuracy target. K affects only the ROM, not the
-    depth. Accuracy is measured through the truncating Horner, so meeting the target guarantees faithful rounding."""
+    depth. Accuracy is measured through the truncating Horner, so meeting the target guarantees faithful rounding.
+    For WMAN >= 11 both functions keep the full K_CAP segment-index bits, so K is searched over 1..K_CAP."""
     cf = cf_bits(wman)
-    argbits = arg_bits(func, wman)
-    d = degree(wman, argbits)
+    width = ff_bits(wman) if func == "exp2" else (wman - 1)  # reduced-argument width feeding the table
+    d = degree(wman)
     target = mp.mpf(2) ** (-(wman + ERR_GUARD))  # relative helper-error budget
 
-    for k in range(1, min(K_CAP, argbits - 1) + 1):
+    for k in range(1, K_CAP + 1):
         coeffs = [segment_coeffs(func, k, d, cf, idx) for idx in range(1 << k)]
-        rel, max_acc = measure(func, wman, k, d, cf, coeffs)
+        rel, max_acc = measure(func, k, cf, width, coeffs)
         if rel < target:
             maxabs = max(abs(c) for seg in coeffs for c in seg)
             cw = maxabs.bit_length() + 2                          # +1 sign, +1 margin
             accw = max(max_acc, maxabs).bit_length() + 1 + ACC_MARGIN
-            return Spec(func, wman, k, d, cf, argbits - k, argbits, cw, accw, coeffs)
-    raise RuntimeError(f"degree {d} needs K>{K_CAP} for {func} WMAN={wman}: raise the degree() floor or K_CAP")
+            return Spec(func, wman, k, d, cf, width - k, cw, accw, coeffs)
+    raise RuntimeError(f"degree {d} needs K>K_CAP={K_CAP} for {func} WMAN={wman}: raise K_CAP")
 
 
 def generate_all() -> dict[tuple[str, int], Spec]:
@@ -300,7 +311,8 @@ def _emit_table(s: Spec) -> str:
     else:
         w(f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
           "/// Evaluates log2(1+t) = t*P(t) as a fixed-point fraction (scale 2**-F2); P(t)=log2(1+t)/t via the table.",
-          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + 1 (final multiply); valid/sb_in match.")
+          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + (2+STAGE_PRODUCT) (final multiply: "
+          "registered inputs + split); valid/sb_in match.")
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
     w("")
@@ -404,7 +416,7 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
         s = all_specs[(func, wman)]
         w(f"({func!r}, {wman}): dict(")
         w.push()
-        w(f"k={s.k}, d={s.d}, cf={s.cf}, rw={s.rw}, argbits={s.argbits}, cw={s.cw}, accw={s.accw},")
+        w(f"k={s.k}, d={s.d}, cf={s.cf}, rw={s.rw}, cw={s.cw}, accw={s.accw},")
         w(f"coeffs={s.coeffs!r},")
         w.pop()
         w("),")
@@ -425,16 +437,14 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
 
 
 def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
-    os.makedirs(TABLES, exist_ok=True)
+    TABLES.mkdir(parents=True, exist_ok=True)
     for (func, wman), s in sorted(all_specs.items()):
-        path = os.path.join(TABLES, f"{table_module(func, wman, s.d)}.v")
-        with open(path, "w") as fh:
-            fh.write(_emit_table(s))
-        print(f"wrote {os.path.relpath(path, REPO)}")
-    path = os.path.join(TB, "zkf_trans_tables.py")
-    with open(path, "w") as fh:
-        fh.write(_emit_python(all_specs))
-    print(f"wrote {os.path.relpath(path, REPO)}")
+        path = TABLES / f"{table_module(func, wman, s.d)}.v"
+        path.write_text(_emit_table(s))
+        print(f"wrote {path.relative_to(REPO)}")
+    path = TB / "zkf_trans_tables.py"
+    path.write_text(_emit_python(all_specs))
+    print(f"wrote {path.relative_to(REPO)}")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -448,17 +458,16 @@ def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
               f"{entries:>8} {entries * s.cw / 1024.0:>9.1f}")
 
     # The public modules enumerate WMAN in [WMAN_MIN, WMAN_MAX]; show the degree map so the hand-written generate-if in
-    # hdl/zkf_<func>.v can be cross-checked. A pre-generated WMAN whose degree changed would name a now-missing module.
-    print(f"\ndegree map for the zkf_<func>.v generate-if ({WMAN_MAX - WMAN_MIN + 1} lines each):")
-    for func in FUNCS:
-        d_map = " ".join(f"{wman}:{degree(wman, arg_bits(func, wman))}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
-        print(f"  {func}: {d_map}")
+    # hdl/zkf_<func>.v can be cross-checked. The map is identical for exp2 and log2 (degree no longer depends on the
+    # function). A pre-generated WMAN whose degree changed would name a now-missing module.
+    d_map = " ".join(f"{wman}:{degree(wman)}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
+    print(f"\ndegree map for the zkf_<func>.v generate-if ({WMAN_MAX - WMAN_MIN + 1} lines, same for both):\n  {d_map}")
 
 
 def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
     """End-to-end accuracy check vs mpmath via the bit-exact model. Requires tb/ on sys.path."""
     import sys
-    sys.path.insert(0, TB)
+    sys.path.insert(0, str(TB))
     import importlib
     import zkf_model
     importlib.reload(zkf_model)
@@ -466,7 +475,7 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
     import numpy as np
 
     print("end-to-end correct-rounding check (model vs mpmath):")
-    cases = [(2, 4), (3, 4), (3, 5), (4, 6), (5, 6), (5, 11), (8, 24)]  # small: exhaustive; large: random
+    cases = [(5, 11), (6, 16), (8, 24), (8, 36), (8, 48)]  # binary16 (5/11) exhaustive; wider formats random (D=2..6)
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
             continue

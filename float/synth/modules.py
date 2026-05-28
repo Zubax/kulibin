@@ -472,13 +472,14 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2",
-        label="zkf_log2 (log2(x), table+polynomial; STAGE_NORMALIZE=1 + STAGE_PACK=1 keep both wide pre-pack cones "
-              "below the 100 MHz gate)",
+        label="zkf_log2 (log2(x), table+polynomial; STAGE_INPUT=1 shields the decode/evaluator cone + STAGE_NORMALIZE=1 "
+              "+ STAGE_PACK=1 keep both wide pre-pack cones below the 100 MHz gate)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
+        stage_input=1,
         stage_normalize=1,
         stage_pack=1,
     ),
@@ -678,10 +679,11 @@ def register_stages(spec: ModuleSpec) -> int:
         return spec.stage_output + spec.stage_input
     if spec.kind in {"exp2", "log2"}:
         # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + extras + STAGE_PACK + STAGE_OUTPUT.
-        # Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has 1 P1 + 3 base for the back-end = 4.
+        # Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has 1 P1 + 2 ROM-read + 2 final-mul base
+        # (registered inputs + outputs, see _zkf_log2_final_mul) = 5.
         # log2 extras: STAGE_PRODUCT (t*P split) + STAGE_NORMALIZE (normshift internal barriers).
         degree = TRANS_SPECS[(spec.kind, spec.wman)]["d"]
-        front = 5 if spec.kind == "exp2" else 4
+        front = 5
         log2_extra = (spec.stage_product + spec.stage_normalize) if spec.kind == "log2" else 0
         return (spec.stage_input + front + log2_extra + degree * (2 + spec.stage_product)
                 + spec.stage_pack + spec.stage_output)
