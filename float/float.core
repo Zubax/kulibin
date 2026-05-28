@@ -429,6 +429,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_PACK:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_PACK:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_SPLIT:
     datatype: int
     default: 0
@@ -564,6 +572,7 @@ targets:
       - WMAN
       - STAGE_DECODE
       - STAGE_ALIGN
+      - STAGE_NORMALIZE
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -573,6 +582,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
+      - ZKF_STAGE_NORMALIZE
       - ZKF_STAGE_OUTPUT
 
   sim_add_verilator:
@@ -601,6 +611,7 @@ targets:
       - STAGE_DECODE
       - STAGE_ALIGN
       - STAGE_NORMALIZE
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -613,6 +624,7 @@ targets:
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
       - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_fma_verilator:
@@ -995,6 +1007,8 @@ targets:
       - WMAN
       - WINT
       - STAGE_INPUT
+      - STAGE_NORMALIZE
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -1004,6 +1018,8 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_from_int_verilator:
@@ -1097,6 +1113,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -1106,6 +1123,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_exp2_verilator:
@@ -1132,6 +1150,7 @@ targets:
       - STAGE_INPUT
       - STAGE_PRODUCT
       - STAGE_NORMALIZE
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -1142,6 +1161,7 @@ targets:
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
       - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_log2_verilator:
