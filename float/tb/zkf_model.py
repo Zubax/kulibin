@@ -512,6 +512,147 @@ def resize_reference(fmt_in: ZkfFormat, fmt_out: ZkfFormat, bits: int) -> int:
     return round_fraction_to_zkf(fmt_out, item.sign, magnitude)
 
 
+# --------------------------------------------------------------------------------------------------
+# Transcendental operators zkf_exp2 / zkf_log2.
+#
+# *_reference is bit-exact to the RTL datapath: the same fixed-point table+Horner from the generator
+# float/zkf_transcendental.py, the same argument reduction, renormalize and pack. So "RTL == reference"
+# is an exact-match check like every other operator (exhaustive on small formats, random on large).
+# *_true is the correctly-rounded (ties-to-even) mathematical result via mpmath, used by the accuracy
+# assertion (target 0.5 ULP; <=1 ULP guaranteed). mpmath is imported lazily so the cocotb path, which
+# needs only the bit-exact references, does not hard-depend on it.
+# --------------------------------------------------------------------------------------------------
+
+_TRANS_SPECS = None
+
+
+def _trans_spec(func: str, wman: int) -> dict:
+    global _TRANS_SPECS
+    if _TRANS_SPECS is None:
+        import zkf_trans_tables
+        _TRANS_SPECS = zkf_trans_tables.SPECS
+    try:
+        return _TRANS_SPECS[(func, wman)]
+    except KeyError:
+        raise KeyError(f"no {func} table for WMAN={wman}; run float/zkf_transcendental.py --emit")
+
+
+def _horner_eval(coeffs_idx: list[int], w: int, rw: int) -> int:
+    """Truncating fixed-point Horner, bit-identical to hdl/_zkf_horner.v and the generator."""
+    acc = coeffs_idx[-1]
+    for j in range(len(coeffs_idx) - 2, -1, -1):
+        acc = coeffs_idx[j] + ((acc * w) >> rw)  # Python >> floors, matching arithmetic >>> on signed
+    return acc
+
+
+def exp2_reference(fmt: ZkfFormat, bits: int) -> int:
+    d = decode(fmt, bits)
+    if d.is_inf:
+        return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)   # +inf -> +inf, -inf -> +0
+    if d.is_zero:
+        return normal(fmt, 0, fmt.bias, 0)                            # 2**0 = 1.0
+    e = d.exp - fmt.bias
+    # |x| >= 2^(WEXP-1) is always out of range: overflow (x>0) or underflow (x<0).
+    if e >= fmt.wexp - 1:
+        return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)
+
+    spec = _trans_spec("exp2", fmt.wman)
+    ff, cf, rw = spec["argbits"], spec["cf"], spec["rw"]
+    sig = significand(fmt, bits)
+    shift = e - fmt.wfrac + ff
+    if shift >= 0:
+        mfix = sig << shift
+        lost_sticky = 0
+    else:
+        rs = -shift
+        mfix = sig >> rs
+        lost_sticky = 1 if (sig & mask(rs)) else 0
+    v = -mfix if d.sign else mfix
+    i = v >> ff                              # arithmetic floor -> integer part of x
+    f = v & mask(ff)                         # fractional part in [0, 2^FF)
+
+    acc = _horner_eval(spec["coeffs"][f >> rw], f & mask(rw), rw)  # 2**f at scale 2^-cf, in [1,2)
+    significand_value = (acc >> (cf - fmt.wfrac)) & mask(fmt.wman)
+    guard = (acc >> (cf - fmt.wman)) & 1
+    round_bit = (acc >> (cf - fmt.wman - 1)) & 1
+    sticky = (1 if (acc & mask(cf - fmt.wman - 1)) else 0) | lost_sticky
+    return pack_reference(fmt, 0, 0, 0, i, significand_value, guard, round_bit, sticky)
+
+
+def log2_reference(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
+    """Returns (y_bits, domain_error, pole)."""
+    d = decode(fmt, bits)
+    if d.is_inf and d.sign == 0:
+        return canonical_inf(fmt, 0), 0, 0          # log2(+inf) = +inf
+    if d.is_zero:
+        return canonical_inf(fmt, 1), 0, 1          # log2(+0) = -inf, pole
+    if d.sign:
+        return canonical_inf(fmt, 1), 1, 0          # log2(x<0) = -inf, domain error
+
+    e = d.exp - fmt.bias
+    spec = _trans_spec("log2", fmt.wman)
+    cf, rw = spec["cf"], spec["rw"]
+    acc = _horner_eval(spec["coeffs"][d.frac >> rw], d.frac & mask(rw), rw)  # P(t) at scale 2^-cf, > 0
+    f2 = fmt.wfrac + cf
+    l_fix = (d.frac * acc) & mask(f2)            # log2(1+t) = t*P(t) at scale 2^-f2, in [0,1)
+    r = (e << f2) + l_fix                         # signed fixed point e + log2(m)
+    sign_out = 1 if r < 0 else 0
+    magnitude = -r if r < 0 else r
+    w_norm = fmt.wexp + f2 + 1
+    zero_flag, count, aligned = normshift_reference(w_norm, magnitude)
+    significand_value = (aligned >> (w_norm - fmt.wman)) & mask(fmt.wman)
+    guard = (aligned >> (w_norm - fmt.wman - 1)) & 1
+    round_bit = (aligned >> (w_norm - fmt.wman - 2)) & 1
+    sticky = 1 if (aligned & mask(w_norm - fmt.wman - 2)) else 0
+    exp_unbiased = (w_norm - 1 - count) - f2
+    y = pack_reference(fmt, sign_out, zero_flag, 0, exp_unbiased, significand_value, guard, round_bit, sticky)
+    return y, 0, 0
+
+
+def _mpf_to_fraction(x) -> Fraction:
+    """Exact dyadic Fraction of an mpmath mpf (value = man * 2^exp)."""
+    import mpmath
+    sign, man, exp, _bc = mpmath.mpf(x)._mpf_
+    value = Fraction(int(man)) * (Fraction(2) ** int(exp))
+    return -value if sign else value
+
+
+def exp2_true(fmt: ZkfFormat, bits: int) -> int:
+    d = decode(fmt, bits)
+    if d.is_inf:
+        return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)
+    if d.is_zero:
+        return normal(fmt, 0, fmt.bias, 0)
+    e = d.exp - fmt.bias
+    if e >= fmt.wexp - 1:                          # mirror the reference's out-of-range classification
+        return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)
+    import mpmath as mp
+    sig = significand(fmt, bits)
+    x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
+    if d.sign:
+        x = -x
+    return round_fraction_to_zkf(fmt, 0, _mpf_to_fraction(mp.power(2, x)))
+
+
+def log2_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
+    d = decode(fmt, bits)
+    if d.is_inf and d.sign == 0:
+        return canonical_inf(fmt, 0), 0, 0
+    if d.is_zero:
+        return canonical_inf(fmt, 1), 0, 1
+    if d.sign:
+        return canonical_inf(fmt, 1), 1, 0
+    import mpmath as mp
+    e = d.exp - fmt.bias
+    sig = significand(fmt, bits)
+    x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
+    val = mp.log(x, 2)
+    if val == 0:
+        return zero(fmt), 0, 0
+    sign_out = 1 if val < 0 else 0
+    return round_fraction_to_zkf(fmt, sign_out, abs(_mpf_to_fraction(val))), 0, 0
+
+
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
     item = decode(fmt, bits)
     if item.exp == 0:

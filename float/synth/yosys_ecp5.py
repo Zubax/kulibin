@@ -41,7 +41,7 @@ _RESOURCE_HEADERS = (
 )
 
 
-DEVICE_ARGS = ("--12k", "--package", DEVICE_PACKAGE, "--speed", DEVICE_SPEED_GRADE)
+DEFAULT_DEVICE_SIZE = "12k"  # LFE5U-12F/25F die; the representative small part. Specs may request a larger one.
 
 
 def _synth_command(spec: ModuleSpec, netlist) -> str:
@@ -50,7 +50,11 @@ def _synth_command(spec: ModuleSpec, netlist) -> str:
 
 def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
     return [
-        *DEVICE_ARGS,
+        f"--{paths.synth_device or DEFAULT_DEVICE_SIZE}",
+        "--package",
+        DEVICE_PACKAGE,
+        "--speed",
+        DEVICE_SPEED_GRADE,
         "--freq",
         f"{paths.target_freq_mhz:g}",
         "--timing-allow-fail",

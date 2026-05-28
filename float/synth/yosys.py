@@ -55,6 +55,7 @@ class NextpnrPaths:
     netlist: Path                             # Yosys JSON netlist fed to nextpnr via --json
     report: Path                              # JSON utilization/timing report nextpnr writes via --report
     target_freq_mhz: float                    # clock target passed via --freq
+    synth_device: str = ""                    # flow-interpreted device-size hint from the spec ("" = flow default)
 
 
 @dataclass(frozen=True)
@@ -356,6 +357,7 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
         netlist=netlist,
         report=nextpnr_report,
         target_freq_mhz=target.target_freq_mhz,
+        synth_device=spec.synth_device,
     )
     run([yosys_bin, "-s", yosys_script], yosys_log, timeout=YOSYS_TIMEOUT_S)
     run([nextpnr_bin, *target.nextpnr_args(target, nextpnr_paths)], nextpnr_log, timeout=NEXTPNR_TIMEOUT_S)

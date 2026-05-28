@@ -9,6 +9,52 @@ See `zkf.py` for the encoding rules and range/precision limits.
 
 See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpga-floating-point-eval>.
 
+## Usage
+
+The `zkf_*` modules located under `hdl/` implement various operators.
+Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines.
+The two main parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand;
+the most significant bit of the significand is not stored, but there is a sign bit,
+so the total bit width is simply WFULL=WEXP+WMAN.
+
+The modules are entirely self-contained -- no external dependencies; simply drag-and-drop the directory into your project.
+There are private helper modules named `_zkf_*`;
+they are not supposed to be instantiated by the user but the public modules depend on them.
+They do not offer any of the guarantees that are valid for the public modules.
+
+Most modules provide pipelining knobs, like output register selection, internal registers, etc,
+to enable tuning for the target chip. Common options seen in most modules are:
+`STAGE_INPUT` -- latch inputs (no combinational paths at the input);
+`STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
+others control various computation stages.
+Some modules offer to split long multiplication into several stages via `STAGE_PRODUCT`;
+sometimes it helps, but sometimes it prevents the synthesizer from mapping the product do DSP slices,
+worsening the performance.
+Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
+
+Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
+other modules since they always canonicalize inputs, but it is worth noting.
+
+| Module                | Function                                                       | Remarks                     |
+|-----------------------|----------------------------------------------------------------|-----------------------------|
+| `zkf_abs`             | Absolute value.                                                |                             |
+| `zkf_neg`             | Negation.                                                      | May produce -0 (non-canon.) |
+| `zkf_is_finite`       | True iff `x` is finite.                                        |                             |
+| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
+| `zkf_cmp`             | Compare two values.                                            |                             |
+| `zkf_sort`            | Min and max of two values.                                     |                             |
+| `zkf_add`             | `a + b`.                                                       |                             |
+| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_mul`             | `a × b`.                                                       |                             |
+| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
+| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |                             |
+| `zkf_fma`             | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |                             |
+| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |                             |
+| `zkf_resize`          | Cast between different float formats.                          |                             |
+| `zkf_exp2`            | `2**x`                                                         | Faithful rounding, see below|
+| `zkf_log2`            | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
+
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
@@ -40,49 +86,28 @@ halves the worst-case error.
 
 <img src="zkf_underflow_rounding.svg">
 
-## Usage
+### Accuracy of the transcendental functions
 
-The `zkf_*` modules located under `hdl/` implement various operators.
-Unless specified otherwise, all modules are zero-bubble throughput-1 pipelines.
-The two main parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand;
-the most significant bit of the significand is not stored, but there is a sign bit,
-so the total bit width is simply WFULL=WEXP+WMAN.
+The exp2 and log2 transcendentals deliver faithful rounding (≤1 ULP guaranteed) with a 0.5 ULP correctly-rounded target,
+enforced by two paired headroom budgets.
 
-The modules are entirely self-contained -- no external dependencies; simply drag-and-drop the directory into your project.
-There are private helper modules named `_zkf_*`;
-they are not supposed to be instantiated by the user but the public modules depend on them.
-They do not offer any of the guarantees that are valid for the public modules.
+The per-segment Chebyshev fit + truncating Horner is sized to clear `< 2^-(WMAN+ERR_GUARD)` relative error with
+ERR_GUARD = 8, i.e. between `2^-(ERR_GUARD+1) = 1/512` and `2^-ERR_GUARD = 1/256` of an ULP absolute across the
+helper's `[1, 2)` interval — small enough that the round bit is structurally trustworthy,
+so faithful rounding is automatic.
 
-Most modules provide pipelining knobs, like output register selection, internal registers, etc,
-to enable tuning for the target chip. Common options seen in most modules are:
-`STAGE_INPUT` -- latch inputs (no combinational paths at the input);
-`STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
-others control various computation stages.
-Some modules offer to split long multiplication into two stages via `STAGE_PRODUCT`;
-sometimes it helps, but sometimes it prevents the synthesizer from mapping the product do DSP slices,
-worsening the performance.
-Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
+A mis-round against round-to-nearest-ties-to-even is possible only when the true value lies within `≈2^-(ERR_GUARD-1)`
+ULP of a midpoint between adjacent representable values, bounding the worst-case mis-round rate at `≈2^-7 ≈ 0.8%`;
+raising ERR_GUARD by one bit halves that rate at the cost of bumping the polynomial degree (and a Horner stage)
+at some WMAN, but the Table-Maker's Dilemma rules out correctly-rounded-everywhere at WMAN = 53 regardless of budget,
+so the 0.5 ULP target is best-effort while the ≤ 1 ULP bound is the hard contract.
 
-Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
-other modules since they always canonicalize inputs, but it is worth noting.
+The fixed-point datapath then carries GUARD = ERR_GUARD + 4 = 12 extra fractional bits below the WMAN significand
+— eight bits of polynomial-noise headroom plus four bits to host the guard/round/sticky positions and absorb the
+truncating Horner's LSB noise — which is the smallest split that keeps the round bit clear of the noise floor under
+truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
 
-| Module                | Function                                                       | Remarks                     |
-|-----------------------|----------------------------------------------------------------|-----------------------------|
-| `zkf_abs`             | Absolute value.                                                |                             |
-| `zkf_neg`             | Negation.                                                      | May produce -0 (non-canon.) |
-| `zkf_is_finite`       | True iff `x` is finite.                                        |                             |
-| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
-| `zkf_cmp`             | Compare two values.                                            |                             |
-| `zkf_sort`            | Min and max of two values.                                     |                             |
-| `zkf_add`             | `a + b`.                                                       |                             |
-| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
-| `zkf_mul`             | `a × b`.                                                       |                             |
-| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
-| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |                             |
-| `zkf_fma`             | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |                             |
-| `zkf_resize`          | Cast between different float formats.                          |                             |
+<img src="zkf_transcendental_accuracy.svg">
 
 ## Notable sizes
 

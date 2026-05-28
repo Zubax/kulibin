@@ -23,6 +23,34 @@ filesets:
       - hdl/zkf_addsub.v
       - hdl/zkf_mul_ilog2_const.v
       - hdl/zkf_fma.v
+      - hdl/_zkf_horner.v
+      - hdl/_zkf_log2_final_mul.v
+      - hdl/_tables/_zkf_exp2_m4_d2.v
+      - hdl/_tables/_zkf_exp2_m5_d2.v
+      - hdl/_tables/_zkf_exp2_m6_d2.v
+      - hdl/_tables/_zkf_exp2_m7_d2.v
+      - hdl/_tables/_zkf_exp2_m8_d2.v
+      - hdl/_tables/_zkf_exp2_m11_d2.v
+      - hdl/_tables/_zkf_exp2_m17_d2.v
+      - hdl/_tables/_zkf_exp2_m18_d2.v
+      - hdl/_tables/_zkf_exp2_m23_d3.v
+      - hdl/_tables/_zkf_exp2_m24_d3.v
+      - hdl/_tables/_zkf_exp2_m36_d4.v
+      - hdl/_tables/_zkf_exp2_m53_d6.v
+      - hdl/_tables/_zkf_log2_m4_d5.v
+      - hdl/_tables/_zkf_log2_m5_d4.v
+      - hdl/_tables/_zkf_log2_m6_d3.v
+      - hdl/_tables/_zkf_log2_m7_d2.v
+      - hdl/_tables/_zkf_log2_m8_d2.v
+      - hdl/_tables/_zkf_log2_m11_d2.v
+      - hdl/_tables/_zkf_log2_m17_d2.v
+      - hdl/_tables/_zkf_log2_m18_d2.v
+      - hdl/_tables/_zkf_log2_m23_d3.v
+      - hdl/_tables/_zkf_log2_m24_d3.v
+      - hdl/_tables/_zkf_log2_m36_d4.v
+      - hdl/_tables/_zkf_log2_m53_d6.v
+      - hdl/zkf_exp2.v
+      - hdl/zkf_log2.v
     file_type: verilogSource
 
   rtl_pack:
@@ -147,6 +175,48 @@ filesets:
       - hdl/zkf_resize.v
     file_type: verilogSource
 
+  rtl_exp2:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
+      - hdl/_zkf_horner.v
+      - hdl/_tables/_zkf_exp2_m4_d2.v
+      - hdl/_tables/_zkf_exp2_m5_d2.v
+      - hdl/_tables/_zkf_exp2_m6_d2.v
+      - hdl/_tables/_zkf_exp2_m7_d2.v
+      - hdl/_tables/_zkf_exp2_m8_d2.v
+      - hdl/_tables/_zkf_exp2_m11_d2.v
+      - hdl/_tables/_zkf_exp2_m17_d2.v
+      - hdl/_tables/_zkf_exp2_m18_d2.v
+      - hdl/_tables/_zkf_exp2_m23_d3.v
+      - hdl/_tables/_zkf_exp2_m24_d3.v
+      - hdl/_tables/_zkf_exp2_m36_d4.v
+      - hdl/_tables/_zkf_exp2_m53_d6.v
+      - hdl/zkf_exp2.v
+    file_type: verilogSource
+
+  rtl_log2:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/_zkf_pipe.v
+      - hdl/_zkf_normshift.v
+      - hdl/_zkf_horner.v
+      - hdl/_zkf_log2_final_mul.v
+      - hdl/_tables/_zkf_log2_m4_d5.v
+      - hdl/_tables/_zkf_log2_m5_d4.v
+      - hdl/_tables/_zkf_log2_m6_d3.v
+      - hdl/_tables/_zkf_log2_m7_d2.v
+      - hdl/_tables/_zkf_log2_m8_d2.v
+      - hdl/_tables/_zkf_log2_m11_d2.v
+      - hdl/_tables/_zkf_log2_m17_d2.v
+      - hdl/_tables/_zkf_log2_m18_d2.v
+      - hdl/_tables/_zkf_log2_m23_d3.v
+      - hdl/_tables/_zkf_log2_m24_d3.v
+      - hdl/_tables/_zkf_log2_m36_d4.v
+      - hdl/_tables/_zkf_log2_m53_d6.v
+      - hdl/zkf_log2.v
+    file_type: verilogSource
+
   tb_mul_ilog2_const_wrap:
     files:
       - tb/zkf_mul_ilog2_const_wrap.v
@@ -197,6 +267,10 @@ filesets:
       - tb/test_to_int.py:
           file_type: user
       - tb/test_resize.py:
+          file_type: user
+      - tb/test_exp2.py:
+          file_type: user
+      - tb/test_log2.py:
           file_type: user
       - tb/test_properties.py:
           file_type: user
@@ -999,3 +1073,73 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_resize
     parameters: *float_resize_params
+
+  sim_exp2_icarus:
+    filesets: [rtl_exp2, tb_cocotb]
+    toplevel: zkf_exp2
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_exp2
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_trans_params
+      - WEXP
+      - WMAN
+      - STAGE_INPUT
+      - STAGE_PRODUCT
+      - STAGE_OUTPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_OUTPUT
+
+  sim_exp2_verilator:
+    filesets: [rtl_exp2, tb_cocotb]
+    toplevel: zkf_exp2
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_exp2
+    parameters: *float_trans_params
+
+  sim_log2_icarus:
+    filesets: [rtl_log2, tb_cocotb]
+    toplevel: zkf_log2
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_log2
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_log2_params
+      - WEXP
+      - WMAN
+      - STAGE_INPUT
+      - STAGE_PRODUCT
+      - STAGE_NORMALIZE
+      - STAGE_OUTPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_OUTPUT
+
+  sim_log2_verilator:
+    filesets: [rtl_log2, tb_cocotb]
+    toplevel: zkf_log2
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_log2
+    parameters: *float_log2_params

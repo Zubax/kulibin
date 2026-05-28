@@ -1026,6 +1026,149 @@ endmodule
     )
 
 
+def write_exp2_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] x,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_x;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_exp2 #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_OUTPUT({spec.stage_output})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .x(r_x),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_x <= x;
+        r_y <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
+def write_log2_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] x,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y,
+    output wire                 domain_error,
+    output wire                 pole
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_x;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+    wire                 dut_domain_error;
+    wire                 dut_pole;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+    {SYNTH_REG_ATTR}
+    reg                 r_domain_error;
+    {SYNTH_REG_ATTR}
+    reg                 r_pole;
+
+    assign out_valid    = r_out_valid;
+    assign y            = r_y;
+    assign domain_error = r_domain_error;
+    assign pole         = r_pole;
+
+    zkf_log2 #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_OUTPUT({spec.stage_output})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .x(r_x),
+        .out_valid(dut_out_valid),
+        .y(dut_y),
+        .domain_error(dut_domain_error),
+        .pole(dut_pole)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_x            <= x;
+        r_y            <= dut_y;
+        r_domain_error <= dut_domain_error;
+        r_pole         <= dut_pole;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -1053,5 +1196,9 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_to_int_wrapper(spec, path)
     elif spec.kind == "resize":
         write_resize_wrapper(spec, path)
+    elif spec.kind == "exp2":
+        write_exp2_wrapper(spec, path)
+    elif spec.kind == "log2":
+        write_log2_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")

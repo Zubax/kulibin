@@ -11,8 +11,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import re
+import sys
 
 from common import REPO
+
+# The polynomial degree D for zkf_exp2 / zkf_log2 is a closed-form function of WMAN computed by the
+# generator; import the emitted table so the synth pipeline-depth metadata stays in lockstep with the RTL.
+sys.path.insert(0, str(REPO / "float" / "tb"))
+from zkf_trans_tables import SPECS as TRANS_SPECS  # noqa: E402  (path set up immediately above)
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,7 @@ class ModuleSpec:
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
     stage_normalize: int = 0 # zkf_fma: 0, 1, or 2 (1 = register packer inputs; 2 = + 3-segment normalizer).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
+    synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
 
 
 MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
@@ -434,6 +441,80 @@ MODULES = [
         wexp_out=8,
         wman_out=36,
     ),
+    # zkf_exp2 / zkf_log2 (table + polynomial). Both close 100 MHz with margin on the LFE5U-12F at the 6/18
+    # reference, but along opposite axes, so their headline entries differ (cf. how zkf_fma's plain entry carries
+    # the knobs it needs to close while zkf_div's does not):
+    #   - exp2's Horner argument is the full reduced fraction, so acc*w is a wide x wide product. The unsplit form
+    #     is fabric-mapped/slow on Diamond/LSE (~88 MHz) and slow on Yosys (~85 MHz), so the headline config carries
+    #     STAGE_PRODUCT=1 (each multiply -> a registered 2x2 DSP grid); it then reaches 132 MHz Yosys / 117 Diamond.
+    #   - log2's argument is the narrow segment-local fraction, so acc*w is wide x narrow -- a single DSP multiply
+    #     both tools map cleanly. It closes unsplit (104 MHz both); STAGE_PRODUCT=1 would split it into the small
+    #     asymmetric partials that Diamond fabric-maps (drops it below 100), so log2 is left unsplit and instead
+    #     gets STAGE_OUTPUT=1 as its higher-margin variant (107 Yosys / 112 Diamond).
+    ModuleSpec(
+        name="zkf_exp2",
+        label="zkf_exp2 (2**x, table+polynomial; STAGE_PRODUCT=1 splits each Horner multiply into a registered "
+              "2x2 DSP grid -- needed to close timing, as the unsplit wide product is fabric-mapped on Diamond/LSE)",
+        top="zkf_exp2_synth_top",
+        kind="exp2",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        stage_product=1,
+    ),
+    ModuleSpec(
+        name="zkf_log2",
+        label="zkf_log2 (log2(x), table+polynomial; single narrow multiply per Horner step, DSP-mapped by both tools)",
+        top="zkf_log2_synth_top",
+        kind="log2",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_log2_so1",
+        label="zkf_log2 (STAGE_OUTPUT=1, registered output -- higher timing margin)",
+        top="zkf_log2_so1_synth_top",
+        kind="log2",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        stage_output=1,
+    ),
+    # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The single wide multiply per step (SP=0) and
+    # the 2x2 split (SP=1) are both deep DSP cascades that top out near 60 MHz; STAGE_PRODUCT=2 (3x3 split with a
+    # registered partial-sum stage) cuts the operands into <=18-bit chunks, so each sub-product packs into a single
+    # MULT18X18D output register, and every adder in the sum tree stays shallow. With STAGE_INPUT/STAGE_OUTPUT
+    # shielding the wide decode and pack, these need ~36 MULT18X18D, so they target the LFE5U-45F (72 DSP) via
+    # synth_device.
+    ModuleSpec(
+        name="zkf_exp2_w8m36",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_OUTPUT=1; LFE5U-45F)",
+        top="zkf_exp2_w8m36_synth_top",
+        kind="exp2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        stage_input=1,
+        stage_product=2,
+        stage_output=1,
+        synth_device="45k",
+    ),
+    ModuleSpec(
+        name="zkf_log2_w8m36",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_NORMALIZE=1 (extra top "
+              "normshift barrier) + STAGE_OUTPUT=1; LFE5U-45F)",
+        top="zkf_log2_w8m36_synth_top",
+        kind="log2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        stage_input=1,
+        stage_product=2,
+        stage_normalize=1,
+        stage_output=1,
+        synth_device="45k",
+    ),
 ]
 
 
@@ -506,6 +587,21 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_pipe.v",
             hdl / "zkf_resize.v",
         ]
+    if spec.kind in {"exp2", "log2"}:
+        # The generate-if selects the table whose name matches WMAN (D = degree(WMAN), from the generated SPECS); the
+        # other WMAN branches reference undefined modules but are untaken, so synthesis prunes them (like the
+        # _zkf_invalid_* sentinels). Yosys's hierarchy -check, however, also elaborates the *generic* zkf_<func>
+        # (default WMAN), so that WMAN's table must be present too -- include both (deduped) and let synthesis prune
+        # the unused generic.
+        def table(wman: int) -> Path:
+            return hdl / "_tables" / f"_zkf_{spec.kind}_m{wman}_d{TRANS_SPECS[(spec.kind, wman)]['d']}.v"
+        DEFAULT_WMAN = 18  # the default WMAN of zkf_exp2 / zkf_log2
+        tables = [table(w) for w in sorted({DEFAULT_WMAN, spec.wman})]
+        sources = [hdl / "_zkf_pack.v", hdl / "_zkf_pipe.v"]
+        if spec.kind == "log2":
+            # log2 uses _zkf_normshift directly with STAGE_SPLIT = 1 + STAGE_NORMALIZE.
+            sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_log2_final_mul.v"]
+        return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -548,6 +644,15 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "resize":
         # Both the widen-only fast path and the _zkf_pack path honor STAGE_OUTPUT; STAGE_INPUT adds the input pipe.
         return spec.stage_output + spec.stage_input
+    if spec.kind in {"exp2", "log2"}:
+        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + (STAGE_PRODUCT + STAGE_NORMALIZE for log2,
+        # the t*P split and the extra normalizer barrier) + STAGE_OUTPUT, where D = degree(WMAN) comes from the
+        # generated table. Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has those plus the t*P baseline
+        # stage + 3 back-end = 6 (matches the testbenches).
+        degree = TRANS_SPECS[(spec.kind, spec.wman)]["d"]
+        front = 5 if spec.kind == "exp2" else 6
+        log2_extra = (spec.stage_product + spec.stage_normalize) if spec.kind == "log2" else 0
+        return spec.stage_input + front + log2_extra + degree * (2 + spec.stage_product) + spec.stage_output
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -608,6 +713,8 @@ def params(spec: ModuleSpec) -> str:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_si_suffix(spec)}{_so_suffix(spec)}"
     if spec.kind in {"add", "addsub"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}"
+    if spec.kind in {"exp2", "log2"}:
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_so_suffix(spec)}"
     if spec.kind == "fma":
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
                 f"{_sp_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}{_so_suffix(spec)}")

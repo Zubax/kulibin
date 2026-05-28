@@ -46,6 +46,16 @@ from wrappers import write_wrapper
 
 DIAMOND_BUILD = REPO / "build" / "float_synth_diamond_ecp5"
 DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-12F-6BG381C")
+# Map of spec.synth_device hints to the corresponding LFE5U part (6BG381C package + speed grade 6); "" is the default.
+_DIAMOND_DEVICE_BY_HINT = {"": DIAMOND_DEVICE, "12k": "LFE5U-12F-6BG381C", "25k": "LFE5U-25F-6BG381C",
+                           "45k": "LFE5U-45F-6BG381C", "85k": "LFE5U-85F-6BG381C"}
+
+
+def _diamond_device(spec: ModuleSpec) -> str:
+    try:
+        return _DIAMOND_DEVICE_BY_HINT[spec.synth_device]
+    except KeyError:
+        raise ValueError(f"unsupported synth_device {spec.synth_device!r} for spec {spec.name!r}")
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
 DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "3"))
 DIAMOND_PAR_EFFORT = int(os.environ.get("DIAMOND_PAR_EFFORT", "3"))
@@ -196,7 +206,7 @@ def write_diamond_ldf(spec: ModuleSpec, wrapper: Path, lpf: Path, sty: Path, ldf
         '<?xml version="1.0" encoding="UTF-8"?>',
         (
             f'<BaliProject version="3.2" title="{xml_attr(project_name(spec))}" '
-            f'device="{xml_attr(DIAMOND_DEVICE)}" default_implementation="impl1">'
+            f'device="{xml_attr(_diamond_device(spec))}" default_implementation="impl1">'
         ),
         "    <Options/>",
         '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse" '
@@ -483,7 +493,7 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <h1>Kulibin Float Diamond/LSE Synthesis Report</h1>
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
-        + f"<p>Flow: Lattice Diamond LSE for {escape(DIAMOND_DEVICE)} at "
+        + f"<p>Flow: Lattice Diamond LSE (device per module; default {escape(DIAMOND_DEVICE)}) at "
         + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Balanced, "
         + f"MAP register retiming is enabled, PAR placement effort is {DIAMOND_PAR_EFFORT}, and routing passes are "
         + f"{DIAMOND_ROUTE_PASSES}.</p>"
