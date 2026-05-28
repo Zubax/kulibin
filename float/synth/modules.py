@@ -534,7 +534,7 @@ MODULES = [
 
 def module_group(spec: ModuleSpec) -> str:
     """Identifier for grouping a module with its STAGE_* variants."""
-    match = re.match(r"^(.+?)(?:_(?:si|sp|sa|sd)\d+)+$", spec.name)
+    match = re.match(r"^(.+?)(?:_(?:si|sp|sa|sd|sn|pa|so)\d+)+$", spec.name)
     return match.group(1) if match else spec.name
 
 
@@ -579,11 +579,11 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_div.v",
         ]
     if spec.kind == "cmp":
-        return [hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
+        return [hdl / "_zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
-        return [hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
+        return [hdl / "_zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
     if spec.kind == "mul_ilog2_const":
-        return [hdl / "zkf_mul_ilog2_const.v"]
+        return [hdl / "_zkf_pipe.v", hdl / "zkf_mul_ilog2_const.v"]
     if spec.kind == "from_int":
         return [
             hdl / "_zkf_pack.v",
@@ -642,13 +642,16 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "pack":
         return spec.stage_output
     if spec.kind == "mul":
-        # 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split) + STAGE_OUTPUT (pack output).
-        return 1 + spec.stage_input + spec.stage_output + (1 if spec.stage_product >= 1 else 0)
+        # 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split) + STAGE_PACK (pack input
+        # register) + STAGE_OUTPUT (pack output).
+        return (1 + spec.stage_input + spec.stage_output + spec.stage_pack
+                + (1 if spec.stage_product >= 1 else 0))
     if spec.kind in {"add", "addsub"}:
-        # 4 base + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_OUTPUT. STAGE_NORMALIZE adds 1 cycle per
-        # unit symmetrically to both sub-path (normshift internal) and add-path (s2x catch-up).
-        return (4 + spec.stage_output + spec.stage_decode + spec.stage_align
-                + spec.stage_normalize)
+        # 4 base + STAGE_INPUT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
+        # STAGE_NORMALIZE adds 1 cycle per unit symmetrically to both sub-path (normshift internal) and add-path
+        # (s2x catch-up).
+        return (4 + spec.stage_input + spec.stage_output + spec.stage_decode + spec.stage_align
+                + spec.stage_normalize + spec.stage_pack)
     if spec.kind == "fma":
         # 5 base (product, order, align-capture, add, normalize+pack) + STAGE_INPUT (latched inputs)
         # + STAGE_PRODUCT (DSP split) + STAGE_DECODE (decode/compare split) + STAGE_ALIGN (align split)
@@ -660,11 +663,11 @@ def register_stages(spec: ModuleSpec) -> int:
     if spec.kind == "div_core":
         return div_core_stages
     if spec.kind == "div":
-        return div_core_stages + spec.stage_output + spec.stage_input
+        return div_core_stages + spec.stage_output + spec.stage_input + spec.stage_pack
     if spec.kind in {"cmp", "sort"}:
-        return 1
+        return 1 + spec.stage_input
     if spec.kind == "mul_ilog2_const":
-        return 1 + spec.stage_decode
+        return 1 + spec.stage_input + spec.stage_decode
     if spec.kind == "from_int":
         # 1 (S1 register) + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
         return (1 + spec.stage_input + spec.stage_normalize + spec.stage_pack + spec.stage_output)
@@ -729,10 +732,11 @@ def params(spec: ModuleSpec) -> str:
     if spec.kind == "div":
         return (
             f"WEXP={spec.wexp}, WMAN={spec.wman}, "
-            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}{_si_suffix(spec)}"
+            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
+            f"{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
         )
     if spec.kind == "mul_ilog2_const":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_sd_suffix(spec)}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_si_suffix(spec)}{_sd_suffix(spec)}"
     if spec.kind == "to_int":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
     if spec.kind == "resize":
@@ -741,11 +745,14 @@ def params(spec: ModuleSpec) -> str:
             f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_si_suffix(spec)}"
         )
     if spec.kind in {"cmp", "sort"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_si_suffix(spec)}"
     if spec.kind == "mul":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sp_suffix(spec)}{_si_suffix(spec)}{_so_suffix(spec)}"
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_sp_suffix(spec)}{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind in {"add", "addsub"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}"
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}"
+                f"{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind == "from_int":
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}"
                 f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}")

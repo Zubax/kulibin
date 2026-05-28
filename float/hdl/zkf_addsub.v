@@ -7,9 +7,11 @@
 module zkf_addsub #(
     parameter WEXP            = 6,    // exponent field width
     parameter WMAN            = 18,   // significand precision including the hidden bit
+    parameter STAGE_INPUT     = 0,    // forwarded to zkf_add
     parameter STAGE_DECODE    = 0,    // forwarded to zkf_add
     parameter STAGE_ALIGN     = 0,    // forwarded to zkf_add
     parameter STAGE_NORMALIZE = 0,    // forwarded to zkf_add
+    parameter STAGE_PACK      = 0,    // forwarded to zkf_add
     parameter STAGE_OUTPUT    = 0     // forwarded to zkf_add
 ) (
     input wire clk,
@@ -26,8 +28,11 @@ module zkf_addsub #(
     localparam WFULL = WEXP + WMAN;
     zkf_add #(
         .WEXP(WEXP), .WMAN(WMAN),
+        .STAGE_INPUT(STAGE_INPUT),
         .STAGE_DECODE(STAGE_DECODE), .STAGE_ALIGN(STAGE_ALIGN),
-        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_OUTPUT(STAGE_OUTPUT)
+        .STAGE_NORMALIZE(STAGE_NORMALIZE),
+        .STAGE_PACK(STAGE_PACK),
+        .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_add (
         .clk(clk),
         .rst(rst),

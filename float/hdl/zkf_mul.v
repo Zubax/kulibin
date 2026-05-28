@@ -1,5 +1,5 @@
 /// Streamed Zubax Kulibin float multiplier.
-/// Register stages: 1+STAGE_INPUT+STAGE_PRODUCT+STAGE_OUTPUT end-to-end.
+/// Register stages: 1+STAGE_INPUT+STAGE_PRODUCT+STAGE_PACK+STAGE_OUTPUT
 ///
 /// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
@@ -12,6 +12,10 @@
 ///   the sum as the ALU54B-style cascade, splitting the chain across two clock periods. Costs one extra pipeline
 ///   cycle of latency. Values above 1 are treated as 1; further splits are reserved for future expansion.
 ///
+/// STAGE_PACK=0: pack inputs are combinational (default).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT), insulating the rounder from the
+///   product-classification cone (+1 cycle).
+///
 /// STAGE_OUTPUT=0: the result is combinational (default).
 /// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths (+1 cycle).
 
@@ -22,6 +26,7 @@ module zkf_mul #(
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT   = 0,
     parameter STAGE_PRODUCT = 0,
+    parameter STAGE_PACK    = 0,
     parameter STAGE_OUTPUT  = 0
 ) (
     input wire clk,
@@ -203,7 +208,10 @@ module zkf_mul #(
     wire                            s1_sticky_hi      = |s1_mag[WMAN-3:0];
     wire                            s1_sticky_lo      = |s1_mag[WMAN-4:0];
 
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .STAGE_OUTPUT(STAGE_OUTPUT)) u_pack (
+    _zkf_pack #(
+        .WEXP(WEXP), .WMAN(WMAN),
+        .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_pack (
         .clk(clk),
         .rst(rst),
         .in_valid(s1_valid),

@@ -151,6 +151,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -219,9 +220,11 @@ module {spec.top} (
     zkf_add #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -293,9 +296,11 @@ module {spec.top} (
     zkf_addsub #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -582,6 +587,7 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
+        .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output})
     ) dut (
         .clk(clk),
@@ -661,7 +667,8 @@ module {spec.top} (
 
     zkf_cmp #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -737,7 +744,8 @@ module {spec.top} (
 
     zkf_sort #(
         .WEXP({spec.wexp}),
-        .WMAN({spec.wman})
+        .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -805,6 +813,7 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .K({MUL_ILOG2_CONST_K}),
+        .STAGE_INPUT({spec.stage_input}),
         .STAGE_DECODE({spec.stage_decode})
     ) dut (
         .clk(clk),

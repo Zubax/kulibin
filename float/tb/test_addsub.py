@@ -152,11 +152,12 @@ async def addsub_runtime_cases(dut) -> None:
     dut.b.value = 0
     dut.op_sub.value = 0
 
-    # zkf_addsub: matches zkf_add. 4 + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_OUTPUT.
-    register_stages = (4 + context.stage_output
+    # zkf_addsub: matches zkf_add. 4 + STAGE_INPUT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
+    register_stages = (4 + context.stage_input + context.stage_output
                        + (1 if context.stage_decode >= 1 else 0)
                        + (1 if context.stage_align >= 1 else 0)
-                       + context.stage_normalize)
+                       + context.stage_normalize
+                       + context.stage_pack)
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddSubCase) -> dict[str, int]:

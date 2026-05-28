@@ -1,5 +1,6 @@
 /// Constant-power-of-two multiplier: y = a * 2^K, where K is a compile-time signed integer parameter.
-/// Register stages: 1+STAGE_DECODE end-to-end.
+///
+/// Register stages: 1+STAGE_INPUT+STAGE_DECODE
 ///
 /// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the mantissa is preserved
 /// bit-for-bit and only the biased exponent is incremented by K. Special inputs (zero, signed infinity) are
@@ -8,6 +9,9 @@
 /// Elaboration fails when K is so extreme that every normal input either overflows to signed infinity or underflows
 /// to zero, since the module is then provably useless. Concretely, K must satisfy -EXP_MAX_FINITE <= K < EXP_MAX_FINITE
 /// where EXP_MAX_FINITE = 2**WEXP-2. This bound preserves at least one exponent value that maps to a normal output.
+///
+/// STAGE_INPUT=0: operand feeds the decode combinationally (default).
+/// STAGE_INPUT=1: latch the input before any combinational logic, isolating it from upstream paths (+1 cycle).
 ///
 /// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
 ///
@@ -21,6 +25,7 @@ module zkf_mul_ilog2_const #(
     parameter         WEXP         = 6,     // exponent field width
     parameter         WMAN         = 18,    // significand precision including the hidden bit
     parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
+    parameter         STAGE_INPUT  = 0,     // 0 = combinational input; 1 = latch input before logic (+1 cycle)
     parameter         STAGE_DECODE = 0      // 0 = single-cycle; >=1 = register decoded signals (+1 cycle)
 ) (
     input wire clk,
@@ -35,6 +40,14 @@ module zkf_mul_ilog2_const #(
     localparam WFRAC    = WMAN - 1;
     localparam WFULL    = WEXP + WMAN;
     localparam WEXP_EXT = WEXP + 2;     // signed accumulator wide enough for a_exp + K at any allowed K
+
+    // -- Optional input register stage: latch the operand before any combinational logic.
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in(a),
+        .out_valid(in_valid_q), .out(a_q)
+    );
 
     localparam [WEXP-1:0] EXP_INF = {WEXP{1'b1}};
 
@@ -65,9 +78,9 @@ module zkf_mul_ilog2_const #(
     // verilator coverage_on
 
     // Decode and classify.
-    wire             a_sign = a[WFULL-1];
-    wire [WEXP-1:0]  a_exp  = a[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] a_frac = a[WFRAC-1:0];
+    wire             a_sign = a_q[WFULL-1];
+    wire [WEXP-1:0]  a_exp  = a_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] a_frac = a_q[WFRAC-1:0];
     wire             a_zero = ~|a_exp;
     wire             a_inf  =  &a_exp;
 
@@ -137,7 +150,7 @@ module zkf_mul_ilog2_const #(
                 if (rst) begin
                     out_valid <= 1'b0;
                 end else begin
-                    out_valid <= in_valid;
+                    out_valid <= in_valid_q;
                 end
                 case ({result_is_zero, result_is_inf, result_is_min_normal})
                     3'b100, 3'b101, 3'b110, 3'b111: y <= {WFULL{1'b0}};
@@ -160,7 +173,7 @@ module zkf_mul_ilog2_const #(
                 if (rst) begin
                     r_in_valid <= 1'b0;
                 end else begin
-                    r_in_valid <= in_valid;
+                    r_in_valid <= in_valid_q;
                 end
                 r_sign                 <= a_sign;
                 r_result_is_zero       <= result_is_zero;

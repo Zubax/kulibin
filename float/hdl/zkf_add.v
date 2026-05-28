@@ -1,6 +1,9 @@
 /// Streamed Zubax Kulibin float adder.
 ///
-/// Register stages: 4+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_OUTPUT
+/// Register stages: 4+STAGE_INPUT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT
+///
+/// STAGE_INPUT=0: operands feed the datapath combinationally (default).
+/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
 /// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).
 /// STAGE_OUTPUT=1: one register stage at the output (+1 cycle).
@@ -13,15 +16,21 @@
 ///
 /// STAGE_NORMALIZE={0,1,2}: number of internal register barriers in the close-cancellation _zkf_normshift cascade
 /// (direct forward to _zkf_normshift.STAGE_SPLIT). Adds STAGE_NORMALIZE cycles.
+///
+/// STAGE_PACK=0: pack inputs are combinational (default).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT), insulating the rounder from the
+///   normalize/exponent-correction cone (+1 cycle).
 
 `default_nettype none
 
 module zkf_add #(
     parameter WEXP            = 6,    // exponent field width
     parameter WMAN            = 18,   // significand precision including the hidden bit
+    parameter STAGE_INPUT     = 0,    // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
     parameter STAGE_DECODE    = 0,    // 0 = decode feeds s0 combinationally; 1 = registered decoded bundle (+1 cycle)
     parameter STAGE_ALIGN     = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
     parameter STAGE_NORMALIZE = 0,    // {0,1,2} internal close-cancel normshift barriers
+    parameter STAGE_PACK      = 0,    // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
     parameter STAGE_OUTPUT    = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
 ) (
     input wire clk,
@@ -57,19 +66,28 @@ module zkf_add #(
 
     localparam [WINDEX-1:0] NORM_TOP = WMAN + 2;
 
+    // -- Optional input register stage: latch the operands before any combinational logic.
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    wire [WFULL-1:0] b_q;
+    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}),
+        .out_valid(in_valid_q), .out({b_q, a_q})
+    );
+
     // Operand decode/classification. Exponent-zero operands are zero regardless of sign/fraction payload.
-    wire            a_sign        = a[WFULL-1];
-    wire            b_sign        = b[WFULL-1];
+    wire            a_sign        = a_q[WFULL-1];
+    wire            b_sign        = b_q[WFULL-1];
     wire            raw_same_sign = ~(a_sign ^ b_sign);
-    wire [WEXP-1:0] a_exp         = a[WFULL-2:WFRAC];
-    wire [WEXP-1:0] b_exp         = b[WFULL-2:WFRAC];
+    wire [WEXP-1:0] a_exp         = a_q[WFULL-2:WFRAC];
+    wire [WEXP-1:0] b_exp         = b_q[WFULL-2:WFRAC];
 
     wire             raw_a_inf         = &a_exp;
     wire             raw_b_inf         = &b_exp;
     wire             a_finite          = (|a_exp) && !raw_a_inf;
     wire             b_finite          = (|b_exp) && !raw_b_inf;
-    wire [WFRAC-1:0] a_fraction        = a[WFRAC-1:0];
-    wire [WFRAC-1:0] b_fraction        = b[WFRAC-1:0];
+    wire [WFRAC-1:0] a_fraction        = a_q[WFRAC-1:0];
+    wire [WFRAC-1:0] b_fraction        = b_q[WFRAC-1:0];
     // hidden-bit MSB is structurally 1; fractions are covered via the a/b inputs.
     // verilator coverage_off
     wire [WMAN-1:0]  a_significand     = {1'b1, a_fraction};
@@ -91,7 +109,7 @@ module zkf_add #(
     // force_inf/force_zero overrides the datapath. This single compare replaces the former separate exponent compare
     // and significand compare, and selecting the larger-magnitude operand directly removes the s1 equal-exponent swap.
     wire raw_a_mag_ge_b_mag;
-    _zkf_add_ge #(.W(WFULL-1)) u_mag_ge (.a(a[WFULL-2:0]), .b(b[WFULL-2:0]), .ge(raw_a_mag_ge_b_mag));
+    _zkf_add_ge #(.W(WFULL-1)) u_mag_ge (.a(a_q[WFULL-2:0]), .b(b_q[WFULL-2:0]), .ge(raw_a_mag_ge_b_mag));
 
     // Decoded-operand bundle. When STAGE_DECODE=0 the d_* signals are combinational aliases of the raw
     // decoded wires above; when STAGE_DECODE!=0 they are registered, so the s0 capture below sees the
@@ -112,7 +130,7 @@ module zkf_add #(
 
     generate
         if (STAGE_DECODE == 0) begin : g_no_decode_register
-            assign d_valid           = in_valid;
+            assign d_valid           = in_valid_q;
             assign d_a_sign          = a_sign;
             assign d_b_sign          = b_sign;
             assign d_same_sign       = raw_same_sign;
@@ -137,7 +155,7 @@ module zkf_add #(
             reg            r_a_mag_ge_b_mag;
             always @(posedge clk) begin
                 if (rst) r_valid <= 1'b0;
-                else     r_valid <= in_valid;
+                else     r_valid <= in_valid_q;
                 r_a_sign         <= a_sign;
                 r_b_sign         <= b_sign;
                 r_same_sign      <= raw_same_sign;
@@ -407,7 +425,8 @@ module zkf_add #(
     wire            s3_pack_sticky      = s3_same_sign ? s3_add_sticky       : s3_sub_sticky;
 
     _zkf_pack#(
-        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .EXP_IS_BIASED(1), .STAGE_OUTPUT(STAGE_OUTPUT)
+        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .EXP_IS_BIASED(1),
+        .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_pack (
         .clk(clk),
         .rst(rst),

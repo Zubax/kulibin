@@ -193,7 +193,7 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
 
 # --- builders that mirror the former bash helpers -------------------------------------------------
 def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None,
-            so=None, target=None, root_module=None) -> Run:
+            pa=None, so=None, target=None, root_module=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
@@ -206,6 +206,8 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
         vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+    if pa is not None:
+        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count,
@@ -290,11 +292,19 @@ def _per_pr(sim, out: list) -> None:
     for op in ("cmp", "sort"):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
+        # New uniform STAGE_INPUT knob for cmp/sort: exercise on a fast exhaustive format.
+        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     for op in ("add", "addsub"):
         for sd in (0, 1):
             for sa in (0, 1):
                 for cfg, w, m, k, c in BINARY:
                     out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
+        # New uniform STAGE_INPUT and STAGE_PACK knobs for add/addsub: exercise each on a fast exhaustive format,
+        # plus the all-on combination so a future register-stage change cannot silently break the latency bookkeeping.
+        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+        out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1,
+                           si=1, so=1))
         # STAGE_NORMALIZE knob (new): forwards to _zkf_normshift.STAGE_SPLIT for the close-cancel path. SN=1
         # matches today's silent SS=1 (same latency, different register placement); SN=2 adds an s2x catch-up
         # cycle. The normshift needs NL4 >= 3 for SN=2, which requires NINPUT = WMAN+3 >= 11 -> WMAN >= 8.
@@ -305,9 +315,15 @@ def _per_pr(sim, out: list) -> None:
         for si in (0, 1):
             for cfg, w, m, k, c in BINARY:
                 out.append(_binary("mul", sim, "pr", cfg, w, m, k, c, sp=sp, si=si))
+    # New uniform STAGE_PACK knob (forwards to _zkf_pack.STAGE_INPUT) for mul: standalone and full-shield check.
+    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_binary("mul", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sp=1, si=1, pa=1, so=1))
     for si in (0, 1):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
+    # New uniform STAGE_PACK knob for div: standalone exercise.
+    out.append(_binary("div", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_binary("div", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
     for cfg, w, m, k, c in FMA:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob exercised once (plus all-on) on a fast format. Results are staging-independent, so this
@@ -357,6 +373,9 @@ def _per_pr(sim, out: list) -> None:
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
+    # New uniform STAGE_INPUT knob for mul_ilog2_const: standalone and combined with STAGE_DECODE.
+    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
     for si in (0, 1):
         for cfg, w, m, wint, k, c in FROM_INT:
             out.append(_cast("from_int", sim, "pr", cfg, w, m, wint, k, c, si))

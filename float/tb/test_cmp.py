@@ -156,9 +156,11 @@ async def cmp_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
+    # zkf_cmp: 1 stage + STAGE_INPUT.
+    register_stages = 1 + context.stage_input
     scoreboard = RegisterStageScoreboard(
         dut,
-        1,
+        register_stages,
         context,
         {
             "a_gt_b": (dut.a_gt_b, 1),

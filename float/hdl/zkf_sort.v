@@ -1,12 +1,16 @@
 /// Streamed min/max sorter built on zkf_cmp_comb.
 /// Inherits the canonical-zero and same-sign-infinity equality semantics from zkf_cmp_comb.
-/// Register stages: 1.
+/// Register stages: 1+STAGE_INPUT.
+///
+/// STAGE_INPUT=0: operands feed the sorter combinationally (default).
+/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 
 `default_nettype none
 
 module zkf_sort #(
-    parameter WEXP = 6,
-    parameter WMAN = 18
+    parameter WEXP        = 6,
+    parameter WMAN        = 18,
+    parameter STAGE_INPUT = 0
 ) (
     input wire clk,
     input wire rst,
@@ -19,13 +23,24 @@ module zkf_sort #(
     output reg [WEXP+WMAN-1:0] min,         // min(a,b)
     output reg [WEXP+WMAN-1:0] max          // max(a,b)
 );
+    localparam WFULL = WEXP + WMAN;
+
+    // -- Optional input register stage: latch the operands before any combinational logic.
+    wire             in_valid_q;
+    wire [WFULL-1:0] a_q;
+    wire [WFULL-1:0] b_q;
+    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}),
+        .out_valid(in_valid_q), .out({b_q, a_q})
+    );
+
     wire a_gt_b;
     wire a_eq_b;
     wire a_lt_b;
 
     zkf_cmp_comb #(.WEXP(WEXP), .WMAN(WMAN)) u_cmp (
-        .a(a),
-        .b(b),
+        .a(a_q),
+        .b(b_q),
         .a_gt_b(a_gt_b),
         .a_eq_b(a_eq_b),
         .a_lt_b(a_lt_b)
@@ -34,9 +49,9 @@ module zkf_sort #(
     // Reset only stream validity. Payload registers intentionally free-run.
     always @(posedge clk) begin
         if (rst) out_valid <= 1'b0;
-        else     out_valid <= in_valid;
-        min <= a_lt_b ? a : b;
-        max <= a_lt_b ? b : a;
+        else     out_valid <= in_valid_q;
+        min <= a_lt_b ? a_q : b_q;
+        max <= a_lt_b ? b_q : a_q;
     end
 endmodule
 

@@ -354,7 +354,8 @@ async def div_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = div_register_stages(fmt.wman) + context.stage_output + context.stage_input
+    register_stages = (div_register_stages(fmt.wman)
+                       + context.stage_input + context.stage_pack + context.stage_output)
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

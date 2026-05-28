@@ -132,12 +132,14 @@ filesets:
   # zkf_cmp covers its flags directly and zkf_sort covers consumers of the ordering decision.
   rtl_cmp:
     files:
+      - hdl/_zkf_pipe.v
       - hdl/zkf_cmp_comb.v
       - hdl/zkf_cmp.v
     file_type: verilogSource
 
   rtl_sort:
     files:
+      - hdl/_zkf_pipe.v
       - hdl/zkf_cmp_comb.v
       - hdl/zkf_sort.v
     file_type: verilogSource
@@ -154,6 +156,7 @@ filesets:
 
   rtl_mul_ilog2_const:
     files:
+      - hdl/_zkf_pipe.v
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
@@ -528,6 +531,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -537,6 +541,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_mul_verilator:
@@ -570,9 +575,11 @@ targets:
     parameters: &float_binary_params_sad
       - WEXP
       - WMAN
+      - STAGE_INPUT
       - STAGE_DECODE
       - STAGE_ALIGN
       - STAGE_NORMALIZE
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -580,9 +587,11 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
       - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_add_verilator:
@@ -649,6 +658,7 @@ targets:
       - WEXP
       - WMAN
       - STAGE_INPUT
+      - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
       - ZKF_WMAN
@@ -657,6 +667,7 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
   sim_div_verilator:
@@ -818,7 +829,17 @@ targets:
       cocotb_module: test_cmp
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: &float_binary_params_si_only
+      - WEXP
+      - WMAN
+      - STAGE_INPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
 
   sim_cmp_verilator:
     filesets: [rtl_cmp, tb_cocotb]
@@ -827,7 +848,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_cmp
-    parameters: *float_binary_params
+    parameters: *float_binary_params_si_only
 
   sim_sort_icarus:
     filesets: [rtl_sort, tb_cocotb]
@@ -838,7 +859,7 @@ targets:
       cocotb_module: test_sort
       timescale: 1ns/1ps
       iverilog_options: [-Wall, -Wno-timescale]
-    parameters: *float_binary_params
+    parameters: *float_binary_params_si_only
 
   sim_sort_verilator:
     filesets: [rtl_sort, tb_cocotb]
@@ -847,7 +868,7 @@ targets:
     flow_options:
       <<: *verilator_binary_flow
       cocotb_module: test_sort
-    parameters: *float_binary_params
+    parameters: *float_binary_params_si_only
 
   sim_pipe_icarus:
     filesets: [rtl_pipe, tb_cocotb]
@@ -975,6 +996,7 @@ targets:
     parameters: &float_binary_params_sd
       - WEXP
       - WMAN
+      - STAGE_INPUT
       - STAGE_DECODE
       - ZKF_WEXP
       - ZKF_WMAN
@@ -982,6 +1004,7 @@ targets:
       - ZKF_COUNT
       - ZKF_SEED
       - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
       - ZKF_STAGE_DECODE
 
   sim_mul_ilog2_const_verilator:
