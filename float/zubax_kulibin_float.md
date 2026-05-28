@@ -599,8 +599,6 @@ target overflow maps to signed infinity
 
 ## 12. Sqrt/log2/exp2, integer detection
 
-These may be FSM-based instead of streaming, which would necessitate in_ready/out_ready; this remains to be seen.
-
 Specifically `zkf_log2` and `zkf_exp2` can be used later to build arbitrary log/exp.
 
 ```verilog
@@ -638,7 +636,8 @@ module zkf_sqrt #(parameter WEXP = 6, parameter WMAN = 18) (
 /// log2(+inf)     = +inf
 /// log2(+0)       = -inf, pole=1
 /// log2(x<0)      = -inf, domain_error=1
-module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18) (
+module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18,
+                  parameter STAGE_PRODUCT = 0, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
 
@@ -656,7 +655,8 @@ module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18) (
 /// exp2(+inf)       = +inf
 /// tiny finite results use the zero/MIN_NORMAL boundary rule
 /// overflow             = +inf
-module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18) (
+module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18,
+                  parameter STAGE_PRODUCT = 0, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
 

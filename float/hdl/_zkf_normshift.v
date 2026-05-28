@@ -20,9 +20,17 @@
 /// is truncated to WSHAMT; this is lossless because count <= W-1 < 2^clog2(W) <= 2^WSHAMT for every nonzero input.
 ///
 /// STAGE_SPLIT=0: pure combinational, single-cycle (clk unused).
+///
 /// STAGE_SPLIT=1: one register barrier in the middle of the cascade; y/count/zero appear one cycle after x, and the
 /// consumer must add a matching cycle to its pipeline. The early (pre-barrier) digits and zero are delayed one cycle
-/// so the whole count and zero stay aligned with the late digits and the shifted output (cf. FloPoCo's *_d1).
+/// so the whole count and zero stay aligned with the late digits and the shifted output.
+///
+/// STAGE_SPLIT=2: two register barriers; the first sits right after the top (widest) radix-4 level (where the wide
+/// leading-zero OR-reductions and the largest barrel-shift muxes live) and the second at the existing midpoint. The
+/// pre-barrier digits/zero get the extra cycle of delay so the whole count and zero stay aligned. Useful at wide W
+/// where one barrier still leaves the top two levels in the same combinational stage (about +25-30% f_max at WMAN=36
+/// in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
+/// NL4 >= 3 so the two barriers do not coincide.
 
 `default_nettype none
 
@@ -44,6 +52,17 @@ module _zkf_normshift #(
     // levels do the larger shifts with the wider zero-detect OR-reductions; the consumer's back cone also carries the
     // count assembly and exponent arithmetic. (NL4-1)/2 keeps the front from one level too deep at wide W.
     localparam SPLIT_AFTER = (NL4 - 1) / 2;
+
+    // verilator coverage_off
+    generate
+        if ((STAGE_SPLIT < 0) || (STAGE_SPLIT > 2)) begin : g_invalid_stage_split
+            _zkf_invalid_stage_split_out_of_range u_invalid();
+        end
+        if ((STAGE_SPLIT == 2) && (NL4 < 3)) begin : g_invalid_stage_split2_too_narrow
+            _zkf_invalid_stage_split2_needs_wider_w u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
 
     // data[s] is the input to radix-4 level s; data[0] = x, data[NL4] = normalized output.
     // verilator coverage_off
@@ -88,11 +107,25 @@ module _zkf_normshift #(
     endgenerate
 
     // Wire data[s] from the per-level combinational outputs; insert the register barrier at index SPLIT_AFTER+1 when
-    // STAGE_SPLIT != 0, breaking the cascade into two clock periods.
+    // STAGE_SPLIT != 0, breaking the cascade into two clock periods. STAGE_SPLIT=2 adds a SECOND barrier at index 1
+    // (right after the wide top level), captured by the separate `g_split_top` arm so the original `g_split` /
+    // `g_pass` decision for STAGE_SPLIT=0/1 stays bit-for-bit identical to the pre-modification version.
     genvar t;
     generate
         for (t = 1; t <= NL4; t = t + 1) begin : g_data
-            if ((STAGE_SPLIT != 0) && (t == SPLIT_AFTER + 1)) begin : g_split
+            // Original STAGE_SPLIT=1 arm with the original `(SS != 0) && (t == SPLIT_AFTER + 1)` condition is narrowed
+            // to STAGE_SPLIT==1 so its elaboration is bit-for-bit unchanged (the value the condition resolves to for
+            // SS=1 is identical, but Yosys is sensitive to the expression form). STAGE_SPLIT=2 arms are appended
+            // after, sharing the `g_split` label so the existing label stays the only one taken for SS=1.
+            if ((STAGE_SPLIT == 1) && (t == SPLIT_AFTER + 1)) begin : g_split
+                reg [W-1:0] data_r;
+                always @(posedge clk) data_r <= data_pre[t];
+                assign data[t] = data_r;
+            end else if ((STAGE_SPLIT == 2) && (t == SPLIT_AFTER + 1)) begin : g_split
+                reg [W-1:0] data_r;
+                always @(posedge clk) data_r <= data_pre[t];
+                assign data[t] = data_r;
+            end else if ((STAGE_SPLIT == 2) && (t == 1)) begin : g_split
                 reg [W-1:0] data_r;
                 always @(posedge clk) data_r <= data_pre[t];
                 assign data[t] = data_r;
@@ -104,14 +137,28 @@ module _zkf_normshift #(
 
     assign y = data[NL4];
 
-    // Count assembly. When STAGE_SPLIT != 0 the digits resolved before the barrier (levels s <= SPLIT_AFTER, i.e.
-    // digits K >= NL4-1-SPLIT_AFTER) are computed a cycle early, so register them to line up with the late digits
-    // (computed from the registered data) and with y. zero is likewise delayed so force-zero stays aligned.
+    // Count assembly. The digit for level K (= NL4-1-k) is computed at iteration s = k from data[s]; it has crossed
+    // every barrier whose position is <= s. The aligned count must wait for the slowest digit, so digit k is delayed
+    // by (STAGE_SPLIT - crossings(s)) cycles. zero is computed off data[0] and waits the full STAGE_SPLIT cycles.
     wire [CNTW-1:0] cnt;
     genvar k;
     generate
         for (k = 0; k < NL4; k = k + 1) begin : g_count
-            if ((STAGE_SPLIT != 0) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
+            // First arm narrowed from `(SS != 0) && ...` to `(SS == 1) && ...` so the SS=1 elaboration is bit-for-bit
+            // unchanged; SS=2 arms appended after. SS=2's top digit (k = NL4-1) needs two cycles of delay and lands in
+            // g_count_delay2; SS=2's mid digits share the original g_count_delay label.
+            if ((STAGE_SPLIT == 1) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
+                reg [1:0] dig_r;
+                always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
+                assign cnt[2*k +: 2] = dig_r;
+            end else if ((STAGE_SPLIT == 2) && (k == NL4 - 1)) begin : g_count_delay2
+                reg [1:0] dig_r1, dig_r2;
+                always @(posedge clk) begin
+                    dig_r1 <= dig_pre[2*k +: 2];
+                    dig_r2 <= dig_r1;
+                end
+                assign cnt[2*k +: 2] = dig_r2;
+            end else if ((STAGE_SPLIT == 2) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
                 reg [1:0] dig_r;
                 always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
                 assign cnt[2*k +: 2] = dig_r;
@@ -123,10 +170,17 @@ module _zkf_normshift #(
 
     wire zero_pre = ~|x;
     generate
-        if (STAGE_SPLIT != 0) begin : g_zero_delay
+        if (STAGE_SPLIT == 1) begin : g_zero_delay
             reg zero_r;
             always @(posedge clk) zero_r <= zero_pre;
             assign zero = zero_r;
+        end else if (STAGE_SPLIT == 2) begin : g_zero_delay2
+            reg zero_r1, zero_r2;
+            always @(posedge clk) begin
+                zero_r1 <= zero_pre;
+                zero_r2 <= zero_r1;
+            end
+            assign zero = zero_r2;
         end else begin : g_zero_pass
             assign zero = zero_pre;
         end
