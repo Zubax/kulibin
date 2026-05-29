@@ -55,7 +55,7 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `make form
 | `zkf_saturate`          | WEXP=6, WMAN=18 | yices     | spec inlined; idempotence checked |
 | `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis |
 | `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |
-| `_zkf_pipe`             | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
+| `zkf_pipe`              | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
 | `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set |
 | `_zkf_div_radix4_step`  | WMAN=18         | yices     | greedy digit selection invariant |
 | `zkf_mul`               | WEXP=5, WMAN=10 | yices     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |

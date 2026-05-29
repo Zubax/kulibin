@@ -1,17 +1,17 @@
 /// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
-///
-/// Register stages: 4+STAGE_INPUT.
-///
 /// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,
 /// zero produces zero, and finite in-range values are round-to-nearest, ties-to-even.
 
 `default_nettype none
 
+`define ZKF_TO_INT_LATENCY (4 + STAGE_INPUT)
+
 module zkf_to_int #(
     parameter WEXP        = 6,
     parameter WMAN        = 18,
     parameter WINT        = 32,
-    parameter STAGE_INPUT = 0   // whether to add a stage at the input (shields inputs from combinational paths)
+    parameter STAGE_INPUT = 0,  // whether to add a stage at the input (shields inputs from combinational paths)
+    parameter LATENCY     = `ZKF_TO_INT_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -26,6 +26,9 @@ module zkf_to_int #(
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if (LATENCY != `ZKF_TO_INT_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -123,5 +126,6 @@ module zkf_to_int #(
     assign y         = s4_y;
 endmodule
 
+`undef ZKF_TO_INT_LATENCY
 
 `default_nettype wire

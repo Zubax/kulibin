@@ -1,8 +1,10 @@
 /// Streamed Zubax Kulibin float adder/subtractor.
 /// y = a + b when op_sub == 0; y = a - b when op_sub == 1.
-/// Register stages: same as zkf_add.
 
 `default_nettype none
+
+// The latency is the same as zkf_add
+`define ZKF_ADDSUB_LATENCY (4 + STAGE_INPUT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_addsub #(
     parameter WEXP            = 6,    // exponent field width
@@ -12,7 +14,8 @@ module zkf_addsub #(
     parameter STAGE_ALIGN     = 0,    // forwarded to zkf_add
     parameter STAGE_NORMALIZE = 0,    // forwarded to zkf_add
     parameter STAGE_PACK      = 0,    // forwarded to zkf_add
-    parameter STAGE_OUTPUT    = 0     // forwarded to zkf_add
+    parameter STAGE_OUTPUT    = 0,    // forwarded to zkf_add
+    parameter LATENCY         = `ZKF_ADDSUB_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -26,13 +29,24 @@ module zkf_addsub #(
     output wire [WEXP+WMAN-1:0] y
 );
     localparam WFULL = WEXP + WMAN;
+
+    // verilator coverage_off
+    generate
+        if (LATENCY != `ZKF_ADDSUB_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
+    // Forward LATENCY into zkf_add so a drift in zkf_add's own stage count breaks this wrapper's default build too.
     zkf_add #(
         .WEXP(WEXP), .WMAN(WMAN),
         .STAGE_INPUT(STAGE_INPUT),
         .STAGE_DECODE(STAGE_DECODE), .STAGE_ALIGN(STAGE_ALIGN),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
         .STAGE_PACK(STAGE_PACK),
-        .STAGE_OUTPUT(STAGE_OUTPUT)
+        .STAGE_OUTPUT(STAGE_OUTPUT),
+        .LATENCY(LATENCY)
     ) u_add (
         .clk(clk),
         .rst(rst),
@@ -44,4 +58,5 @@ module zkf_addsub #(
     );
 endmodule
 
+`undef ZKF_ADDSUB_LATENCY
 `default_nettype wire

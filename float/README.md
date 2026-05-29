@@ -39,27 +39,37 @@ sometimes it helps, but sometimes it prevents the synthesizer from mapping the p
 worsening the performance.
 Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
 
+Every sequential module exposes a `LATENCY` parameter that defaults to the module's exact register-stage count
+for the current configuration. It is not a tuning knob -- changing it does not change the hardware. Its purpose is
+to let a latency-sensitive consumer pin down the latency it relies on: compute the value locally and pass it in.
+The module fails synthesis if the supplied value disagrees with its real stage count, so an internal change that shifts
+the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
+Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
+
 ### Catalogue
 
-| Module                | Function                                                       | Remarks                     |
-|-----------------------|----------------------------------------------------------------|-----------------------------|
-| `zkf_abs`             | Absolute value.                                                |                             |
-| `zkf_neg`             | Negation.                                                      | May produce -0 (non-canon.) |
-| `zkf_is_finite`       | True iff `x` is finite.                                        |                             |
-| `zkf_saturate`        | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
-| `zkf_cmp`             | Compare two values.                                            |                             |
-| `zkf_sort`            | Min and max of two values.                                     |                             |
-| `zkf_add`             | `a + b`.                                                       |                             |
-| `zkf_addsub`          | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
-| `zkf_mul`             | `a × b`.                                                       |                             |
-| `zkf_mul_ilog2_const` | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
-| `zkf_div`             | `a ÷ b`; flags divide-by-zero.                                 |                             |
-| `zkf_fma`             | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf_from_int`        | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | Cast float to signed two's-complement integer with saturation. |                             |
-| `zkf_resize`          | Cast between different float formats.                          |                             |
-| `zkf_exp2`            | `2**x`                                                         | Faithful rounding, see below|
-| `zkf_log2`            | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
+Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depending on the selected `STAGE_`s.
+
+| Module                |   | Function                                                       | Remarks                     |
+|-----------------------|---|----------------------------------------------------------------|-----------------------------|
+| `zkf_abs`             | ⇝ | Absolute value.                                                |                             |
+| `zkf_neg`             | ⇝ | Negation.                                                      | May produce -0 (non-canon.) |
+| `zkf_is_finite`       | ⇝ | True iff `x` is finite.                                        |                             |
+| `zkf_saturate`        | ⇝ | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
+| `zkf_cmp`             | ⇻ | Compare two values.                                            |                             |
+| `zkf_sort`            | ⇻ | Min and max of two values.                                     |                             |
+| `zkf_add`             | ⇻ | `a + b`.                                                       |                             |
+| `zkf_addsub`          | ⇻ | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_mul`             | ⇻ | `a × b`.                                                       |                             |
+| `zkf_mul_ilog2_const` | ⇻ | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
+| `zkf_div`             | ⇻ | `a ÷ b`; flags divide-by-zero.                                 |                             |
+| `zkf_fma`             | ⇻ | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf_from_int`        | ⇻ | Cast signed two's-complement integer to float.                 |                             |
+| `zkf_to_int`          | ⇻ | Cast float to signed two's-complement integer with saturation. |                             |
+| `zkf_resize`          |   | Cast between different float formats.                          |                             |
+| `zkf_exp2`            | ⇻ | `2**x`                                                         | Faithful rounding, see below|
+| `zkf_log2`            | ⇻ | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
+| `zkf_pipe`            |   | Delay line of N register stages, W bits each.                  | No-op                       |
 
 ### Notably absent modules
 

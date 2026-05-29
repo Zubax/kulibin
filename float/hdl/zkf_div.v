@@ -1,28 +1,27 @@
-/// Streamed Zubax Kulibin float divider.
-/// The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
+/// Streamed Zubax Kulibin float divider. The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
 /// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
 /// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
-///
-/// Register stages: 2+STAGE_INPUT+((WMAN+2+((WMAN+2)%2))/2)+STAGE_PACK+STAGE_OUTPUT
 ///
 /// STAGE_INPUT=0: input combinational paths are exposed.
 /// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
 ///
 /// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT and _zkf_pack_delay.STAGE_INPUT for the
-///   div0 sideband), insulating the rounder from the div-core output cone (+1 cycle).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
 ///
 /// STAGE_OUTPUT=0: q and div0 are combinational (default)
 /// STAGE_OUTPUT=1: registered (one extra cycle).
 
 `default_nettype none
 
+`define ZKF_DIV_LATENCY (2 + STAGE_INPUT + ((WMAN+2+((WMAN+2)%2))/2) + STAGE_PACK + STAGE_OUTPUT)
+
 module zkf_div #(
     parameter WEXP         = 6,    // exponent field width
     parameter WMAN         = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT  = 0,    // 0 = combinational inputs; 1 = latched inputs (+1 cycle)
     parameter STAGE_PACK   = 0,    // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
-    parameter STAGE_OUTPUT = 0     // 0 = combinational outputs; 1 = registered outputs (+1 cycle)
+    parameter STAGE_OUTPUT = 0,    // 0 = combinational outputs; 1 = registered outputs (+1 cycle)
+    parameter LATENCY      = `ZKF_DIV_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -38,11 +37,19 @@ module zkf_div #(
     localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
 
+    // verilator coverage_off
+    generate
+        if (LATENCY != `ZKF_DIV_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
     // Optional input register stage. The divider's pipeline depth already scales with operand width, so
     // a single extra stage is the only useful setting; anything beyond that is silently clamped to 1.
     wire                in_valid_q;
     wire [2*WFULL-1:0]  pipe_out;
-    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}), .out_valid(in_valid_q), .out(pipe_out)
     );
     wire [WFULL-1:0] a_q = pipe_out[WFULL-1:0];
@@ -108,4 +115,5 @@ module zkf_div #(
     ) u_pack_delay (.clk(clk), .rst(1'b0), .x(core_div0), .y(div0));
 endmodule
 
+`undef ZKF_DIV_LATENCY
 `default_nettype wire

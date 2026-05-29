@@ -1,8 +1,4 @@
 /// Streamed base-2 logarithm for the Zubax Kulibin float format: y = log2(x).
-///
-/// Register stages = STAGE_INPUT+5+STAGE_PRODUCT+STAGE_NORMALIZE+STAGE_PACK+D*(2+STAGE_PRODUCT)+STAGE_OUTPUT,
-/// where polynomial degree D = ceil((WMAN+8)/9)-1
-///
 /// Zero-bubble, throughput-1, no backpressure.
 /// Behavior:
 ///
@@ -30,6 +26,10 @@
 
 `default_nettype none
 
+`define ZKF_LOG2_LATENCY \
+    (STAGE_INPUT + 5 + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK \
+     + (((WMAN+16)/9)-1)*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
+
 module zkf_log2 #(
     parameter WEXP            = 6,    // exponent field width
     parameter WMAN            = 18,   // significand precision including the hidden bit
@@ -37,7 +37,8 @@ module zkf_log2 #(
     parameter STAGE_PRODUCT   = 0,    // 0: single Horner multiply; 1: 2x2 split (+1 stage/deg); 2: 3x3 split (+2/deg)
     parameter STAGE_NORMALIZE = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
     parameter STAGE_PACK      = 0,    // 0: comb pack input; 1: register pack input (insulates rounder from normshift)
-    parameter STAGE_OUTPUT    = 0     // 0: combinational outputs;     1: registered outputs, +1 stage
+    parameter STAGE_OUTPUT    = 0,    // 0: combinational outputs;     1: registered outputs, +1 stage
+    parameter LATENCY         = `ZKF_LOG2_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -58,6 +59,9 @@ module zkf_log2 #(
         // BIAS below uses an unsized integer shift on WEXP; WEXP >= 31 would overflow 32-bit integer constants.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_log2_wexp_too_wide_unportable u_invalid();
+        end
+        if (LATENCY != `ZKF_LOG2_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -81,7 +85,7 @@ module zkf_log2 #(
     // -- Optional input register stage (latch x ahead of the decode/evaluator cone).
     wire             in_valid_q;
     wire [WFULL-1:0] x_q;
-    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in(x), .out_valid(in_valid_q), .out(x_q)
     );
 
@@ -228,4 +232,5 @@ module zkf_log2 #(
     assign domain_error = sb_out_flags[0];
 endmodule
 
+`undef ZKF_LOG2_LATENCY
 `default_nettype wire

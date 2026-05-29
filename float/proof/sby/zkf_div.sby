@@ -8,7 +8,7 @@ smtbmc yices
 
 [script]
 read -formal _zkf_pack.v
-read -formal _zkf_pipe.v
+read -formal zkf_pipe.v
 read -formal _zkf_div_core.v
 read -formal zkf_div.v
 read -formal zkf_pack_ref.v
@@ -19,7 +19,7 @@ prep -top zkf_div_eq
 
 [files]
 float/hdl/_zkf_pack.v
-float/hdl/_zkf_pipe.v
+float/hdl/zkf_pipe.v
 float/hdl/_zkf_div_core.v
 float/hdl/zkf_div.v
 float/proof/refs/zkf_pack_ref.v

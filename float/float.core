@@ -6,7 +6,7 @@ filesets:
   rtl:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_div_core.v
@@ -55,14 +55,14 @@ filesets:
   rtl_mul:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/zkf_mul.v
     file_type: verilogSource
 
   rtl_add:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -71,7 +71,7 @@ filesets:
   rtl_fma:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_fma.v
@@ -80,14 +80,14 @@ filesets:
   rtl_div:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_div_core.v
       - hdl/zkf_div.v
     file_type: verilogSource
 
   rtl_pipe:
     files:
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
     file_type: verilogSource
 
   rtl_normshift:
@@ -124,14 +124,14 @@ filesets:
   # zkf_cmp covers its flags directly and zkf_sort covers consumers of the ordering decision.
   rtl_cmp:
     files:
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/zkf_cmp_comb.v
       - hdl/zkf_cmp.v
     file_type: verilogSource
 
   rtl_sort:
     files:
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/zkf_cmp_comb.v
       - hdl/zkf_sort.v
     file_type: verilogSource
@@ -139,7 +139,7 @@ filesets:
   rtl_addsub:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_add.v
@@ -148,14 +148,14 @@ filesets:
 
   rtl_mul_ilog2_const:
     files:
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/zkf_mul_ilog2_const.v
     file_type: verilogSource
 
   rtl_from_int:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/zkf_from_int.v
@@ -163,7 +163,7 @@ filesets:
 
   rtl_to_int:
     files:
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/zkf_to_int.v
@@ -172,14 +172,14 @@ filesets:
   rtl_resize:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/zkf_resize.v
     file_type: verilogSource
 
   rtl_exp2:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_horner.v
@@ -197,7 +197,7 @@ filesets:
   rtl_log2:
     files:
       - hdl/_zkf_pack.v
-      - hdl/_zkf_pipe.v
+      - hdl/zkf_pipe.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_horner.v
@@ -856,7 +856,7 @@ targets:
 
   sim_pipe_icarus:
     filesets: [rtl_pipe, tb_cocotb]
-    toplevel: _zkf_pipe
+    toplevel: zkf_pipe
     flow: sim
     flow_options:
       tool: icarus
@@ -875,7 +875,7 @@ targets:
 
   sim_pipe_verilator:
     filesets: [rtl_pipe, tb_cocotb]
-    toplevel: _zkf_pipe
+    toplevel: zkf_pipe
     flow: sim
     flow_options:
       tool: verilator

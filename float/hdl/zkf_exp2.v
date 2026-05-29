@@ -1,8 +1,4 @@
 /// Streamed base-2 exponential for the Zubax Kulibin float format: y = 2**x.
-///
-/// Register stages: STAGE_INPUT+5+D*(2+STAGE_PRODUCT)+STAGE_PACK+STAGE_OUTPUT,
-/// where polynomial degree D = ceil((WMAN+8)/9)-1
-///
 /// Zero-bubble, throughput-1, no backpressure.
 /// Behavior:
 ///
@@ -30,13 +26,16 @@
 
 `default_nettype none
 
+`define ZKF_EXP2_LATENCY (STAGE_INPUT + 5 + (((WMAN+16)/9)-1)*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT)
+
 module zkf_exp2 #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
     parameter STAGE_PRODUCT = 0,    // 0: single Horner multiply; 1: split (2x2), +1 stage per degree
     parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
-    parameter STAGE_OUTPUT  = 0     // 0: combinational outputs;  1: registered outputs, +1 stage
+    parameter STAGE_OUTPUT  = 0,    // 0: combinational outputs;  1: registered outputs, +1 stage
+    parameter LATENCY       = `ZKF_EXP2_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -56,6 +55,9 @@ module zkf_exp2 #(
         // Verilog's 32-bit integer constant arithmetic.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_exp2_wexp_too_wide_unportable u_invalid();
+        end
+        if (LATENCY != `ZKF_EXP2_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -243,4 +245,5 @@ module zkf_exp2 #(
     );
 endmodule
 
+`undef ZKF_EXP2_LATENCY
 `default_nettype wire

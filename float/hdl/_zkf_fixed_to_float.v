@@ -87,12 +87,12 @@ module _zkf_fixed_to_float #(
         .y(norm_aligned)
     );
 
-    // -- Delay {sign, force_inf, sb_in} alongside the normshift so they land with norm_aligned. _zkf_pipe resets only
+    // -- Delay {sign, force_inf, sb_in} alongside the normshift so they land with norm_aligned. zkf_pipe resets only
     // the valid flag; the payload free-runs (project reset policy). For STAGE_NORMALIZE=0 the pipe is a passthrough.
     localparam PIPE_W = 2 + SB_W;
     wire              sb_valid;
     wire [PIPE_W-1:0] sb_pipe_out;
-    _zkf_pipe #(.W(PIPE_W), .N(STAGE_NORMALIZE)) u_sb_pipe (
+    zkf_pipe #(.W(PIPE_W), .N(STAGE_NORMALIZE)) u_sb_pipe (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in({sign, force_inf, sb_in}),
         .out_valid(sb_valid), .out(sb_pipe_out)

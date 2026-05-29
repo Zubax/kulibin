@@ -10,7 +10,7 @@ smtbmc yices
 read -formal _zkf_normshift.v
 read -formal _zkf_rshift_sticky.v
 read -formal _zkf_pack.v
-read -formal _zkf_pipe.v
+read -formal zkf_pipe.v
 read -formal zkf_add.v
 read -formal zkf_pack_ref.v
 read -formal zkf_add_ref.v
@@ -22,7 +22,7 @@ prep -top zkf_add_eq
 float/hdl/_zkf_normshift.v
 float/hdl/_zkf_rshift_sticky.v
 float/hdl/_zkf_pack.v
-float/hdl/_zkf_pipe.v
+float/hdl/zkf_pipe.v
 float/hdl/zkf_add.v
 float/proof/refs/zkf_pack_ref.v
 float/proof/refs/zkf_add_ref.v

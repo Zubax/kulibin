@@ -114,7 +114,7 @@ module _zkf_to_fixpoint #(
     // Optional input register stage.
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
-    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in(a),
         .out_valid(in_valid_q), .out(a_q)

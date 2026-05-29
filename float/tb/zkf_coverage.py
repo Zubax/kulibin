@@ -73,6 +73,10 @@ def normalized_source(path_text: str) -> str:
         source = RTL_DIR / path.name
         if source.is_file():
             return str(source)
+    if path.parent.name == "_tables":
+        source = RTL_DIR / "_tables" / path.name
+        if source.is_file():
+            return str(source)
     if path.parent.name == "tb":
         source = TB_DIR / path.name
         if source.is_file():

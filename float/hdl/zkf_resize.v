@@ -1,6 +1,4 @@
 /// Streamed cast between two Zubax Kulibin float formats.
-///
-/// Register stages: STAGE_INPUT+STAGE_OUTPUT
 /// If no stages are enabled, the module behaves combinationally; clk, rst are ignored.
 ///
 /// STAGE_INPUT=0: input combinational paths are exposed.
@@ -19,13 +17,16 @@
 
 `default_nettype none
 
+`define ZKF_RESIZE_LATENCY (STAGE_INPUT + STAGE_OUTPUT)
+
 module zkf_resize #(
     parameter WEXP_IN      = 6,
     parameter WMAN_IN      = 18,
     parameter WEXP_OUT     = 5,
     parameter WMAN_OUT     = 11,
     parameter STAGE_INPUT  = 0,
-    parameter STAGE_OUTPUT = 0
+    parameter STAGE_OUTPUT = 0,
+    parameter LATENCY      = `ZKF_RESIZE_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -41,6 +42,9 @@ module zkf_resize #(
         if ((WEXP_IN < 2) || (WMAN_IN < 4) || (WEXP_OUT < 2) || (WMAN_OUT < 4)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        if (LATENCY != `ZKF_RESIZE_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
+        end
     endgenerate
     // verilator coverage_on
 
@@ -52,7 +56,7 @@ module zkf_resize #(
     // Optional input register stage.
     wire                in_valid_q;
     wire [WFULL_IN-1:0] a_q;
-    _zkf_pipe #(.W(WFULL_IN), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(WFULL_IN), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in(a),
         .out_valid(in_valid_q), .out(a_q)
@@ -198,4 +202,5 @@ module zkf_resize #(
     endgenerate
 endmodule
 
+`undef ZKF_RESIZE_LATENCY
 `default_nettype wire

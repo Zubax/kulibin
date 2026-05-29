@@ -1,4 +1,4 @@
-/// Formal harness: _zkf_pipe DUT.
+/// Formal harness: zkf_pipe DUT.
 /// Spec: at every cycle after the initial reset, out_valid mirrors shadow_valid[N-1] and (when valid) out
 /// equals shadow_data[N-1]. Both pipelines are driven by the same (in, in_valid, rst) sequence so their
 /// internal state must remain equal for all time.
@@ -26,7 +26,7 @@ module zkf_pipe_eq #(parameter W = 24, parameter N = 4) (
     // DUT.
     wire         dut_valid;
     wire [W-1:0] dut_out;
-    _zkf_pipe #(.W(W), .N(N)) u_dut (
+    zkf_pipe #(.W(W), .N(N)) u_dut (
         .clk(clk), .rst(rst),
         .in_valid(in_valid), .in(in),
         .out_valid(dut_valid), .out(dut_out)

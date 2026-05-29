@@ -1,7 +1,4 @@
-/// Streamed Zubax Kulibin fused multiply-add: y = a*b + c, correctly rounded with a single final rounding.
-///
-/// Register stages: 5+STAGE_INPUT+STAGE_PRODUCT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT
-///
+/// Streamed Zubax Kulibin fused multiply-add: y = a*b + c.
 /// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 /// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add.
 /// The structure mirrors zkf_add with operand A replaced by the multiplier's full product.
@@ -29,6 +26,9 @@
 
 `default_nettype none
 
+`define ZKF_FMA_LATENCY \
+    (5 + STAGE_INPUT + STAGE_PRODUCT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
+
 module zkf_fma #(
     parameter WEXP            = 6,  // exponent field width
     parameter WMAN            = 18, // significand precision including the hidden bit
@@ -38,7 +38,8 @@ module zkf_fma #(
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
     parameter STAGE_NORMALIZE = 0,  // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
     parameter STAGE_PACK      = 0,  // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
-    parameter STAGE_OUTPUT    = 0   // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter STAGE_OUTPUT    = 0,  // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter LATENCY         = `ZKF_FMA_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -55,6 +56,9 @@ module zkf_fma #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if (LATENCY != `ZKF_FMA_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
         // STAGE_NORMALIZE=2 selects the 3-segment normalizer (_zkf_normshift STAGE_SPLIT=2), which needs at least three
         // radix-4 levels - NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3 - so its two register barriers land at distinct positions
@@ -95,7 +99,7 @@ module zkf_fma #(
     wire [WFULL-1:0] a_q;
     wire [WFULL-1:0] b_q;
     wire [WFULL-1:0] c_q;
-    _zkf_pipe #(.W(3*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(3*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({c, b, a}),
         .out_valid(in_valid_q), .out({c_q, b_q, a_q})
     );
@@ -655,7 +659,7 @@ module zkf_fma #(
                               s2_add_guard, s2_add_round, s2_add_sticky};
     wire           q_valid;
     wire [Q_W-1:0] q_out;
-    _zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
+    zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
         .clk(clk), .rst(rst),
         .in_valid(s2_valid), .in(s2_q_in),
         .out_valid(q_valid), .out(q_out)
@@ -688,4 +692,5 @@ module zkf_fma #(
     end
 endmodule
 
+`undef ZKF_FMA_LATENCY
 `default_nettype wire

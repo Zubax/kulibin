@@ -1,7 +1,5 @@
 /// Streamed Zubax Kulibin float adder.
 ///
-/// Register stages: 4+STAGE_INPUT+STAGE_DECODE+STAGE_ALIGN+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT
-///
 /// STAGE_INPUT=0: operands feed the datapath combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
@@ -18,10 +16,11 @@
 /// (direct forward to _zkf_normshift.STAGE_SPLIT). Adds STAGE_NORMALIZE cycles.
 ///
 /// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT), insulating the rounder from the
-///   normalize/exponent-correction cone (+1 cycle).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
 
 `default_nettype none
+
+`define ZKF_ADD_LATENCY (4 + STAGE_INPUT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_add #(
     parameter WEXP            = 6,    // exponent field width
@@ -31,7 +30,8 @@ module zkf_add #(
     parameter STAGE_ALIGN     = 0,    // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
     parameter STAGE_NORMALIZE = 0,    // {0,1,2} internal close-cancel normshift barriers
     parameter STAGE_PACK      = 0,    // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
-    parameter STAGE_OUTPUT    = 0     // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter STAGE_OUTPUT    = 0,    // 0 = combinational output; 1 = registered output (+1 cycle)
+    parameter LATENCY         = `ZKF_ADD_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -47,6 +47,9 @@ module zkf_add #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if (LATENCY != `ZKF_ADD_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -70,7 +73,7 @@ module zkf_add #(
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
     wire [WFULL-1:0] b_q;
-    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}),
         .out_valid(in_valid_q), .out({b_q, a_q})
     );
@@ -328,7 +331,7 @@ module zkf_add #(
                                 s2_add_guard, s2_add_round, s2_add_sticky};
     wire           q_valid;
     wire [Q_W-1:0] q_out;
-    _zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
+    zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
         .clk(clk), .rst(rst),
         .in_valid(s2_valid), .in(s2_q_in),
         .out_valid(q_valid), .out(q_out)
@@ -509,6 +512,8 @@ module zkf_add #(
         s3_add_sticky        <= q_add_sticky;
     end
 endmodule
+
+`undef ZKF_ADD_LATENCY
 
 
 // Compare unsigned values through an explicit carry-chain-friendly subtraction; enables much better timings than

@@ -1,7 +1,4 @@
 /// Constant-power-of-two multiplier: y = a * 2^K, where K is a compile-time signed integer parameter.
-///
-/// Register stages: 1+STAGE_INPUT+STAGE_DECODE
-///
 /// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the mantissa is preserved
 /// bit-for-bit and only the biased exponent is incremented by K. Special inputs (zero, signed infinity) are
 /// canonicalized at the output. No rounding is required: the operation is exact in the format's normal range.
@@ -14,19 +11,21 @@
 /// STAGE_INPUT=1: latch the input before any combinational logic, isolating it from upstream paths (+1 cycle).
 ///
 /// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
-///
 /// STAGE_DECODE=1: registers the decoded sign / new_exp / frac / classification predicates before the output mux.
-/// Splits the long route from input port to output register (the dominant delay path at wide WMAN on
-/// placement-sensitive tools). Costs one extra pipeline cycle.
+///     Splits the long route from input port to output register (the dominant delay path at wide WMAN on
+///     placement-sensitive tools). Costs one extra pipeline cycle.
 
 `default_nettype none
+
+`define ZKF_MUL_ILOG2_CONST_LATENCY (1 + STAGE_INPUT + STAGE_DECODE)
 
 module zkf_mul_ilog2_const #(
     parameter         WEXP         = 6,     // exponent field width
     parameter         WMAN         = 18,    // significand precision including the hidden bit
     parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
     parameter         STAGE_INPUT  = 0,     // 0 = combinational input; 1 = latch input before logic (+1 cycle)
-    parameter         STAGE_DECODE = 0      // 0 = single-cycle; >=1 = register decoded signals (+1 cycle)
+    parameter         STAGE_DECODE = 0,     // 0 = single-cycle; >=1 = register decoded signals (+1 cycle)
+    parameter         LATENCY      = `ZKF_MUL_ILOG2_CONST_LATENCY   // must equal register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -44,7 +43,7 @@ module zkf_mul_ilog2_const #(
     // -- Optional input register stage: latch the operand before any combinational logic.
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
-    _zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in(a),
         .out_valid(in_valid_q), .out(a_q)
     );
@@ -73,6 +72,9 @@ module zkf_mul_ilog2_const #(
         // K < -EXP_MAX_FINITE forces zero underflow for every normal input.
         if (K < K_LIMIT_UNDERFLOW) begin : g_invalid_k_always_underflow
             _zkf_invalid_mul_ilog2_const_k_always_underflow u_invalid();
+        end
+        if (LATENCY != `ZKF_MUL_ILOG2_CONST_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -207,4 +209,5 @@ module zkf_mul_ilog2_const #(
     endgenerate
 endmodule
 
+`undef ZKF_MUL_ILOG2_CONST_LATENCY
 `default_nettype wire

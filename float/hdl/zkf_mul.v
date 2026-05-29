@@ -1,11 +1,10 @@
 /// Streamed Zubax Kulibin float multiplier.
-/// Register stages: 1+STAGE_INPUT+STAGE_PRODUCT+STAGE_PACK+STAGE_OUTPUT
 ///
 /// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
 /// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
-///   is one combinational hop into the s1_mag register. Use this when the inferred cascade closes timing in one cycle.
+///   is one combinational hop into the s1_mag register. Usually this is the best option.
 ///
 /// STAGE_PRODUCT>=1: split the product into a 2*2 grid of (ceil(WMAN/2)) wide partial products, register them,
 ///   then sum in the next cycle. Synthesis tools absorb the partial-product registers as DSP output registers and
@@ -13,13 +12,14 @@
 ///   cycle of latency. Values above 1 are treated as 1; further splits are reserved for future expansion.
 ///
 /// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT), insulating the rounder from the
-///   product-classification cone (+1 cycle).
+/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
 ///
 /// STAGE_OUTPUT=0: the result is combinational (default).
 /// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths (+1 cycle).
 
 `default_nettype none
+
+`define ZKF_MUL_LATENCY (1 + STAGE_INPUT + STAGE_PRODUCT + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_mul #(
     parameter WEXP          = 6,    // exponent field width
@@ -27,7 +27,8 @@ module zkf_mul #(
     parameter STAGE_INPUT   = 0,
     parameter STAGE_PRODUCT = 0,
     parameter STAGE_PACK    = 0,
-    parameter STAGE_OUTPUT  = 0
+    parameter STAGE_OUTPUT  = 0,
+    parameter LATENCY       = `ZKF_MUL_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -43,6 +44,9 @@ module zkf_mul #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if (LATENCY != `ZKF_MUL_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -62,7 +66,7 @@ module zkf_mul #(
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
     wire [WFULL-1:0] b_q;
-    _zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(2*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({b, a}),
         .out_valid(in_valid_q), .out({b_q, a_q})
     );
@@ -242,4 +246,5 @@ module zkf_mul #(
     end
 endmodule
 
+`undef ZKF_MUL_LATENCY
 `default_nettype wire

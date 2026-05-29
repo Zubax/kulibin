@@ -1,7 +1,5 @@
 /// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
 ///
-/// Register stages: 1+STAGE_INPUT+STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT.
-///
 /// STAGE_INPUT=0: input combinational paths are exposed.
 /// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (+1 cycle).
 ///
@@ -15,6 +13,8 @@
 
 `default_nettype none
 
+`define ZKF_FROM_INT_LATENCY (1 + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
+
 module zkf_from_int #(
     parameter WEXP            = 6,
     parameter WMAN            = 18,
@@ -22,7 +22,8 @@ module zkf_from_int #(
     parameter STAGE_INPUT     = 0,
     parameter STAGE_NORMALIZE = 0,
     parameter STAGE_PACK      = 0,
-    parameter STAGE_OUTPUT    = 0
+    parameter STAGE_OUTPUT    = 0,
+    parameter LATENCY         = `ZKF_FROM_INT_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -37,6 +38,9 @@ module zkf_from_int #(
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if (LATENCY != `ZKF_FROM_INT_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -56,7 +60,7 @@ module zkf_from_int #(
     // Optional input register stage.
     wire             in_valid_q;
     wire [WINT-1:0]  a_q;
-    _zkf_pipe #(.W(WINT), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(WINT), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in(a), .out_valid(in_valid_q), .out(a_q)
     );
 
@@ -121,5 +125,6 @@ module zkf_from_int #(
     );
 endmodule
 
+`undef ZKF_FROM_INT_LATENCY
 
 `default_nettype wire

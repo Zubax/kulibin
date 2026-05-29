@@ -544,11 +544,11 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "pack":
         return [hdl / "_zkf_pack.v"]
     if spec.kind == "mul":
-        return [hdl / "_zkf_pack.v", hdl / "_zkf_pipe.v", hdl / "zkf_mul.v"]
+        return [hdl / "_zkf_pack.v", hdl / "zkf_pipe.v", hdl / "zkf_mul.v"]
     if spec.kind == "add":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
@@ -556,7 +556,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "addsub":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
@@ -565,7 +565,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "fma":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_fma.v",
@@ -575,27 +575,27 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "div":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_div_core.v",
             hdl / "zkf_div.v",
         ]
     if spec.kind == "cmp":
-        return [hdl / "_zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
+        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
-        return [hdl / "_zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
+        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
     if spec.kind == "mul_ilog2_const":
-        return [hdl / "_zkf_pipe.v", hdl / "zkf_mul_ilog2_const.v"]
+        return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2_const.v"]
     if spec.kind == "from_int":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
             hdl / "zkf_from_int.v",
         ]
     if spec.kind == "to_int":
         return [
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "_zkf_to_fixpoint.v",
             hdl / "zkf_to_int.v",
@@ -603,7 +603,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "resize":
         return [
             hdl / "_zkf_pack.v",
-            hdl / "_zkf_pipe.v",
+            hdl / "zkf_pipe.v",
             hdl / "zkf_resize.v",
         ]
     if spec.kind in {"exp2", "log2"}:
@@ -616,7 +616,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             return hdl / "_tables" / f"_zkf_{spec.kind}_m{wman}_d{TRANS_SPECS[(spec.kind, wman)]['d']}.v"
         DEFAULT_WMAN = 18  # the default WMAN of zkf_exp2 / zkf_log2
         tables = [table(w) for w in sorted({DEFAULT_WMAN, spec.wman})]
-        sources = [hdl / "_zkf_pack.v", hdl / "_zkf_pipe.v"]
+        sources = [hdl / "_zkf_pack.v", hdl / "zkf_pipe.v"]
         if spec.kind == "exp2":
             # exp2's _zkf_to_fixpoint helper uses _zkf_rshift_sticky for the right-shift path; the helper itself
             # owns the decode + folded-constant predicate cone shared with zkf_to_int.
