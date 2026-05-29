@@ -57,7 +57,7 @@ module _zkf_to_fixpoint #(
         if ((WEXP < 2) || (WMAN < 4) || (WI < 2)) begin : g_invalid_widths
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // BIAS / LEFT_SHIFT_BASE / LEFT_OVER_BASE below use unsized integer shifts on WEXP; WEXP >= 31 overflows
+        // BIAS / LEFT_SHIFT_BASE / MAG_OVER_BASE below use unsized integer shifts on WEXP; WEXP >= 31 overflows
         // Verilog's 32-bit integer constant arithmetic and yields tool-dependent values.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_to_fixpoint_wexp_too_wide_unportable u_invalid();
@@ -84,20 +84,24 @@ module _zkf_to_fixpoint #(
     localparam WRSH       = $clog2(RSH_MAX + 1);
 
     // Folded shift-magnitude / predicate thresholds in integer arithmetic so widths are sized from them, not from
-    // WEXP alone. Mirrors the zkf_to_int approach (see hdl/zkf_to_int.v lines 49-78), with one generalization for
-    // FF>0: the left/right boundary moves by FF (so for FF=0 this is zkf_to_int's BIAS+WFRAC, and for FF>0 this
+    // WEXP alone. The left/right boundary moves by FF (so for FF=0 this is zkf_to_int's BIAS+WFRAC, and for FF>0 this
     // becomes BIAS+WFRAC-FF = zkf_exp2's BIAS-SHIFT_OFF = BIAS-13). LEFT_SHIFT_BASE can be negative at small
     // BIAS / large FF; the predicates below select the "always left shift" arm in that case.
     //   LEFT_SHIFT_BASE  : exp_in == this means value == 2^WFRAC * 2^(-FF) = 2^(WFRAC-FF); the boundary between
     //                      right and left shift. left_shift_full = exp_in - LEFT_SHIFT_BASE.
-    //   LEFT_OVER_BASE   : exp_in >= this guarantees the magnitude overflows WI+FF bits even before rounding. In
-    //                      that branch the lshamt is forced to LSH_MAX so the shifter does not run past the
-    //                      magnitude container; oor propagates downstream and the caller overrides mag.
+    //   MAG_OVER_BASE    : exp_in >= this means |value| >= 2^WI, so the magnitude overflows the WI+FF container and
+    //                      the WI+FF truncation below would silently drop its high bits -- independent of shift
+    //                      direction. oor is raised here so the caller saturates instead of emitting a truncated
+    //                      magnitude. This is BIAS_INT+WI directly, NOT LEFT_SHIFT_BASE+LSH_MAX+1: the two coincide
+    //                      while LSH_MAX>0, but when WI+FF <= WMAN (LSH_MAX clamped to 0) the latter sits too high
+    //                      and would let over-range finite values through (e.g. to_int with WINT < WMAN). When
+    //                      LSH_MAX>0 this is also the exp at which the left shifter would run past LSH_MAX, so it
+    //                      still doubles as the lshamt clamp boundary.
     //   RIGHT_OVER_BASE  : exp_in < this means the right shift amount exceeds RSH_MAX, so the shifter would not
     //                      capture any useful bits and we clamp to RSH_MAX.
     localparam integer BIAS_INT         = (1 << (WEXP - 1)) - 1;
     localparam integer LEFT_SHIFT_BASE  = BIAS_INT + WFRAC - FF;
-    localparam integer LEFT_OVER_BASE   = LEFT_SHIFT_BASE + LSH_MAX + 1;
+    localparam integer MAG_OVER_BASE    = BIAS_INT + WI;
     localparam integer RIGHT_OVER_BASE  = LEFT_SHIFT_BASE - RSH_MAX;
     // WEU sizes the two wide subtractions left_shift_full and right_shift_full.
     localparam integer MAX_EXP_IN       = (1 << WEXP) - 1;
@@ -151,7 +155,7 @@ module _zkf_to_fixpoint #(
     // LUT compare rather than a WEU-wide signed subtract, so the predicate does not chain a wide CCU2 stack onto
     // the critical path feeding the shifter mux.
     wire is_left_shift;
-    wire left_too_big;
+    wire mag_too_big;
     wire right_too_big;
     wire exp_oor_extrinsic;
     generate
@@ -163,12 +167,12 @@ module _zkf_to_fixpoint #(
             assign is_left_shift = exp_in >= LEFT_SHIFT_BASE[WEXP-1:0];
         end
 
-        if (LEFT_OVER_BASE <= 0) begin : g_lover_always
-            assign left_too_big = 1'b1;
-        end else if (LEFT_OVER_BASE > MAX_EXP_IN) begin : g_lover_never
-            assign left_too_big = 1'b0;
-        end else begin : g_lover_cmp
-            assign left_too_big = exp_in >= LEFT_OVER_BASE[WEXP-1:0];
+        if (MAG_OVER_BASE <= 0) begin : g_mover_always
+            assign mag_too_big = 1'b1;
+        end else if (MAG_OVER_BASE > MAX_EXP_IN) begin : g_mover_never
+            assign mag_too_big = 1'b0;
+        end else begin : g_mover_cmp
+            assign mag_too_big = exp_in >= MAG_OVER_BASE[WEXP-1:0];
         end
 
         if (RIGHT_OVER_BASE <= 0) begin : g_rover_never
@@ -189,10 +193,10 @@ module _zkf_to_fixpoint #(
         end
     endgenerate
 
-    wire oor_in = is_inf_in | left_too_big | exp_oor_extrinsic;
+    wire oor_in = is_inf_in | mag_too_big | exp_oor_extrinsic;
 
     // The left-shift clamp uses the combined oor so that mag stays in-container even when the extrinsic threshold
-    // fires before left_too_big does (zkf_exp2's case). lshamt / rshamt are don't-care for the non-selected
+    // fires before mag_too_big does (zkf_exp2's case). lshamt / rshamt are don't-care for the non-selected
     // direction (the mux picks one), so each clamp only has to be correct in its own direction.
     wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !oor_in) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
     wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
@@ -214,7 +218,7 @@ module _zkf_to_fixpoint #(
     //
     // Right shifter padding (constant generate-if, no runtime mux):
     //   FF==0: W = WMAN + 2; input is {sig, 2'b00}. Output [W-1:2] = mag, [1] = guard, [0] = sticky. This is
-    //          byte-equivalent to today's zkf_to_int instantiation (hdl/zkf_to_int.v lines 164-169).
+    //          byte-equivalent to the GRS layout that zkf_to_int consumes.
     //   FF>0 : W = WMAN + 1; input is {sig, 1'b0}.  Output [W-1:1] = mag low bits, [0] = sticky; guard is
     //          structurally 0. The one extra pad bit is required because _zkf_rshift_sticky OR's data bit 0
     //          together with the dropped sticky -- we need them separated for FF>0 (the data bit 0 lives in mag,

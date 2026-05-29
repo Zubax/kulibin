@@ -148,9 +148,10 @@ module _zkf_fixed_to_float #(
         .y(y)
     );
 
-    // -- Forward sideband through the packer's input + output stages so sb_out lands with out_valid.
+    // -- Forward sideband through the packer's input + output stages so sb_out lands with out_valid. Pure datapath:
+    // the delay free-runs with no reset; sb_out is only sampled in lockstep with out_valid, which is reset.
     _zkf_pack_delay #(.W(SB_W), .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)) u_sb_pack_delay (
-        .clk(clk), .rst(rst), .x(sb_d), .y(sb_out)
+        .clk(clk), .x(sb_d), .y(sb_out)
     );
 endmodule
 

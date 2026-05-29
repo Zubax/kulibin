@@ -49,6 +49,7 @@ filesets:
 
   rtl_pack:
     files:
+      - hdl/zkf_pipe.v
       - hdl/_zkf_pack.v
     file_type: verilogSource
 

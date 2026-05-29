@@ -539,7 +539,8 @@ def _deep_coverage(out: list) -> None:
         for si in (0, 1):
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
     # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches that stay dark under the defaults, so the merged gate can
-    # measure them: _zkf_pack g_out_reg (every packer op), _zkf_pack_delay g_reg (div), zkf_resize g_owr (widen path),
+    # measure them: _zkf_pack g_out_reg (every packer op), zkf_pipe g_registered (div, via _zkf_pack_delay),
+    # zkf_resize g_owr (widen path),
     # and the standalone packer's registered-output and biased-exponent cones. One config per branch suffices under
     # merged-union; small exhaustive formats toggle the new registers.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))

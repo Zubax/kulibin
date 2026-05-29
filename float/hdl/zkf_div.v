@@ -108,11 +108,11 @@ module zkf_div #(
         .y(q)
     );
 
-    // The delay line needs no reset since it doesn't carry control signals. See reset policy.
+    // The delay line is a pure free-running datapath (no reset port). See reset policy.
     // STAGE_OUTPUT matches the packer so div0 stays aligned with q.
-    _zkf_pack_delay#(
+    _zkf_pack_delay #(
         .W(1), .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
-    ) u_pack_delay (.clk(clk), .rst(1'b0), .x(core_div0), .y(div0));
+    ) u_pack_delay (.clk(clk), .x(core_div0), .y(div0));
 endmodule
 
 `undef ZKF_DIV_LATENCY

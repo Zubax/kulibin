@@ -9,7 +9,7 @@
 /// long route from the upstream Horner accumulator off the multiply's combinational cone. Total register stages =
 /// 1 (input) + the STAGE_PRODUCT split levels below:
 ///   STAGE_PRODUCT = 0: single multiply -> 2 register stages.
-///   STAGE_PRODUCT = 1: 2x2 split of the operands -> 3 register stages (partials registered, then summed and truncated).
+///   STAGE_PRODUCT = 1: 2x2 split of the operands -> 3 register stages (partials registered, summed and truncated).
 ///   STAGE_PRODUCT = 2: 3x3 split -> 4 register stages (sub-products | per-acc-chunk row sums | combine + truncate).
 
 `default_nettype none
@@ -70,7 +70,7 @@ module _zkf_log2_final_mul #(
 
     generate
         if (STAGE_PRODUCT == 0) begin : g_single
-            // -- 1 multiply stage (after the shared input register): single combinational multiply, truncate, register. --
+            // -- 1 multiply stage (after the shared input register): single combinational multiply, truncate, register.
             // verilator coverage_off
             wire [WFRAC+ACCW-1:0] prod = i_frac * i_acc;
             // verilator coverage_on

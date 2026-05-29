@@ -15,7 +15,7 @@
 ///  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
 ///     table+polynomial core selected by the generate-if below (hdl/_tables/_zkf_exp2_m<WMAN>_d<D>.v).
 ///
-///  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and the tiny/MIN_NORMAL boundary.
+///  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
 ///
 /// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
 /// ROM read is registered, so no single stage carries both a wide carry chain and a multiply.
@@ -63,7 +63,6 @@ module zkf_exp2 #(
     // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
-    localparam WFULL = WEXP + WMAN;
     // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
     localparam FF        = WMAN + 12;
     localparam WEU       = WEXP + 2;            // signed unbiased exponent fed to _zkf_pack

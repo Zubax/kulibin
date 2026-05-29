@@ -9,6 +9,7 @@ synwork/
 syntmp/
 backup/
 .recovery
+.coverage*
 transcript
 .vdbs/
 *.bit

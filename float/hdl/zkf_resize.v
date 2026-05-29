@@ -70,7 +70,8 @@ module zkf_resize #(
     wire                is_zero = ~|exp_in;
     wire                is_inf  =  &exp_in;
 
-    // IN_BIAS as a sized vector (top bit 0, lower WEXP_IN-1 bits all 1 = 2^(WEXP_IN-1) - 1). Used by both paths.
+    // IN_BIAS as a sized vector (top bit 0, lower WEXP_IN-1 bits all 1 = 2^(WEXP_IN-1) - 1). Used by the
+    // narrowing (pack) path; the widen path re-derives the equivalent constant as IN_BIAS_WIDENED below.
     localparam [WEXP_IN-1:0] IN_BIAS = {1'b0, {(WEXP_IN-1){1'b1}}};
 
     generate
@@ -135,9 +136,10 @@ module zkf_resize #(
             end
         end else begin : g_pack
             // Slow path: at least one dimension narrows, so rounding and/or overflow detection are needed and
-            // _zkf_pack handles them (its STAGE_OUTPUT sets registered vs combinational). Output-side accumulator width for the
-            // unbiased exponent. Must hold the input format's full signed exp_unbiased range (WEXP_IN + 1 signed bits)
-            // and also _zkf_pack's internal range requirement of at least WEXP_OUT + 2 signed bits.
+            // _zkf_pack handles them (its STAGE_OUTPUT sets registered vs combinational). Output-side accumulator
+            // width for the unbiased exponent. Must hold the input format's full signed exp_unbiased range
+            // (WEXP_IN + 1 signed bits) and also _zkf_pack's internal range requirement of at least WEXP_OUT + 2
+            // signed bits.
             localparam WEU_PACK_MIN = WEXP_OUT + 2;
             localparam WEU_IN_MIN   = WEXP_IN  + 1;
             localparam WEU          = (WEU_PACK_MIN > WEU_IN_MIN) ? WEU_PACK_MIN : WEU_IN_MIN;

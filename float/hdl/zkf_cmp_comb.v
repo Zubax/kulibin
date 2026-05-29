@@ -45,7 +45,7 @@ module zkf_cmp_comb #(parameter WEXP = 6, parameter WMAN = 18) (
     // iff a_key < b_key; this maps to a clean carry chain. `==` is an independent XOR-reduce; `>` is the
     // leftover case. Writing `<` as a `-` keeps the path off whatever wider unsigned-compare lowering the
     // tool might otherwise pick — same trick as `_zkf_add_ge` inside zkf_add.
-    // https://stackoverflow.com/questions/60844496/does-subtraction-need-less-resource-than-comparison-symbol-in-verilog
+    // https://stackoverflow.com/q/60844496
     wire [WFULL:0] raw_diff = {1'b0, a_key} - {1'b0, b_key};
     wire raw_lt = raw_diff[WFULL];
     wire raw_eq = a_key == b_key;

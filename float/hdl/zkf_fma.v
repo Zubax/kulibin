@@ -89,7 +89,6 @@ module zkf_fma #(
     localparam WSHIFT = (WDIFF > (WINDEX + 1)) ? WDIFF : (WINDEX + 1);
 
     localparam [WEXP-1:0] EXP_BIAS = {1'b0, {WEXP-1{1'b1}}};
-    localparam [WEXP-1:0] EXP_INF  = {WEXP{1'b1}};
     // Most-negative WEU value: any finite operand sorts above it, so a zero/non-finite operand (whose datapath
     // magnitude is forced to 0) is always selected as the "small" operand and contributes nothing.
     localparam signed [WEU-1:0] EXP_MIN = {1'b1, {(WEU-1){1'b0}}};

@@ -200,31 +200,14 @@ endmodule
 
 /// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
 /// to match it. When changing the packer pipeline, update this one as well.
-/// The reset can be tied off to zero if the delay is not used for carrying control signals.
 /// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
-module _zkf_pack_delay#(parameter W = 1, parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0)(
-    input wire clk, input wire rst, input wire [W-1:0] x, output wire [W-1:0] y);
-    localparam N = STAGE_INPUT + STAGE_OUTPUT;
-    generate
-        if (N != 0) begin : g_reg
-            reg [W-1:0] y_r [0:N-1];
-            integer i;
-            always @(posedge clk) begin
-                // verilator coverage_off
-                if (rst) begin
-                    for (i = 0; i < N; i = i + 1) y_r[i] <= {W{1'b0}};
-                end
-                // verilator coverage_on
-                else begin
-                    y_r[0] <= x;
-                    for (i = 1; i < N; i = i + 1) y_r[i] <= y_r[i-1];
-                end
-            end
-            assign y = y_r[N-1];
-        end else begin : g_comb
-            assign y = x;
-        end
-    endgenerate
+module _zkf_pack_delay #(parameter W = 1, parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0)(
+    input wire clk, input wire [W-1:0] x, output wire [W-1:0] y);
+    zkf_pipe #(.W(W), .N(STAGE_INPUT + STAGE_OUTPUT)) u_pipe (
+        .clk(clk), .rst(1'b0),
+        .in_valid(1'b0), .in(x),
+        .out_valid(), .out(y)
+    );
 endmodule
 
 `default_nettype wire

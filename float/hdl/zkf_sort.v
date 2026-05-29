@@ -44,15 +44,14 @@ module zkf_sort #(
         .out_valid(in_valid_q), .out({b_q, a_q})
     );
 
-    wire a_gt_b;
-    wire a_eq_b;
     wire a_lt_b;
 
+    // Only the less-than result orders the pair; the gt/eq outputs are intentionally left unconnected.
     zkf_cmp_comb #(.WEXP(WEXP), .WMAN(WMAN)) u_cmp (
         .a(a_q),
         .b(b_q),
-        .a_gt_b(a_gt_b),
-        .a_eq_b(a_eq_b),
+        .a_gt_b(),
+        .a_eq_b(),
         .a_lt_b(a_lt_b)
     );
 
