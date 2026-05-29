@@ -44,8 +44,13 @@ _RESOURCE_HEADERS = (
 DEFAULT_DEVICE_SIZE = "12k"  # LFE5U-12F/25F die; the representative small part. Specs may request a larger one.
 
 
+# -dff is intentionally NOT passed: it runs ABC in sequential mode, which retimes/moves flops across the
+# DSP multiplies. On this DSP-heavy float library that hurts the wide configs (the MULT18X18D is mapped
+# combinationally either way, so retiming just disturbs placement of the reg->DSP->reg cones). Disabling it
+# lifts the timing-critical wide transcendentals (e.g. zkf_log2_w8m36 +3.5 MHz, zkf_exp2_w8m36 +2.6 MHz) with
+# no module dropping below the 100 MHz gate. -abc2 (extra ABC pass) and -noabc9 are kept (both measured best).
 def _synth_command(spec: ModuleSpec, netlist) -> str:
-    return f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -dff -json {netlist}"
+    return f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -json {netlist}"
 
 
 def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
@@ -107,7 +112,7 @@ def _resource_row(result: dict, bounds_by_key: dict) -> str:
 
 
 _FLOW_DESCRIPTION = (
-    "<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 -dff, "
+    "<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), "
     f"nextpnr-ecp5 for LFE5U-12F {DEVICE_PACKAGE} speed grade "
     f"{DEVICE_SPEED_GRADE} at {format_mhz(TARGET_FREQ_MHZ)}.</p>"
 )
