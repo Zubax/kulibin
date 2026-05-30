@@ -40,11 +40,19 @@ module _zkf_horner #(
     input  wire                    rst,
     input  wire                    in_valid,
     input  wire        [SBW-1:0]   sb_in,
+    // coeffs and acc are fixed-point carriers whose top bits are structural headroom: every coefficient is a small
+    // signed value padded to CW (sign + margin), and acc holds 2**f in [1,2) (exp2) or P(t) in [1,1/ln2] (log2) at
+    // scale 2**CF, so its bits above CF never toggle for any input. Their meaningful bits are exercised end-to-end by
+    // the exp2/log2 suites; suppress these carriers from the toggle gate (no single format can toggle every bit).
+    // verilator coverage_off
     input  wire [(D+1)*CW-1:0]     coeffs,   // c[j] (signed) at bits [j*CW +: CW], j = 0..D
+    // verilator coverage_on
     input  wire        [RW-1:0]    w,        // reduced argument, unsigned, in [0, 2^RW)
     output wire                    out_valid,
     output wire        [SBW-1:0]   sb_out,
+    // verilator coverage_off
     output wire signed [ACCW-1:0]  acc       // Horner result, signed, scale 2^-CF
+    // verilator coverage_on
 );
     // verilator coverage_off
     generate

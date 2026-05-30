@@ -520,9 +520,11 @@ def _deep_coverage(out: list) -> None:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
     # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the
     # high count bits, the split digit registers, and the top-level z3 detect (whose group only fits for W>=49) toggle.
+    # w130s1 pushes the internal radix-4 count to its top bit: CNTW = 8 only for clog2(W) in {7,8}, and a count of
+    # W-1 = 129 (the one-hot at bit 0) sets cnt[7], which no narrower W and no embedded instance (all count < 128) can.
     for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
                                 ("w9s1", 9, 1, "exhaustive"), ("w32s1", 32, 1, "directed"),
-                                ("w56s1", 56, 1, "directed")]:
+                                ("w56s1", 56, 1, "directed"), ("w130s1", 130, 1, "directed")]:
         out.append(_run("normshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,
                         plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT"}))
     for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),

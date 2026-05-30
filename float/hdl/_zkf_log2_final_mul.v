@@ -26,7 +26,12 @@ module _zkf_log2_final_mul #(
     input  wire                    in_valid,
     input  wire        [SBW-1:0]   sb_in,
     input  wire        [WFRAC-1:0] frac,
+    // acc carries the Horner result P(t) = log2(1+t)/t in [1, 1/ln2] at scale 2**CF; its bits above CF are structural
+    // headroom that never toggle. Its meaningful bits are exercised end-to-end by the log2 suite (i_acc below mirrors
+    // it one register stage later).
+    // verilator coverage_off
     input  wire signed [ACCW-1:0]  acc,     // > 0 in this regime
+    // verilator coverage_on
     output wire                    out_valid,
     output wire        [SBW-1:0]   sb_out,
     output wire        [F2-1:0]    l_fix
@@ -57,7 +62,9 @@ module _zkf_log2_final_mul #(
     // path at wide WMAN, where route + multiply + route land in one period. Adds one register stage. Datapath
     // operands free-run (only valid is reset), per the project reset policy.
     reg  [WFRAC-1:0]       i_frac;
-    reg  signed [ACCW-1:0] i_acc;
+    // verilator coverage_off
+    reg  signed [ACCW-1:0] i_acc;   // mirrors the acc port (structural top bits); see the acc port comment above
+    // verilator coverage_on
     reg                    i_v;
     reg  [SBW-1:0]         i_sb;
     always @(posedge clk) begin

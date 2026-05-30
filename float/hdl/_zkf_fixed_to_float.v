@@ -37,7 +37,11 @@ module _zkf_fixed_to_float #(
     input  wire                 in_valid,
     input  wire                 sign,
     input  wire                 force_inf,
+    // mag is the wide unsigned magnitude carrier; its top bits are structural headroom that never toggle. Its
+    // meaningful bits are sliced into significand/GRS and exercised end-to-end by the from_int / log2 suites.
+    // verilator coverage_off
     input  wire     [WMAG-1:0]  mag,
+    // verilator coverage_on
     input  wire     [SB_W-1:0]  sb_in,
 
     output wire                  out_valid,
@@ -73,10 +77,11 @@ module _zkf_fixed_to_float #(
     // register, 1=one barrier mid-cascade, 2=two barriers; see hdl/_zkf_normshift.v). norm_count is the left-shift
     // amount; norm_zero asserts when mag == 0; norm_aligned has the leading 1 at bit WMAG-1 for nonzero input.
     wire              norm_zero;
-    wire [WIDX-1:0]   norm_count;
     // verilator coverage_off
-    // The aligned bus's bits are sliced into significand / G / R / sticky below; the bus itself stays an internal
-    // intermediate. End-to-end coverage comes from the two callers' cocotb suites.
+    // norm_count's top bits assert only for normalize distances the small coverage formats cannot reach (the wide
+    // formats in the correctness suite do); the aligned bus's bits are sliced into significand / G / R / sticky below.
+    // Both stay internal intermediates -- end-to-end coverage comes from the two callers' cocotb suites.
+    wire [WIDX-1:0]   norm_count;
     wire [WMAG-1:0]   norm_aligned;
     // verilator coverage_on
     _zkf_normshift #(.W(WMAG), .STAGE_SPLIT(STAGE_NORMALIZE)) u_norm (

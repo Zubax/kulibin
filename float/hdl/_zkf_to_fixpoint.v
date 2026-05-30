@@ -44,7 +44,12 @@ module _zkf_to_fixpoint #(
     input  wire  [WEXP+WMAN-1:0] a,
 
     output wire                  out_valid,
+    // mag is the wide fixed-point reduction carrier (sign-extended integer part above the fraction); its top bits are
+    // structural sign-extension / headroom. Its meaningful bits feed the caller's split and are exercised end-to-end
+    // (including the wide-exponent corners) by the to_int / exp2 suites.
+    // verilator coverage_off
     output wire    [WI+FF-1:0]   mag,
+    // verilator coverage_on
     output wire                  guard,
     output wire                  lost_sticky,
     output wire                  sign,
@@ -198,7 +203,11 @@ module _zkf_to_fixpoint #(
     // The left-shift clamp uses the combined oor so that mag stays in-container even when the extrinsic threshold
     // fires before mag_too_big does (zkf_exp2's case). lshamt / rshamt are don't-care for the non-selected
     // direction (the mux picks one), so each clamp only has to be correct in its own direction.
+    // lshamt_clamped's high bits assert only for large left shifts (large exponents) that the small coverage formats
+    // do not reach; the wide-exponent correctness configs do. Suppress this shift-amount carrier from the toggle gate.
+    // verilator coverage_off
     wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !oor_in) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
+    // verilator coverage_on
     wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
 
     // -- Stage 1: capture pre-shift state (decode + clamp). Reset only validity; payload free-runs.
@@ -210,7 +219,9 @@ module _zkf_to_fixpoint #(
     reg             s1_oor;
     reg [WMAN-1:0]  s1_sig;
     reg [WRSH-1:0]  s1_rshamt;
-    reg [WLSH-1:0]  s1_lshamt;
+    // verilator coverage_off
+    reg [WLSH-1:0]  s1_lshamt;   // registered lshamt_clamped (same structural high bits); see the comment above
+    // verilator coverage_on
 
     // -- Stage 1 -> Stage 2 combinational: the heavy barrel shifters. The right-shift barrel folds the discarded
     // tail into a single sticky bit; the left-shift is exact (no GRS). The two branches are muxed by
@@ -224,7 +235,11 @@ module _zkf_to_fixpoint #(
     //          together with the dropped sticky -- we need them separated for FF>0 (the data bit 0 lives in mag,
     //          the sticky is a separate sideband).
     wire [WRSHIFTER-1:0] rsh_out_pre;
+    // verilator coverage_off
+    // rsh_in[0] is a structural pad (the {.., 1'b0} / {.., 2'b00} sticky-alignment bit, always 0); the upper bits just
+    // re-present s1_sig, which is covered through its own toggle. Suppress this redundant carrier from the toggle gate.
     wire [WRSHIFTER-1:0] rsh_in;
+    // verilator coverage_on
     generate
         if (FF == 0) begin : g_rsh_in_grs
             assign rsh_in = {s1_sig, 2'b00};
@@ -254,7 +269,11 @@ module _zkf_to_fixpoint #(
 
     // Left shift: zero-extend the WMAN-bit significand and shift into the WLEFT-bit container. When LSH_MAX==0
     // (rare; would mean WI+FF <= WMAN), the left branch is a passthrough.
+    // lsh_out_pre's high bits are reached only by large left shifts (large exponents) the small coverage formats do
+    // not exercise; the wide-exponent correctness configs do. Suppress this shifter-output carrier from the gate.
+    // verilator coverage_off
     wire [WLEFT-1:0] lsh_out_pre;
+    // verilator coverage_on
     generate
         if (LSH_MAX > 0) begin : g_lshift
             assign lsh_out_pre = {{LSH_MAX{1'b0}}, s1_sig} << s1_lshamt;
