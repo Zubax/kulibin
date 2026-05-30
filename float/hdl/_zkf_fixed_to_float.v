@@ -15,6 +15,11 @@
 ///                1 = `exp` is already biased (the caller folded the bias into EXP_OFFSET to skip the packer's
 ///                    bias add -- used by zkf_from_int with EXP_OFFSET = WX-1+BIAS).
 ///
+/// ASSUME_NO_OVERFLOW: forwarded to _zkf_pack. 0 = detect exponent overflow -> infinity (default); 1 = the caller
+///                guarantees the result exponent is always in range, so the packer's overflow detector is pruned
+///                (e.g. zkf_log2, whose result is always representable for finite x). force_inf and the underflow
+///                paths are unaffected.
+///
 /// Callers that don't need the sideband should set its width SB_W=1 and stub with a constant.
 
 `default_nettype none
@@ -26,6 +31,7 @@ module _zkf_fixed_to_float #(
     parameter WEU                   = 8,    // internal signed exponent width, also passed to _zkf_pack as WEXP_UNBIASED
     parameter integer EXP_OFFSET    = 0,
     parameter integer EXP_IS_BIASED = 0,
+    parameter ASSUME_NO_OVERFLOW    = 0,    // forwarded to _zkf_pack; 1 prunes overflow detect
     parameter SB_W                  = 1,    // generic sideband width carried alongside the pipeline
     parameter STAGE_NORMALIZE       = 0,    // {0,1,2} direct forward to _zkf_normshift.STAGE_SPLIT
     parameter STAGE_PACK            = 0,    // {0,1} direct forward to _zkf_pack.STAGE_INPUT
@@ -135,6 +141,7 @@ module _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WEXP_UNBIASED(WEU),
         .EXP_IS_BIASED(EXP_IS_BIASED),
+        .ASSUME_NO_OVERFLOW(ASSUME_NO_OVERFLOW),
         .STAGE_INPUT(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_pack (

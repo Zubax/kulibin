@@ -216,6 +216,7 @@ module zkf_log2 #(
         .WMAG(WNORM), .WEU(WEU),
         .EXP_OFFSET(WNORM - 1 - F2),
         .EXP_IS_BIASED(0),
+        .ASSUME_NO_OVERFLOW(1),  // log2(finite>0) is always representable, disable overflow detection circuit
         .SB_W(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
         .STAGE_PACK(STAGE_PACK),

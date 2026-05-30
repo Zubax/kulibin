@@ -169,11 +169,26 @@ def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int, exp_is_biased: int = 0)
     return cases
 
 
+def _filter_no_overflow(fmt: ZkfFormat, cases: list[PackCase], assume_no_overflow: int) -> list[PackCase]:
+    if not assume_no_overflow:
+        return cases
+    # Under ASSUME_NO_OVERFLOW=1 the packer prunes its overflow detector, so its result diverges from the
+    # overflow-detecting reference only for a genuine exponent overflow with no force flag: force_inf / force_zero
+    # dominate (converge), and a round-carry from EXP_MAX_FINITE up to EXP_INF rides the rounding adder, not the
+    # detector (converges). An exp_unbiased strictly above the finite range is the caller's-responsibility / undefined
+    # region for this mode, so drop it from the stimulus.
+    return [
+        case for case in cases
+        if case.force_inf or case.force_zero or case.exp_unbiased <= fmt.max_exp_unbiased
+    ]
+
+
 def cases_for(
-    fmt: ZkfFormat, kind: str, seed: int, count: int, wexp_unbiased: int, exp_is_biased: int = 0
+    fmt: ZkfFormat, kind: str, seed: int, count: int, wexp_unbiased: int,
+    exp_is_biased: int = 0, assume_no_overflow: int = 0,
 ) -> list[PackCase]:
     if kind == "exhaustive":
-        return exhaustive_cases(fmt, wexp_unbiased, exp_is_biased)
+        return _filter_no_overflow(fmt, exhaustive_cases(fmt, wexp_unbiased, exp_is_biased), assume_no_overflow)
     if exp_is_biased:
         # The directed/random generators choose unbiased exponents around the format's range; re-biasing those for the
         # EXP_IS_BIASED port can exceed the signed field, so EXP_IS_BIASED=1 is only swept with the exhaustive kind.
@@ -183,7 +198,7 @@ def cases_for(
     if (fmt.wexp, fmt.wman) == (5, 8):
         cases.extend(manual_w5_m8_cases())
     if kind == "directed":
-        return cases
+        return _filter_no_overflow(fmt, cases, assume_no_overflow)
 
     rng = np.random.default_rng(seed)
     seen = {
@@ -205,7 +220,7 @@ def cases_for(
             continue
         seen.add(args)
         cases.append(make_case(fmt, "random_mag_scale", *args))
-    return cases
+    return _filter_no_overflow(fmt, cases, assume_no_overflow)
 
 
 @cocotb.test()
@@ -219,7 +234,10 @@ async def pack_runtime_cases(dut) -> None:
     check_width("significand", dut.significand, fmt.wman, context)
     check_width("exp_unbiased", dut.exp_unbiased, wexp_unbiased, context)
     exp_is_biased = context.exp_is_biased
-    cases = cases_for(fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased)
+    assume_no_overflow = context.assume_no_overflow
+    cases = cases_for(
+        fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased, assume_no_overflow
+    )
 
     start_clock(dut)
     dut.rst.value = 1

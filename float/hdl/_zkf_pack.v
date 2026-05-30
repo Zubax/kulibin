@@ -22,6 +22,14 @@
 /// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
 ///     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. zkf_add:
 ///     large_exp - normalize_shift is already the biased exponent, avoiding a -BIAS/+BIAS round trip).
+///
+/// ASSUME_NO_OVERFLOW=0 (default): the biased exponent is range-checked and a value above the finite range maps to
+///     canonical signed infinity.
+/// ASSUME_NO_OVERFLOW=1: the caller guarantees the biased exponent stays within the finite range [0, EXP_MAX_FINITE]
+///     for every valid input, so the overflow detector is pruned at elaboration. The force_inf path (still mapped to
+///     infinity) and the zero / MIN_NORMAL underflow paths are unaffected, and a round-carry from EXP_MAX_FINITE to
+///     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector). Used by
+///     bounded-output transcendentals such as zkf_log2, whose result is always representable for finite x.
 
 `default_nettype none
 
@@ -30,6 +38,7 @@ module _zkf_pack #(
     parameter WMAN          = 18,         // significand precision including the hidden bit
     parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
     parameter EXP_IS_BIASED = 0,          // see above
+    parameter ASSUME_NO_OVERFLOW = 0,     // 0 = normal behavior; 1 = caller guarantees no overflow, checks removed
     parameter STAGE_INPUT   = 0,          // 0 = combinational inputs (default); 1 = one register stage at the input
     parameter STAGE_OUTPUT  = 0           // 0 = combinational output (default); 1 = registered output (one stage)
 )(
@@ -53,6 +62,9 @@ module _zkf_pack #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if ((ASSUME_NO_OVERFLOW < 0) || (ASSUME_NO_OVERFLOW > 1)) begin : g_invalid_assume_no_overflow
+            _zkf_invalid_assume_no_overflow_out_of_range u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -144,7 +156,9 @@ module _zkf_pack #(
             assign exp_biased_high_nonzero = 1'b0;
         end
     endgenerate
-    wire exp_overflow = !exp_underflow_zero && (exp_biased_high_nonzero || (&exp_biased));
+    // ASSUME_NO_OVERFLOW=1 forces this to a constant 0 and synthesis prunes unused nets.
+    wire exp_overflow = (ASSUME_NO_OVERFLOW != 0) ? 1'b0
+                                                  : (!exp_underflow_zero && (exp_biased_high_nonzero || (&exp_biased)));
 
     // Single combinational cone feeding one output register (this packer is one register stage). Rounding,
     // round-to-nearest ties-to-even, folds the increment into a single {exp_biased, significand} adder - the full

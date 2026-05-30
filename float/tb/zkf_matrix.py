@@ -234,13 +234,15 @@ def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=No
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
-def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None) -> Run:
+def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
     suffix = ""
     if so is not None:
         vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
     if eb is not None:
         vlog.append(("EXP_IS_BIASED", eb)); suffix += f"_eb{eb}"
+    if nov is not None:
+        vlog.append(("ASSUME_NO_OVERFLOW", nov)); suffix += f"_nov{nov}"
     return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
@@ -542,9 +544,8 @@ def _deep_coverage(out: list) -> None:
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
     # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches that stay dark under the defaults, so the merged gate can
     # measure them: _zkf_pack g_out_reg (every packer op), zkf_pipe g_registered (div, via _zkf_pack_delay),
-    # zkf_resize g_owr (widen path),
-    # and the standalone packer's registered-output and biased-exponent cones. One config per branch suffices under
-    # merged-union; small exhaustive formats toggle the new registers.
+    # zkf_resize g_owr (widen path), and the standalone packer's registered-output and biased-exponent cones. One
+    # config per branch suffices under merged-union; small exhaustive formats toggle the new registers.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
     out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
@@ -556,6 +557,10 @@ def _deep_coverage(out: list) -> None:
     out.append(_resize(s, "deep", "w5m6_to_w3m4", 5, 6, 3, 4, "exhaustive", 0, 0, so=1))   # narrow -> g_out_reg
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, so=1))
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, eb=1))
+    # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to a constant 0). This config regresses
+    # the pruned-mode datapath: the case generator drops out-of-range exponents (the caller-undefined region), so the
+    # surviving in-range / force_inf / round-carry cases must still match the overflow-detecting reference exactly.
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, nov=1))
 
 
 def _properties(out: list) -> None:

@@ -453,6 +453,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  ASSUME_NO_OVERFLOW:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_ASSUME_NO_OVERFLOW:
+    datatype: int
+    default: 0
+    paramtype: plusarg
 
 targets:
   default:
@@ -473,11 +481,13 @@ targets:
       - WEXP_UNBIASED
       - STAGE_OUTPUT
       - EXP_IS_BIASED
+      - ASSUME_NO_OVERFLOW
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_WEXP_UNBIASED
       - ZKF_STAGE_OUTPUT
       - ZKF_EXP_IS_BIASED
+      - ZKF_ASSUME_NO_OVERFLOW
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED

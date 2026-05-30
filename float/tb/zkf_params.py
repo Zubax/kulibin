@@ -38,6 +38,7 @@ class TestContext:
     stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
     exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
+    assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees an in-range exponent)
 
     @property
     def params(self) -> str:
@@ -58,6 +59,8 @@ class TestContext:
             knob_suffix += " SO=0"
         if self.exp_is_biased:
             knob_suffix += f" EB={self.exp_is_biased}"
+        if self.assume_no_overflow:
+            knob_suffix += f" NOV={self.assume_no_overflow}"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
@@ -178,6 +181,13 @@ def _exp_is_biased() -> int:
     return value
 
 
+def _assume_no_overflow() -> int:
+    value = plusarg_int("ZKF_ASSUME_NO_OVERFLOW", 0)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_ASSUME_NO_OVERFLOW must be 0 or 1, got {value}")
+    return value
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -207,6 +217,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
         exp_is_biased=_exp_is_biased(),
+        assume_no_overflow=_assume_no_overflow(),
     )
 
 
