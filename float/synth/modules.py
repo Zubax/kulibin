@@ -607,13 +607,13 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_resize.v",
         ]
     if spec.kind in {"exp2", "log2"}:
-        # The generate-if selects the table whose name matches WMAN (D = degree(WMAN), from the generated SPECS); the
-        # other WMAN branches reference undefined modules but are untaken, so synthesis prunes them (like the
-        # _zkf_invalid_* sentinels). Yosys's hierarchy -check, however, also elaborates the *generic* zkf_<func>
+        # The generate-if selects the table whose name matches WMAN (the degree is a closed-form localparam inside the
+        # table); the other WMAN branches reference undefined modules but are untaken, so synthesis prunes them (like
+        # the _zkf_invalid_* sentinels). Yosys's hierarchy -check, however, also elaborates the *generic* zkf_<func>
         # (default WMAN), so that WMAN's table must be present too -- include both (deduped) and let synthesis prune
         # the unused generic.
         def table(wman: int) -> Path:
-            return hdl / "_tables" / f"_zkf_{spec.kind}_m{wman}_d{TRANS_SPECS[(spec.kind, wman)]['d']}.v"
+            return hdl / "_tables" / f"_zkf_{spec.kind}_m{wman}.v"
         DEFAULT_WMAN = 18  # the default WMAN of zkf_exp2 / zkf_log2
         tables = [table(w) for w in sorted({DEFAULT_WMAN, spec.wman})]
         sources = [hdl / "_zkf_pack.v", hdl / "zkf_pipe.v"]

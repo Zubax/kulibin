@@ -11,9 +11,9 @@
 ///
 ///  1. With x = m * 2^e (m = 1.frac in [1,2), e = exp-BIAS), log2(x) = e + log2(m).
 ///
-///  2. The pipelined per-WMAN table+polynomial core selected by the generate-if (_zkf_log2_m<WMAN>_d<D>) evaluates
-///     log2(m) = t*P(t) (t = stored fraction) as a fixed-point fraction in [0,1), factoring out the exact t for full
-///     relative accuracy near m == 1.
+///  2. The pipelined per-WMAN table+polynomial core selected by the generate-if evaluates log2(m) = t*P(t)
+///     (t = stored fraction) as a fixed-point fraction in [0,1), factoring out the exact t for full relative
+///     accuracy near m == 1.
 ///
 ///  3. The signed fixed-point sum R = e + log2(m) is renormalized and rounded by _zkf_fixed_to_float, which owns the
 ///     _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input register,
@@ -26,9 +26,10 @@
 
 `default_nettype none
 
+`define ZKF_LOG2_DEGREE (((WMAN+16)/9)-1)
 `define ZKF_LOG2_LATENCY \
     (STAGE_INPUT + 5 + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK \
-     + (((WMAN+16)/9)-1)*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
+     + `ZKF_LOG2_DEGREE*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
 
 module zkf_log2 #(
     parameter WEXP            = 6,    // exponent field width
@@ -109,56 +110,58 @@ module zkf_log2 #(
     wire           ev_valid;
     wire [SBW-1:0] sb_out_l;
     wire [F2-1:0]  l_fix;
-    // The D arguments are the closed-form degree(WMAN); a stale value would name a now-missing module and fail loudly.
-    `define ZKF_LOG2_TABLE(W, D) end else if (WMAN == W) begin : g_m``W \
-        _zkf_log2_m``W``_d``D #(.SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+    // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
+    // the LATENCY parameter), so the Horner depth / latency cannot drift. A WMAN without a pre-generated table names a
+    // now-missing module and fails loudly.
+    `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
+        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .frac(frac_in), \
             .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
     generate
         if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
-        `ZKF_LOG2_TABLE(11, 2)
-        `ZKF_LOG2_TABLE(12, 2)
-        `ZKF_LOG2_TABLE(13, 2)
-        `ZKF_LOG2_TABLE(14, 2)
-        `ZKF_LOG2_TABLE(15, 2)
-        `ZKF_LOG2_TABLE(16, 2)
-        `ZKF_LOG2_TABLE(17, 2)
-        `ZKF_LOG2_TABLE(18, 2)
-        `ZKF_LOG2_TABLE(19, 2)
-        `ZKF_LOG2_TABLE(20, 3)
-        `ZKF_LOG2_TABLE(21, 3)
-        `ZKF_LOG2_TABLE(22, 3)
-        `ZKF_LOG2_TABLE(23, 3)
-        `ZKF_LOG2_TABLE(24, 3)
-        `ZKF_LOG2_TABLE(25, 3)
-        `ZKF_LOG2_TABLE(26, 3)
-        `ZKF_LOG2_TABLE(27, 3)
-        `ZKF_LOG2_TABLE(28, 3)
-        `ZKF_LOG2_TABLE(29, 4)
-        `ZKF_LOG2_TABLE(30, 4)
-        `ZKF_LOG2_TABLE(31, 4)
-        `ZKF_LOG2_TABLE(32, 4)
-        `ZKF_LOG2_TABLE(33, 4)
-        `ZKF_LOG2_TABLE(34, 4)
-        `ZKF_LOG2_TABLE(35, 4)
-        `ZKF_LOG2_TABLE(36, 4)
-        `ZKF_LOG2_TABLE(37, 4)
-        `ZKF_LOG2_TABLE(38, 5)
-        `ZKF_LOG2_TABLE(39, 5)
-        `ZKF_LOG2_TABLE(40, 5)
-        `ZKF_LOG2_TABLE(41, 5)
-        `ZKF_LOG2_TABLE(42, 5)
-        `ZKF_LOG2_TABLE(43, 5)
-        `ZKF_LOG2_TABLE(44, 5)
-        `ZKF_LOG2_TABLE(45, 5)
-        `ZKF_LOG2_TABLE(46, 5)
-        `ZKF_LOG2_TABLE(47, 6)
-        `ZKF_LOG2_TABLE(48, 6)
-        `ZKF_LOG2_TABLE(49, 6)
-        `ZKF_LOG2_TABLE(50, 6)
-        `ZKF_LOG2_TABLE(51, 6)
-        `ZKF_LOG2_TABLE(52, 6)
-        `ZKF_LOG2_TABLE(53, 6)
+        `ZKF_LOG2_TABLE(11)
+        `ZKF_LOG2_TABLE(12)
+        `ZKF_LOG2_TABLE(13)
+        `ZKF_LOG2_TABLE(14)
+        `ZKF_LOG2_TABLE(15)
+        `ZKF_LOG2_TABLE(16)
+        `ZKF_LOG2_TABLE(17)
+        `ZKF_LOG2_TABLE(18)
+        `ZKF_LOG2_TABLE(19)
+        `ZKF_LOG2_TABLE(20)
+        `ZKF_LOG2_TABLE(21)
+        `ZKF_LOG2_TABLE(22)
+        `ZKF_LOG2_TABLE(23)
+        `ZKF_LOG2_TABLE(24)
+        `ZKF_LOG2_TABLE(25)
+        `ZKF_LOG2_TABLE(26)
+        `ZKF_LOG2_TABLE(27)
+        `ZKF_LOG2_TABLE(28)
+        `ZKF_LOG2_TABLE(29)
+        `ZKF_LOG2_TABLE(30)
+        `ZKF_LOG2_TABLE(31)
+        `ZKF_LOG2_TABLE(32)
+        `ZKF_LOG2_TABLE(33)
+        `ZKF_LOG2_TABLE(34)
+        `ZKF_LOG2_TABLE(35)
+        `ZKF_LOG2_TABLE(36)
+        `ZKF_LOG2_TABLE(37)
+        `ZKF_LOG2_TABLE(38)
+        `ZKF_LOG2_TABLE(39)
+        `ZKF_LOG2_TABLE(40)
+        `ZKF_LOG2_TABLE(41)
+        `ZKF_LOG2_TABLE(42)
+        `ZKF_LOG2_TABLE(43)
+        `ZKF_LOG2_TABLE(44)
+        `ZKF_LOG2_TABLE(45)
+        `ZKF_LOG2_TABLE(46)
+        `ZKF_LOG2_TABLE(47)
+        `ZKF_LOG2_TABLE(48)
+        `ZKF_LOG2_TABLE(49)
+        `ZKF_LOG2_TABLE(50)
+        `ZKF_LOG2_TABLE(51)
+        `ZKF_LOG2_TABLE(52)
+        `ZKF_LOG2_TABLE(53)
         end else begin : g_unsupported
             _zkf_invalid_unsupported_table_wman u_invalid();  // run float/zkf_transcendental.py --emit
         end
@@ -233,4 +236,5 @@ module zkf_log2 #(
 endmodule
 
 `undef ZKF_LOG2_LATENCY
+`undef ZKF_LOG2_DEGREE
 `default_nettype wire

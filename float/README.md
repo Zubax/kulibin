@@ -145,7 +145,21 @@ truncating arithmetic; widening it further has no accuracy benefit and just pays
 
 <img src="zkf_transcendental_accuracy.svg">
 
-## Notable sizes
+## Sizing the exponent and the significand (WEXP/WMAN)
+
+WEXP can be chosen freely depending on the required range, while WMAN is sensitive to the chip's DSP capabilities
+and thus requires careful selection to achieve best resource utilization.
+
+|WMAN |≈ε (interval)| Description                                                                                 |
+|-----|-------------|---------------------------------------------------------------------------------------------|
+|  11 | 9.766e-04   | IEEE 754 binary16                                                                           |
+|  16 | 3.052e-05   | DSP tiles in Lattice iCE40 and similar                                                      |
+|  18 | 7.629e-06   | Classic FPGA DSP width, very common: ECP5, PolarFire, Trion, many Intel modes, etc.         |
+|  24 | 1.192e-07   | IEEE 754 binary32; also fits Versal DSP58's 27x24 asymmetric multiplier side                |
+|  27 | 1.490e-08   | Intel/Altera variable-precision DSPs                                                        |
+|  36 | 2.910e-11   | 2x18 (very common) or native Intel/Altera 36x36-style variable-precision mode               |
+|  48 | 7.105e-15   | 2x24 or 3x16; with an 8-bit exponent amounts to 7 bytes exactly                             |
+|  53 | 2.220e-16   | IEEE 754 binary64                                                                           |
 
 ### WMAN=18
 
@@ -169,7 +183,7 @@ the precision lands halfway between IEEE 754 binary64 and binary32.
 Usually, on an 18x18 DSP chip, going even a single bit higher causes f_max to tank dramatically while area explodes.
 Thus this is likely to be the optimal choice for a large number of applications.
 
-Using binary32-compatible exponent WEXP=8, 44 bits total:
+Using binary32-compatible exponent WEXP=8, 44 bits total (5.5 bytes):
 
     WEXP=8 WMAN=36 WFRAC=35 WFULL=44 BIAS=127
     lowest     = 1/85070591730234615865843651857942052864 ≈ 1.175e-38

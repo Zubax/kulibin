@@ -13,7 +13,7 @@
 ///  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point.
 ///
 ///  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
-///     table+polynomial core selected by the generate-if below (hdl/_tables/_zkf_exp2_m<WMAN>_d<D>.v).
+///     table+polynomial core selected by the generate-if below.
 ///
 ///  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
 ///
@@ -26,7 +26,8 @@
 
 `default_nettype none
 
-`define ZKF_EXP2_LATENCY (STAGE_INPUT + 5 + (((WMAN+16)/9)-1)*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT)
+`define ZKF_EXP2_DEGREE (((WMAN+16)/9)-1)
+`define ZKF_EXP2_LATENCY (STAGE_INPUT + 5 + `ZKF_EXP2_DEGREE*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_exp2 #(
     parameter WEXP          = 6,    // exponent field width
@@ -64,9 +65,9 @@ module zkf_exp2 #(
 
     localparam WFRAC = WMAN - 1;
     // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
-    localparam FF        = WMAN + 12;
-    localparam WEU       = WEXP + 2;            // signed unbiased exponent fed to _zkf_pack
-    localparam SBW       = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
+    localparam FF   = WMAN + 12;
+    localparam WEU  = WEXP + 2;            // signed unbiased exponent fed to _zkf_pack
+    localparam SBW  = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
 
     localparam integer BIAS    = (1 << (WEXP - 1)) - 1;
     // |x| >= 2^(WEXP-1) is always out of range. exp >= OOR_THRESHOLD <=> e >= WEXP-1 (also true for +/-inf).
@@ -153,59 +154,60 @@ module zkf_exp2 #(
     wire            eval_guard;
     wire            eval_round;
     wire            eval_sticky;
-    // The table+polynomial core is pre-generated per WMAN using zkf_transcendental.py as _zkf_exp2_m<WMAN>_d<D>,
-    // D = degree(WMAN). The D arguments are the closed-form degree(WMAN); a stale value would name a now-missing
-    // module and fail loudly.
-    `define ZKF_EXP2_TABLE(W, D) end else if (WMAN == W) begin : g_m``W \
-        _zkf_exp2_m``W``_d``D #(.SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+    // The table+polynomial core is pre-generated per WMAN by zkf_transcendental.py as _zkf_exp2_m<WMAN>. We pass the
+    // closed-form degree D below; the core asserts it equals the degree its ROM was fitted for (mirrors the LATENCY
+    // parameter), so the Horner depth / latency cannot drift. A WMAN without a pre-generated table names a now-missing
+    // module and fails loudly.
+    `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
+        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_e), .f(r0_f), \
             .out_valid(ev_valid), .sb_out(sb_out_e), .significand(eval_sig), \
             .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));
     generate
         if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
-        `ZKF_EXP2_TABLE(11, 2)
-        `ZKF_EXP2_TABLE(12, 2)
-        `ZKF_EXP2_TABLE(13, 2)
-        `ZKF_EXP2_TABLE(14, 2)
-        `ZKF_EXP2_TABLE(15, 2)
-        `ZKF_EXP2_TABLE(16, 2)
-        `ZKF_EXP2_TABLE(17, 2)
-        `ZKF_EXP2_TABLE(18, 2)
-        `ZKF_EXP2_TABLE(19, 2)
-        `ZKF_EXP2_TABLE(20, 3)
-        `ZKF_EXP2_TABLE(21, 3)
-        `ZKF_EXP2_TABLE(22, 3)
-        `ZKF_EXP2_TABLE(23, 3)
-        `ZKF_EXP2_TABLE(24, 3)
-        `ZKF_EXP2_TABLE(25, 3)
-        `ZKF_EXP2_TABLE(26, 3)
-        `ZKF_EXP2_TABLE(27, 3)
-        `ZKF_EXP2_TABLE(28, 3)
-        `ZKF_EXP2_TABLE(29, 4)
-        `ZKF_EXP2_TABLE(30, 4)
-        `ZKF_EXP2_TABLE(31, 4)
-        `ZKF_EXP2_TABLE(32, 4)
-        `ZKF_EXP2_TABLE(33, 4)
-        `ZKF_EXP2_TABLE(34, 4)
-        `ZKF_EXP2_TABLE(35, 4)
-        `ZKF_EXP2_TABLE(36, 4)
-        `ZKF_EXP2_TABLE(37, 4)
-        `ZKF_EXP2_TABLE(38, 5)
-        `ZKF_EXP2_TABLE(39, 5)
-        `ZKF_EXP2_TABLE(40, 5)
-        `ZKF_EXP2_TABLE(41, 5)
-        `ZKF_EXP2_TABLE(42, 5)
-        `ZKF_EXP2_TABLE(43, 5)
-        `ZKF_EXP2_TABLE(44, 5)
-        `ZKF_EXP2_TABLE(45, 5)
-        `ZKF_EXP2_TABLE(46, 5)
-        `ZKF_EXP2_TABLE(47, 6)
-        `ZKF_EXP2_TABLE(48, 6)
-        `ZKF_EXP2_TABLE(49, 6)
-        `ZKF_EXP2_TABLE(50, 6)
-        `ZKF_EXP2_TABLE(51, 6)
-        `ZKF_EXP2_TABLE(52, 6)
-        `ZKF_EXP2_TABLE(53, 6)
+        `ZKF_EXP2_TABLE(11)
+        `ZKF_EXP2_TABLE(12)
+        `ZKF_EXP2_TABLE(13)
+        `ZKF_EXP2_TABLE(14)
+        `ZKF_EXP2_TABLE(15)
+        `ZKF_EXP2_TABLE(16)
+        `ZKF_EXP2_TABLE(17)
+        `ZKF_EXP2_TABLE(18)
+        `ZKF_EXP2_TABLE(19)
+        `ZKF_EXP2_TABLE(20)
+        `ZKF_EXP2_TABLE(21)
+        `ZKF_EXP2_TABLE(22)
+        `ZKF_EXP2_TABLE(23)
+        `ZKF_EXP2_TABLE(24)
+        `ZKF_EXP2_TABLE(25)
+        `ZKF_EXP2_TABLE(26)
+        `ZKF_EXP2_TABLE(27)
+        `ZKF_EXP2_TABLE(28)
+        `ZKF_EXP2_TABLE(29)
+        `ZKF_EXP2_TABLE(30)
+        `ZKF_EXP2_TABLE(31)
+        `ZKF_EXP2_TABLE(32)
+        `ZKF_EXP2_TABLE(33)
+        `ZKF_EXP2_TABLE(34)
+        `ZKF_EXP2_TABLE(35)
+        `ZKF_EXP2_TABLE(36)
+        `ZKF_EXP2_TABLE(37)
+        `ZKF_EXP2_TABLE(38)
+        `ZKF_EXP2_TABLE(39)
+        `ZKF_EXP2_TABLE(40)
+        `ZKF_EXP2_TABLE(41)
+        `ZKF_EXP2_TABLE(42)
+        `ZKF_EXP2_TABLE(43)
+        `ZKF_EXP2_TABLE(44)
+        `ZKF_EXP2_TABLE(45)
+        `ZKF_EXP2_TABLE(46)
+        `ZKF_EXP2_TABLE(47)
+        `ZKF_EXP2_TABLE(48)
+        `ZKF_EXP2_TABLE(49)
+        `ZKF_EXP2_TABLE(50)
+        `ZKF_EXP2_TABLE(51)
+        `ZKF_EXP2_TABLE(52)
+        `ZKF_EXP2_TABLE(53)
         end else begin : g_unsupported
             _zkf_invalid_unsupported_table_wman u_invalid();  // run zkf_transcendental.py --emit
         end
@@ -245,4 +247,5 @@ module zkf_exp2 #(
 endmodule
 
 `undef ZKF_EXP2_LATENCY
+`undef ZKF_EXP2_DEGREE
 `default_nettype wire

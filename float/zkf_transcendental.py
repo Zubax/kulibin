@@ -12,14 +12,15 @@ Both operators reduce to evaluating a smooth helper function on the unit interva
 
 The helper interval is split into ``2**K`` equal segments indexed by the top ``K`` argument bits; within a segment a
 degree-``D`` polynomial in the segment-local coordinate ``wn in [0,1)`` is evaluated by a truncating fixed-point Horner
-recurrence (see ``hdl/_zkf_horner.v``). ``D`` is a closed-form function of ``WMAN`` (so the pipeline depth is too); ``K``
-is then the smallest segment count that meets the accuracy target with that degree, and affects only the ROM size.
+recurrence (see ``hdl/_zkf_horner.v``). ``D`` is a closed-form function of ``WMAN`` (so the pipeline depth is too);
+``K`` is then the smallest segment count meeting the accuracy target at that degree, and affects only the ROM size.
 
 This module is the single source of truth. ``--emit`` writes, per supported ``WMAN``, a self-contained per-table eval
-core ``hdl/_tables/_zkf_<func>_m<WMAN>_d<D>.v`` plus the Python data table ``tb/zkf_trans_tables.py`` that the bit-exact
+core ``hdl/_tables/_zkf_<func>_m<WMAN>.v`` plus the Python data table ``tb/zkf_trans_tables.py`` that the bit-exact
 reference model imports. The public ``hdl/zkf_<func>.v`` modules carry a hand-written generate-if that enumerates every
-``WMAN`` in [11, 53] and instantiates the matching table module; an un-pregenerated ``WMAN`` fails elaboration loudly
-(the chosen table module is simply undefined). ``--check`` verifies the tables against an ``mpmath`` ground truth.
+``WMAN`` in [11, 53] and instantiates the matching table module, passing the closed-form degree the table asserts
+against its ROM (mirroring the ``LATENCY`` parameter); an un-pregenerated ``WMAN`` fails elaboration loudly (the chosen
+table module is simply undefined). ``--check`` verifies the tables against an ``mpmath`` ground truth.
 
 The table content depends on ``WMAN`` only (never ``WEXP``): the helper functions live on the unit interval and the
 exponent/integer part is handled outside the table by the renormalize/pack stage.
@@ -72,7 +73,7 @@ ACC_MARGIN = 3  # extra accumulator bits above the measured maximum, guarding ag
 # above it both functions keep the full K_CAP segments and share one degree formula; below it log2's narrower fraction
 # can no longer fill K_CAP segments and would force a higher per-segment degree (the old per-function divergence).
 # The public hdl/zkf_<func>.v modules enumerate this closed-form range; a WMAN in it without a pre-generated table
-# fails elaboration loudly (the named _zkf_<func>_m<WMAN>_d<D> module is undefined), and WMAN outside it hits a sentinel.
+# fails elaboration loudly (the named _zkf_<func>_m<WMAN> module is undefined), and WMAN outside it hits a sentinel.
 WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
 
 # WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
@@ -113,8 +114,8 @@ def degree(wman: int) -> int:
     return d
 
 
-def table_module(func: str, wman: int, d: int) -> str:
-    return f"_zkf_{func}_m{wman}_d{d}"
+def table_module(func: str, wman: int) -> str:
+    return f"_zkf_{func}_m{wman}"
 
 
 @dataclass
@@ -175,8 +176,10 @@ def _arg_grid(width: int, k: int):
 
 
 def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
-    """Return (max relative helper error, max |accumulator| seen) over the probe grid, exercising the truncating
-    Horner so that meeting the accuracy target guarantees faithful rounding by construction."""
+    """
+    Return (max relative helper error, max |accumulator| seen) over the probe grid, exercising the truncating
+    Horner so that meeting the accuracy target guarantees faithful rounding by construction.
+    """
     rw = width - k
     scale = mp.mpf(1 << cf)
     max_rel, max_acc = mp.mpf(0), 0
@@ -195,10 +198,12 @@ def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
 
 
 def choose_spec(func: str, wman: int) -> Spec:
-    """With the degree fixed by the closed-form ``degree`` (so the pipeline depth is a closed-form function of WMAN),
+    """
+    With the degree fixed by the closed-form ``degree`` (so the pipeline depth is a closed-form function of WMAN),
     pick the smallest segment count K (smallest ROM) that meets the accuracy target. K affects only the ROM, not the
     depth. Accuracy is measured through the truncating Horner, so meeting the target guarantees faithful rounding.
-    For WMAN >= 11 both functions keep the full K_CAP segment-index bits, so K is searched over 1..K_CAP."""
+    For WMAN >= 11 both functions keep the full K_CAP segment-index bits, so K is searched over 1..K_CAP.
+    """
     cf = cf_bits(wman)
     width = ff_bits(wman) if func == "exp2" else (wman - 1)  # reduced-argument width feeding the table
     d = degree(wman)
@@ -254,31 +259,34 @@ class _Writer:
 
 def _rom_rows(w: _Writer, s: Spec) -> None:
     """Emit the coefficient ROM: one packed word per segment, rom[seg] = {c[D], ..., c[0]}, one (wide) line each."""
+    # ROM inference hint by size: tiny tables to soft logic (a whole BRAM would sit <1% full), larger ones to EBR.
+    # Attribute only -- contents and timing are unchanged.
     if s.nseg <= 16:
-        # A small table is a shallow x wide shape that wastes a whole BRAM at <1% utilization, so hint soft logic;
-        # larger tables (NSEG >= 32) keep the inferred BRAM. Attribute only -- contents and timing are unchanged.
-        w('(* rom_style = "logic", syn_romstyle = "logic" *)')
+        w('(* rom_style = "logic", syn_romstyle = "logic" *)  // The table is small, do not waste a BRAM on it')
+    else:
+        w('(* rom_style = "block", syn_romstyle = "EBR" *)  // The table is large, map it to a block ROM (EBR)')
     w("reg [(D+1)*CW-1:0] rom [0:NSEG-1];")
     w("initial begin")
     w.push()
-    for seg in range(s.nseg):
-        word = ", ".join(f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}"
-                          for c in reversed(s.coeffs[seg]))  # c[D] .. c[0]
-        w(f"rom[{seg}] = {{{word}}};")
+    for seg in range(s.nseg):  # c[D] .. c[0]
+        word = ", ".join(f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}" for c in reversed(s.coeffs[seg]))
+        w(f"rom[{seg:3}] = {{{word}}};")
     w.pop()
     w("end")
 
 
 def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
-    """Emit the 2-deep registered ROM read: r_co1 is the synchronous (BRAM) read register with a slow clk-to-q on
-    ECP5; r_co2 is a fabric register isolating that delay from the first Horner multiply. w/sideband/valid ride along."""
+    """
+    Emit the 2-deep registered ROM read: r_co1 is the synchronous (BRAM) read register with a slow clk-to-q on
+    ECP5; r_co2 is a fabric register isolating that delay from the first Horner multiply. w/sideband/valid ride along.
+    """
     w("""
         reg [(D+1)*CW-1:0] r_co1, r_co2;
         reg        [RW-1:0] r_w1, r_w2;
         reg                 r_rv1, r_rv2;
         reg      [HSBW-1:0] r_rsb1, r_rsb2;
         always @(posedge clk) begin
-    """.strip("\n"))
+    """)
     w.push()
     w("if (rst) begin r_rv1 <= 1'b0; r_rv2 <= 1'b0; end")
     w("else     begin r_rv1 <= in_valid; r_rv2 <= r_rv1; end")
@@ -291,17 +299,19 @@ def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
         wire signed [ACCW-1:0] acc;
         wire                   ev;
         wire      [HSBW-1:0]   esb;
-        // verilator coverage_on
         _zkf_horner #(.D(D), .CW(CW), .RW(RW), .ACCW(ACCW), .SBW(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
             .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
             .out_valid(ev), .sb_out(esb), .acc(acc));
-    """.strip("\n"))
+    """)
 
 
 def _emit_table(s: Spec) -> str:
-    """One self-contained per-WMAN evaluation core. Shape (K/D/CF/RW/CW/ACCW) is baked; only SBW and STAGE_PRODUCT
-    are parameters. zkf_<func>.v selects the module whose name matches its WMAN/degree."""
-    mod = table_module(s.func, s.wman, s.d)
+    """
+    One self-contained per-WMAN evaluation core. Shape (K/CF/RW/CW/ACCW) is baked; the degree D is a parameter
+    defaulting to this ROM's fitted degree, which zkf_<func>.v drives with its own closed-form degree and the table
+    asserts (mirroring the LATENCY parameter). zkf_<func>.v selects the module whose name matches its WMAN.
+    """
+    mod = table_module(s.func, s.wman)
     w = _Writer()
     w("/// GENERATED by float/zkf_transcendental.py -- DO NOT EDIT.")
     if s.func == "exp2":
@@ -318,37 +328,45 @@ def _emit_table(s: Spec) -> str:
     w("")
     w("`default_nettype none")
     w("")
-    w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
+    w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
+      f"parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
     w.push()
     if s.func == "exp2":
         w("""
-            input  wire                   clk,
-            input  wire                   rst,
-            input  wire                   in_valid,
-            input  wire        [SBW-1:0]  sb_in,
-            input  wire [WMAN+12-1:0]     f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
-            output wire                   out_valid,
-            output wire        [SBW-1:0]  sb_out,
-            output wire        [WMAN-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
-            output wire                   guard,
-            output wire                   round,
-            output wire                   sticky
-        """.strip("\n"))
+            input  wire               clk,
+            input  wire               rst,
+            input  wire               in_valid,
+            input  wire     [SBW-1:0] sb_in,
+            input  wire [WMAN+12-1:0] f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
+            output wire               out_valid,
+            output wire     [SBW-1:0] sb_out,
+            output wire    [WMAN-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
+            output wire               guard,
+            output wire               round,
+            output wire               sticky
+        """)
     else:
         w("""
-            input  wire                   clk,
-            input  wire                   rst,
-            input  wire                   in_valid,
-            input  wire        [SBW-1:0]  sb_in,
-            input  wire        [WMAN-2:0] frac,         // stored fraction t (WFRAC = WMAN-1 bits), in [0,1)
-            output wire                   out_valid,
-            output wire        [SBW-1:0]  sb_out,
-            output wire [2*WMAN+12-2:0]   l_fix         // log2(1+t) at scale 2**-F2, F2 = WFRAC + CF, in [0,1)
-        """.strip("\n"))
+            input  wire                 clk,
+            input  wire                 rst,
+            input  wire                 in_valid,
+            input  wire       [SBW-1:0] sb_in,
+            input  wire      [WMAN-2:0] frac,         // stored fraction t (WFRAC = WMAN-1 bits), in [0,1)
+            output wire                 out_valid,
+            output wire       [SBW-1:0] sb_out,
+            output wire [2*WMAN+12-2:0] l_fix         // log2(1+t) at scale 2**-F2, F2 = WFRAC + CF, in [0,1)
+        """)
     w.pop()
     w(");")
     w.push()
-    # Shape localparams (baked); the public module hard-codes the matching FF/CF so it need not know K/D.
+    # Blanket coverage_off over the whole module body (re-enabled just before endmodule): these are pure generated
+    # data tables, exhaustively checked against the mpmath model by --check, not through HDL line/toggle coverage.
+    w("// verilator coverage_off")
+    # Degree contract (mirrors the LATENCY parameter): D defaults to this ROM's fitted degree and zkf_<func>.v drives
+    # it with its own closed-form degree; a mismatch fails elaboration, so the Horner pipeline depth -- hence the
+    # operator latency -- cannot silently drift from the degree the ROM was actually fitted for.
+    w(f"generate if (D != {s.d}) begin : g_degree_mismatch  _zkf_invalid_degree_mismatch u_invalid(); end endgenerate")
+    # Shape localparams (baked); the public module hard-codes the matching FF/CF so it need not know K.
     if s.func == "exp2":
         w("localparam integer FF   = WMAN + 12;")
     else:
@@ -356,7 +374,6 @@ def _emit_table(s: Spec) -> str:
           "localparam integer CF    = WMAN + 12;",
           "localparam integer F2    = WFRAC + CF;")
     w(f"localparam integer K    = {s.k};")
-    w(f"localparam integer D    = {s.d};")
     if s.func == "exp2":
         w(f"localparam integer CF   = {s.cf};")
     w(f"localparam integer RW   = {s.rw};")
@@ -368,7 +385,6 @@ def _emit_table(s: Spec) -> str:
     else:
         w("localparam integer HSBW = SBW + WFRAC;  // carry t alongside the sideband to the final multiply")
     w("")
-    w("// verilator coverage_off")
     _rom_rows(w, s)
     if s.func == "exp2":
         w("wire [K-1:0]  idx = f[FF-1 -: K];")
@@ -382,7 +398,7 @@ def _emit_table(s: Spec) -> str:
             assign sticky      = |acc[CF-WMAN-2:0];
             assign out_valid   = ev;
             assign sb_out      = esb;
-        """.strip("\n"))
+        """)
     else:
         w("wire [K-1:0]  idx = frac[WFRAC-1 -: K];")
         w("wire [RW-1:0] w   = frac[RW-1:0];")
@@ -392,11 +408,11 @@ def _emit_table(s: Spec) -> str:
         w("""
             wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
             wire [SBW-1:0]   sb_p   = esb[HSBW-1 -: SBW];
-            // verilator coverage_on
             _zkf_log2_final_mul #(.WFRAC(WFRAC), .ACCW(ACCW), .F2(F2), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
                 .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .frac(frac_p), .acc(acc),
                 .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
-        """.strip("\n"))
+        """)
+    w("// verilator coverage_on")
     w.pop()
     w("endmodule")
     w("")
@@ -432,14 +448,14 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
                 return SPECS[(func, wman)]
             except KeyError:
                 raise KeyError(f'no {func} table for WMAN={wman}; run float/zkf_transcendental.py --emit')
-    """.strip("\n"))
+    """)
     return w.render()
 
 
 def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
     TABLES.mkdir(parents=True, exist_ok=True)
     for (func, wman), s in sorted(all_specs.items()):
-        path = TABLES / f"{table_module(func, wman, s.d)}.v"
+        path = TABLES / f"{table_module(func, wman)}.v"
         path.write_text(_emit_table(s))
         print(f"wrote {path.relative_to(REPO)}")
     path = TB / "zkf_trans_tables.py"
@@ -451,17 +467,19 @@ def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
 # Reporting and accuracy check
 # --------------------------------------------------------------------------------------------------
 def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
-    print(f"{'func':5} {'WMAN':>4} {'K':>3} {'D':>3} {'CF':>4} {'RW':>4} {'CW':>4} {'ACCW':>5} {'entries':>8} {'ROM_kbit':>9}")
+    print(f"{'func':5} {'WMAN':>4} {'K':>3} {'D':>3} {'CF':>4} {'RW':>4} "
+          f"{'CW':>4} {'ACCW':>5} {'entries':>8} {'ROM_kbit':>9}")
     for (func, wman), s in sorted(all_specs.items()):
         entries = s.nseg * (s.d + 1)
         print(f"{func:5} {wman:>4} {s.k:>3} {s.d:>3} {s.cf:>4} {s.rw:>4} {s.cw:>4} {s.accw:>5} "
               f"{entries:>8} {entries * s.cw / 1024.0:>9.1f}")
 
-    # The public modules enumerate WMAN in [WMAN_MIN, WMAN_MAX]; show the degree map so the hand-written generate-if in
-    # hdl/zkf_<func>.v can be cross-checked. The map is identical for exp2 and log2 (degree no longer depends on the
-    # function). A pre-generated WMAN whose degree changed would name a now-missing module.
+    # zkf_<func>.v derives the degree D = (WMAN+16)/9 - 1 closed-form at elaboration (the ZKF_<func>_DEGREE macro,
+    # matching degree() above), so the module name need not encode it. The map is a cross-check for that value; it is
+    # identical for exp2 and log2 (degree does not depend on the function).
     d_map = " ".join(f"{wman}:{degree(wman)}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
-    print(f"\ndegree map for the zkf_<func>.v generate-if ({WMAN_MAX - WMAN_MIN + 1} lines, same for both):\n  {d_map}")
+    print(f"\nclosed-form degree D = (WMAN+16)/9 - 1 derived in zkf_<func>.v "
+          f"({WMAN_MAX - WMAN_MIN + 1} values, same for both):\n  {d_map}")
 
 
 def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
