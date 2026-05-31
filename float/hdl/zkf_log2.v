@@ -211,10 +211,10 @@ module zkf_log2 #(
     // pack-input register (STAGE_PACK_INPUT=1 since zkf_log2 needs the extra cycle for fmax closure), and the
     // _zkf_pack output. The pole / domain_error flags ride the SB_W=2 sideband and emerge in lockstep with y.
     wire [1:0] sb_out_flags;
+    localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = WNORM - 1 - F2;
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WMAG(WNORM), .WEU(WEU),
-        .EXP_OFFSET(WNORM - 1 - F2),
         .EXP_IS_BIASED(0),
         .ASSUME_NO_OVERFLOW(1),  // log2(finite>0) is always representable, disable overflow detection circuit
         .SB_W(2),
@@ -225,7 +225,9 @@ module zkf_log2 #(
         .clk(clk), .rst(rst),
         .in_valid(p1_valid),
         .sign(p1_sign),
+        .force_zero(1'b0),
         .force_inf(p1_special),
+        .exp_offset(EXP_OFFSET_LOG2),
         .mag(p1_mag),
         .sb_in({p1_pole, p1_de}),
         .out_valid(out_valid),

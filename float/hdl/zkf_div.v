@@ -85,6 +85,9 @@ module zkf_div #(
         .round(core_round),
         .sticky(core_sticky),
         .div0(core_div0),
+        .exp_diff(),
+        .raw(),
+        .den(),
         .partial_rem()  // Partial remainder is not used in this module.
     );
 

@@ -102,11 +102,11 @@ module zkf_from_int #(
     localparam integer EXP_BIASED_TOP = EXP_BIASED_MAX;
     // verilator coverage_off
     wire sb_out_unused;
+    localparam [WEU-1:0] EXP_BIASED_TOP_EXT = EXP_BIASED_TOP[WEU-1:0];
     // verilator coverage_on
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WMAG(WX), .WEU(WEU),
-        .EXP_OFFSET(EXP_BIASED_TOP),
         .EXP_IS_BIASED(1),
         .SB_W(1),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
@@ -116,7 +116,9 @@ module zkf_from_int #(
         .clk(clk), .rst(rst),
         .in_valid(s1_valid),
         .sign(s1_sign),
+        .force_zero(1'b0),
         .force_inf(1'b0),
+        .exp_offset(EXP_BIASED_TOP_EXT),
         .mag(s1_mag_ext),
         .sb_in(1'b0),
         .out_valid(out_valid),

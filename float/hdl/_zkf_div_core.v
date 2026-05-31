@@ -37,6 +37,12 @@ module _zkf_div_core #(
     output reg                            round,
     output reg                            sticky,
     output reg                            div0,
+    output reg signed [WEXP_UNBIASED-1:0] exp_diff,
+    output reg                 [QFRAC:0]  raw,
+    // verilator coverage_off
+    // Final delayed divisor significand, exposed for consumers that derive residuals from the quotient stream.
+    output reg                 [WMAN-1:0] den,
+    // verilator coverage_on
     output reg                 [WMAN-1:0] partial_rem
 );
     // verilator coverage_off
@@ -241,6 +247,9 @@ module _zkf_div_core #(
         round        <= final_high ? final_round_hi : final_round_lo;
         sticky       <= final_high ? final_sticky_hi : final_sticky_lo;
         div0         <= r_div0[QSTAGES];
+        exp_diff     <= r_exp_unbiased[QSTAGES];
+        raw          <= final_raw;
+        den          <= r_den[QSTAGES];
         partial_rem  <= r_rem[QSTAGES];
     end
 endmodule
