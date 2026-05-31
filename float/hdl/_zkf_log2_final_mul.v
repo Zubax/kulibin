@@ -4,13 +4,13 @@
 ///
 /// Zero-bubble; the sideband and valid pipe along the same register stages as the data.
 ///
-/// The operands are always latched in a shared input register first, so the multiply has registers on BOTH sides (the
-/// input register maps to the DSP input register; the partial-product registers are the output side). This keeps the
-/// long route from the upstream Horner accumulator off the multiply's combinational cone. Total register stages =
-/// 1 (input) + the STAGE_PRODUCT split levels below:
+/// The operands are always latched in a shared input register first, so the multiply has registers on BOTH sides. This
+/// keeps the long route from the upstream Horner accumulator off the multiply's combinational cone. Total register
+/// stages are 2+STAGE_PRODUCT:
 ///   STAGE_PRODUCT = 0: single multiply -> 2 register stages.
-///   STAGE_PRODUCT = 1: 2x2 split of the operands -> 3 register stages (partials registered, summed and truncated).
-///   STAGE_PRODUCT = 2: 3x3 split -> 4 register stages (sub-products | per-acc-chunk row sums | combine + truncate).
+///   STAGE_PRODUCT = 1: 2x2 split -> 3 register stages.
+///   STAGE_PRODUCT = 2: 2x2 split with an extra operand-capture stage -> 4 register stages.
+///   STAGE_PRODUCT = 3: 3x3 split with an extra operand-capture stage -> 5 register stages.
 
 `default_nettype none
 
@@ -19,7 +19,7 @@ module _zkf_log2_final_mul #(
     parameter integer ACCW          = 35,
     parameter integer F2            = 47,    // = WFRAC + CF
     parameter integer SBW           = 1,
-    parameter integer STAGE_PRODUCT = 0      // 0: single mul (1 stage); 1: 2x2 split (2); 2: 3x3 split (3)
+    parameter integer STAGE_PRODUCT = 0      // product computation staging; see _zkf_horner
 ) (
     input  wire                    clk,
     input  wire                    rst,
@@ -38,7 +38,7 @@ module _zkf_log2_final_mul #(
 );
     // verilator coverage_off
     generate
-        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 2)) begin : g_invalid_stage_product
+        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 3)) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
         end
     endgenerate
@@ -75,31 +75,65 @@ module _zkf_log2_final_mul #(
         i_sb   <= sb_in;
     end
 
+    wire [WFRAC-1:0]        p_frac;
+    // verilator coverage_off
+    wire signed [ACCW-1:0]  p_acc;
+    // verilator coverage_on
+    wire                    p_v;
+    wire [SBW-1:0]          p_sb;
+
+    generate
+        if ((STAGE_PRODUCT == 2) || (STAGE_PRODUCT == 3)) begin : g_product_input_stage
+            reg [WFRAC-1:0]        x_frac;
+            // verilator coverage_off
+            reg signed [ACCW-1:0]  x_acc;
+            // verilator coverage_on
+            reg                    x_v;
+            reg [SBW-1:0]          x_sb;
+            always @(posedge clk) begin
+                if (rst) x_v <= 1'b0;
+                else     x_v <= i_v;
+                x_frac <= i_frac;
+                x_acc  <= i_acc;
+                x_sb   <= i_sb;
+            end
+            assign p_frac = x_frac;
+            assign p_acc  = x_acc;
+            assign p_v    = x_v;
+            assign p_sb   = x_sb;
+        end else begin : g_product_input_direct
+            assign p_frac = i_frac;
+            assign p_acc  = i_acc;
+            assign p_v    = i_v;
+            assign p_sb   = i_sb;
+        end
+    endgenerate
+
     generate
         if (STAGE_PRODUCT == 0) begin : g_single
             // -- 1 multiply stage (after the shared input register): single combinational multiply, truncate, register.
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] prod = i_frac * i_acc;
+            wire [WFRAC+ACCW-1:0] prod = p_frac * p_acc;
             // verilator coverage_on
             reg [F2-1:0]  r_l;
             reg           r_v;
             reg [SBW-1:0] r_sb;
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
-                else     r_v <= i_v;
+                else     r_v <= p_v;
                 r_l  <= prod[F2-1:0];
-                r_sb <= i_sb;
+                r_sb <= p_sb;
             end
             assign l_fix     = r_l;
             assign out_valid = r_v;
             assign sb_out    = r_sb;
-        end else if (STAGE_PRODUCT == 1) begin : g_split2
+        end else if ((STAGE_PRODUCT == 1) || (STAGE_PRODUCT == 2)) begin : g_split2
             // -- 2 register stages: 4 half-width sub-products | sum + truncate. --
             // verilator coverage_off
-            wire [WFA_LO-1:0]            fa_lo = i_frac[WFA_LO-1:0];
-            wire [WFA_HI-1:0]            fa_hi = i_frac[WFRAC-1:WFA_LO];
-            wire [WAC_LO-1:0]            ac_lo = i_acc[WAC_LO-1:0];
-            wire [WAC_HI-1:0]            ac_hi = i_acc[ACCW-1:WAC_LO];
+            wire [WFA_LO-1:0]            fa_lo = p_frac[WFA_LO-1:0];
+            wire [WFA_HI-1:0]            fa_hi = p_frac[WFRAC-1:WFA_LO];
+            wire [WAC_LO-1:0]            ac_lo = p_acc[WAC_LO-1:0];
+            wire [WAC_HI-1:0]            ac_hi = p_acc[ACCW-1:WAC_LO];
             wire [WFA_LO+WAC_LO-1:0]     q_ll  = fa_lo * ac_lo;
             wire [WFA_LO+WAC_HI-1:0]     q_lh  = fa_lo * ac_hi;
             wire [WFA_HI+WAC_LO-1:0]     q_hl  = fa_hi * ac_lo;
@@ -113,12 +147,12 @@ module _zkf_log2_final_mul #(
             reg  [SBW-1:0]               m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
-                else     m_v <= i_v;
+                else     m_v <= p_v;
                 m_q_ll <= q_ll;
                 m_q_lh <= q_lh;
                 m_q_hl <= q_hl;
                 m_q_hh <= q_hh;
-                m_sb   <= i_sb;
+                m_sb   <= p_sb;
             end
             // verilator coverage_off
             wire [WFRAC+ACCW-1:0] sum2 = ({{(WFRAC+ACCW-WFA_HI-WAC_HI){1'b0}}, m_q_hh} << (WFA_LO + WAC_LO))
@@ -138,15 +172,15 @@ module _zkf_log2_final_mul #(
             assign l_fix     = r_l;
             assign out_valid = r_v;
             assign sb_out    = r_sb;
-        end else begin : g_split3
+        end else if (STAGE_PRODUCT == 3) begin : g_split3
             // -- 3 register stages: 9 third-width sub-products | per-acc-chunk row sums (3) | combine + truncate. --
             // verilator coverage_off
-            wire [WFA0-1:0] fa0 = i_frac[WFA0-1:0];
-            wire [WFA1-1:0] fa1 = i_frac[WFA0+WFA1-1:WFA0];
-            wire [WFA2-1:0] fa2 = i_frac[WFRAC-1:WFA0+WFA1];
-            wire [WAC0-1:0] ac0 = i_acc[WAC0-1:0];
-            wire [WAC1-1:0] ac1 = i_acc[WAC0+WAC1-1:WAC0];
-            wire [WAC2-1:0] ac2 = i_acc[ACCW-1:WAC0+WAC1];
+            wire [WFA0-1:0] fa0 = p_frac[WFA0-1:0];
+            wire [WFA1-1:0] fa1 = p_frac[WFA0+WFA1-1:WFA0];
+            wire [WFA2-1:0] fa2 = p_frac[WFRAC-1:WFA0+WFA1];
+            wire [WAC0-1:0] ac0 = p_acc[WAC0-1:0];
+            wire [WAC1-1:0] ac1 = p_acc[WAC0+WAC1-1:WAC0];
+            wire [WAC2-1:0] ac2 = p_acc[ACCW-1:WAC0+WAC1];
             wire [WFA0+WAC0-1:0] q00 = fa0 * ac0;
             wire [WFA0+WAC1-1:0] q01 = fa0 * ac1;
             wire [WFA0+WAC2-1:0] q02 = fa0 * ac2;
@@ -171,11 +205,11 @@ module _zkf_log2_final_mul #(
             reg  [SBW-1:0]       m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
-                else     m_v <= i_v;
+                else     m_v <= p_v;
                 m_q00 <= q00; m_q01 <= q01; m_q02 <= q02;
                 m_q10 <= q10; m_q11 <= q11; m_q12 <= q12;
                 m_q20 <= q20; m_q21 <= q21; m_q22 <= q22;
-                m_sb  <= i_sb;
+                m_sb  <= p_sb;
             end
             // -- Stage 2: row sums (each sums 3 sub-products with frac-chunk shifts <= WFRAC). --
             // verilator coverage_off
@@ -216,6 +250,10 @@ module _zkf_log2_final_mul #(
             assign l_fix     = r_l;
             assign out_valid = r_v;
             assign sb_out    = r_sb;
+        end else begin : g_invalid
+            assign l_fix     = {F2{1'b0}};
+            assign out_valid = 1'b0;
+            assign sb_out    = {SBW{1'b0}};
         end
     endgenerate
 endmodule

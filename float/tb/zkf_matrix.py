@@ -356,12 +356,13 @@ def _per_pr(sim, out: list) -> None:
     for op in ("exp2", "log2"):
         for cfg, w, m, k, c in TRANS:
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
-        # STAGE_INPUT / STAGE_PRODUCT (0,1,2) / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
+        # STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
         # are staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, so=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=2))
+        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=3))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1, sp=1, so=1))
     # STAGE_NORMALIZE for log2 controls the normalizer's STAGE_SPLIT. Cover it on a fast small format (it needs
     # the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).

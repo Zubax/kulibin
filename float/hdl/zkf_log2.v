@@ -19,7 +19,7 @@
 ///     _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input register,
 ///     and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path is needed.
 ///
-/// STAGE_PRODUCT={0,1,2} splits the Horner multiply for timing closure (like zkf_mul).
+/// STAGE_PRODUCT selects product computation staging; see _zkf_horner & _zkf_log2_final_mul for details.
 /// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
 /// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
 /// STAGE_OUTPUT={0,1} registers the output.
@@ -28,14 +28,13 @@
 
 `define ZKF_LOG2_DEGREE (((WMAN+16)/9)-1)
 `define ZKF_LOG2_LATENCY \
-    (STAGE_INPUT + 5 + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK \
-     + `ZKF_LOG2_DEGREE*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
+    (STAGE_INPUT + 5 + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK + `ZKF_LOG2_DEGREE*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
 
 module zkf_log2 #(
     parameter WEXP            = 6,    // exponent field width
     parameter WMAN            = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT     = 0,    // 0: combinational inputs;   1: latch inputs before any logic (+1 stage)
-    parameter STAGE_PRODUCT   = 0,    // 0: single Horner multiply; 1: 2x2 split (+1 stage/deg); 2: 3x3 split (+2/deg)
+    parameter STAGE_PRODUCT   = 0,    // number of extra stages in product compute; see _zkf_horner&_zkf_log2_final_mul
     parameter STAGE_NORMALIZE = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
     parameter STAGE_PACK      = 0,    // 0: comb pack input; 1: register pack input (insulates rounder from normshift)
     parameter STAGE_OUTPUT    = 0,    // 0: combinational outputs;     1: registered outputs, +1 stage
@@ -54,12 +53,9 @@ module zkf_log2 #(
 );
     // verilator coverage_off
     generate
-        if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
-            _zkf_invalid_wexp_or_wman u_invalid();
-        end
         // BIAS below uses an unsized integer shift on WEXP; WEXP >= 31 would overflow 32-bit integer constants.
-        if (WEXP >= 31) begin : g_invalid_wexp_too_wide
-            _zkf_invalid_log2_wexp_too_wide_unportable u_invalid();
+        if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wman
+            _zkf_invalid_wexp_or_wman u_invalid();
         end
         if (LATENCY != `ZKF_LOG2_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();

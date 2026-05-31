@@ -20,7 +20,7 @@
 /// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
 /// ROM read is registered, so no single stage carries both a wide carry chain and a multiply.
 ///
-/// STAGE_PRODUCT={0,1} splits the Horner multiply for timing closure (like zkf_mul).
+/// STAGE_PRODUCT selects product computation staging; see _zkf_horner.
 /// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
 /// STAGE_OUTPUT={0,1} registers the output.
 
@@ -33,7 +33,7 @@ module zkf_exp2 #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
-    parameter STAGE_PRODUCT = 0,    // 0: single Horner multiply; 1: split (2x2), +1 stage per degree
+    parameter STAGE_PRODUCT = 0,    // product computation staging; see _zkf_horner
     parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
     parameter STAGE_OUTPUT  = 0,    // 0: combinational outputs;  1: registered outputs, +1 stage
     parameter LATENCY       = `ZKF_EXP2_LATENCY   // must equal the register-stage count; checked below

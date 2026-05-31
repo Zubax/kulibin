@@ -93,6 +93,15 @@ def write_yosys_script(
     # show their internals instead of opaque boxes. The original design is then popped back for the actual
     # synthesis pass, leaving its results unaffected.
     rtl = [str(path) for path in rtl_sources(spec)] + [str(wrapper)]
+    schematic_commands = []
+    if spec.emit_schematic:
+        schematic_commands = [
+            "design -push-copy",
+            "flatten",
+            "opt -fast",
+            f"show -prefix {schematic_prefix} -format svg -notitle -stretch -enum {spec.top}",
+            "design -pop",
+        ]
     script.write_text(
         "\n".join(
             [f"read_verilog {path}" for path in rtl]
@@ -100,11 +109,9 @@ def write_yosys_script(
                 f"hierarchy -check -top {spec.top}",
                 "proc",
                 "opt",
-                "design -push-copy",
-                "flatten",
-                "opt -fast",
-                f"show -prefix {schematic_prefix} -format svg -notitle -stretch -enum {spec.top}",
-                "design -pop",
+            ]
+            + schematic_commands
+            + [
                 target.synth_command(spec, netlist),
                 "stat",
                 "",

@@ -36,13 +36,14 @@ class ModuleSpec:
     wexp_out: int = 0
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
-    stage_product: int = 0   # zkf_mul, zkf_fma: 0 or 1.
+    stage_product: int = 0   # zkf_mul/fma: 0/1; zkf_exp2/log2: product computation staging.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
     stage_normalize: int = 0 # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
+    emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
 
 
 MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
@@ -248,6 +249,7 @@ MODULES = [
         wexp_unbiased=0,
         stage_input=1,
         stage_output=1,
+        emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_cmp",
@@ -495,40 +497,41 @@ MODULES = [
         stage_pack=1,
         stage_output=1,
     ),
-    # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The single wide multiply per step (SP=0) and
-    # the 2x2 split (SP=1) are both deep DSP cascades that top out near 60 MHz; STAGE_PRODUCT=2 (3x3 split with a
-    # registered partial-sum stage) cuts the operands into <=18-bit chunks, so each sub-product packs into a single
-    # MULT18X18D output register, and every adder in the sum tree stays shallow. With STAGE_INPUT/STAGE_OUTPUT
-    # shielding the wide decode and pack, these need ~36 MULT18X18D, so they target the LFE5U-45F (72 DSP) via
-    # synth_device.
+    # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The shallow product modes are deep DSP
+    # cascades that top out near 60 MHz; STAGE_PRODUCT=3 cuts the operands into <=18-bit chunks and adds the
+    # operand-capture stage. With STAGE_INPUT/STAGE_OUTPUT shielding the wide decode and pack, these need ~36
+    # MULT18X18D, so they target the LFE5U-45F (72 DSP) via synth_device.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + STAGE_OUTPUT=1; LFE5U-45F)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
-        stage_product=2,
+        stage_product=3,
         stage_output=1,
         synth_device="45k",
+        emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=2 (3x3 split) + STAGE_NORMALIZE=2 (deep "
-              "normshift split) + STAGE_PACK=1 (register pack inputs) + STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + "
+              "STAGE_NORMALIZE=2 (deep normshift split) + STAGE_PACK=1 (register pack inputs) + "
+              "STAGE_OUTPUT=1; LFE5U-45F)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
-        stage_product=2,
+        stage_product=3,
         stage_normalize=2,
         stage_pack=1,
         stage_output=1,
         synth_device="45k",
+        emit_schematic=False,
     ),
 ]
 
@@ -678,14 +681,16 @@ def register_stages(spec: ModuleSpec) -> int:
         # Both the widen-only fast path and the _zkf_pack path honor STAGE_OUTPUT; STAGE_INPUT adds the input pipe.
         return spec.stage_output + spec.stage_input
     if spec.kind in {"exp2", "log2"}:
-        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + extras + STAGE_PACK + STAGE_OUTPUT.
+        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + extras
+        # + STAGE_PACK + STAGE_OUTPUT.
         # Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has 1 P1 + 2 ROM-read + 2 final-mul base
         # (registered inputs + outputs, see _zkf_log2_final_mul) = 5.
-        # log2 extras: STAGE_PRODUCT (t*P split) + STAGE_NORMALIZE (normshift internal barriers).
+        # log2 extras: final t*P product stages + STAGE_NORMALIZE (normshift internal barriers).
         degree = TRANS_SPECS[(spec.kind, spec.wman)]["d"]
         front = 5
         log2_extra = (spec.stage_product + spec.stage_normalize) if spec.kind == "log2" else 0
-        return (spec.stage_input + front + log2_extra + degree * (2 + spec.stage_product)
+        return (spec.stage_input + front + log2_extra
+                + degree * (2 + spec.stage_product)
                 + spec.stage_pack + spec.stage_output)
     raise ValueError(f"unsupported module kind: {spec.kind}")
 

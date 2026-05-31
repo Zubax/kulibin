@@ -321,15 +321,18 @@ def _emit_table(s: Spec) -> str:
     else:
         w(f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
           "/// Evaluates log2(1+t) = t*P(t) as a fixed-point fraction (scale 2**-F2); P(t)=log2(1+t)/t via the table.",
-          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + (2+STAGE_PRODUCT) (final multiply: "
-          "registered inputs + split); valid/sb_in match.")
+          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + _zkf_log2_final_mul; valid/sb_in match.")
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
     w("")
     w("`default_nettype none")
     w("")
-    w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-      f"parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
+    if s.func == "exp2":
+        w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
+          "parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
+    else:
+        w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
+          "parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
     w.push()
     if s.func == "exp2":
         w("""
@@ -404,7 +407,7 @@ def _emit_table(s: Spec) -> str:
         w("wire [RW-1:0] w   = frac[RW-1:0];")
         _rom_read_pipeline(w, "{sb_in, frac}")
         # l = t * P = frac * acc (acc > 0), scale 2^-F2 in [0,1). The split-aware multiply lives in
-        # _zkf_log2_final_mul so the SP={0,1,2} story is the same as the Horner: depth = 1 + STAGE_PRODUCT stages.
+        # _zkf_log2_final_mul and follows the same linear STAGE_PRODUCT depth contract as the Horner.
         w("""
             wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
             wire [SBW-1:0]   sb_p   = esb[HSBW-1 -: SBW];

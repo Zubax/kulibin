@@ -93,7 +93,7 @@ async def exp2_runtime_cases(dut) -> None:
     dut.x.value = 0
 
     from zkf_trans_tables import SPECS
-    # Register stages: STAGE_INPUT + 3 reduction + 2 ROM-read + D*(2+STAGE_PRODUCT) Horner
+    # Register stages: STAGE_INPUT + 3 reduction + 2 ROM-read + D*(2+SP) Horner
     # + STAGE_PACK packer-input + STAGE_OUTPUT (D = closed-form degree).
     poly_degree = SPECS[("exp2", context.wman)]["d"]
     register_stages = (context.stage_input + 5 + poly_degree * (2 + context.stage_product)
