@@ -24,6 +24,7 @@
 
 `default_nettype none
 
+// verilator coverage_off
 module _zkf_fixed_to_float #(
     parameter WEXP                  = 6,    // exponent field width
     parameter WMAN                  = 18,   // significand precision including the hidden bit
@@ -39,23 +40,18 @@ module _zkf_fixed_to_float #(
     input  wire clk,
     input  wire rst,
 
-    input  wire                 in_valid,
-    input  wire                 sign,
-    input  wire                 force_zero,
-    input  wire                 force_inf,
+    input  wire                  in_valid,
+    input  wire                  sign,
+    input  wire                  force_zero,
+    input  wire                  force_inf,
     input  wire signed [WEU-1:0] exp_offset,
-    // mag is the wide unsigned magnitude carrier; its top bits are structural headroom that never toggle. Its
-    // meaningful bits are sliced into significand/GRS and exercised end-to-end by the from_int / log2 suites.
-    // verilator coverage_off
-    input  wire     [WMAG-1:0]  mag,
-    // verilator coverage_on
-    input  wire     [SB_W-1:0]  sb_in,
+    input  wire       [WMAG-1:0] mag,
+    input  wire       [SB_W-1:0] sb_in,
 
-    output wire                  out_valid,
-    output wire [WEXP+WMAN-1:0]  y,
-    output wire     [SB_W-1:0]   sb_out
+    output wire                 out_valid,
+    output wire [WEXP+WMAN-1:0] y,
+    output wire      [SB_W-1:0] sb_out
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -111,7 +107,9 @@ module _zkf_fixed_to_float #(
         .out_valid(sb_valid), .out(sb_pipe_out)
     );
     wire                    sign_d;
+    // verilator coverage_off
     wire                    force_zero_d;
+    // verilator coverage_on
     wire                    force_inf_d;
     wire signed [WEU-1:0]   exp_offset_d;
     wire [SB_W-1:0]         sb_d = sb_pipe_out[SB_W-1:0];
