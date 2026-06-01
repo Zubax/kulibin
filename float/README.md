@@ -46,6 +46,9 @@ The module fails synthesis if the supplied value disagrees with its real stage c
 the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
 Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
 
+The `LATENCY` value is a sum of some constant baseline number of stages,
+plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
+
 ### Catalogue
 
 Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depending on the selected `STAGE_`s.
@@ -75,8 +78,8 @@ Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depen
 
 The following modules are expected to appear because they are the missing primitives needed to access a huge variety
 of transcendental and trigonometric functions:
-`zkf_divmod`, `zkf_sincos` (maybe `zkf_sincos_phase(phi)` for some fixed-point phase modulo 1), `zkf_atan2`.
-Modulo-pi range reduction is needed for basic trig operators and is provided by divmod.
+`zkf_sincos` (maybe `zkf_sincos_phase(phi)` for some fixed-point phase modulo 1), `zkf_atan2`.
+Also, modulo-pi range reduction is needed for basic trig operators.
 From these we get:
 
     exp(x)      = exp2(x * log2(e))
@@ -90,6 +93,10 @@ From these we get:
     acos(x)     = atan2(sqrt(1 - x*x), x)
 
 And so on.
+
+Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
+range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
+the existing basic operators.
 
 ## Semantics
 

@@ -404,78 +404,7 @@ Performance target: at least two quotient bits per cycle.
 
 ---
 
-## 8. Divider With Residual Remainder
-
-Combined quotient/residual divider, streamed, zero-bubble:
-
-```verilog
-zkf_divrem #(parameter int WEXP = 6, parameter int WMAN = 18)(
-    input  wire clk,
-    input  wire rst,
-
-    input  wire             in_valid,
-    input  wire [WFULL-1:0] a,
-    input  wire [WFULL-1:0] b,
-
-    output wire             out_valid,
-    output wire [WFULL-1:0] q,
-    output wire [WFULL-1:0] r,
-    output wire             div0
-);
-```
-
-The `q` and `div0` outputs are bit-for-bit identical to `zkf_div` with the same parameters and inputs.
-
-Residual semantics:
-
-```text
-This is a division residual, not C fmod and not IEEE remainder.
-
-if a == 0:
-    r = +0
-
-else if b == 0:
-    r = +0
-
-else if q is infinity:
-    r = +0
-
-else:
-    r = pack(a - b * q)
-```
-
-The residual expression above uses the decoded, rounded value of output `q` and is evaluated using the same
-deterministic no-NaN infinity arithmetic as the rest of this format. Notable consequences:
-
-```text
-finite / infinity:
-    q = +0
-    r = canonicalized a
-
-infinity / infinity:
-    q = +0
-    r = signed infinity with sign = sign(a)
-
-infinity / finite nonzero:
-    q = signed infinity with sign = sign(a) XOR sign(b)
-    r = +0
-```
-
-Implementation guidance:
-
-```text
-Share the quotient generation path with zkf_div.
-Use the final partial remainder instead of directly evaluating a - b * q with a separate multiplier.
-After quotient rounding, adjust the residual if the quotient was incremented.
-Pack the residual alongside the quotient so both outputs are aligned under out_valid.
-```
-
-Reusable logic shared by `zkf_div` and `zkf_divrem` should be extracted into nonpublic, underscore-prefixed helper
-modules, consistent with the internal helper module convention above.
-
----
-
-## 9. Cast From Signed Integer
+## 8. Cast From Signed Integer
 
 ```verilog
 zkf_from_int #(
@@ -513,7 +442,7 @@ zero input maps to canonical +0
 
 ---
 
-## 10. Cast To Signed Integer
+## 9. Cast To Signed Integer
 
 ```verilog
 zkf_to_int #(
@@ -556,7 +485,7 @@ Zero maps to integer zero.
 
 ---
 
-## 11. Cast Between Two Format Sizes
+## 10. Cast Between Two Format Sizes
 
 ```verilog
 zkf_resize #(
@@ -597,7 +526,7 @@ target overflow maps to signed infinity
 
 ---
 
-## 12. Sqrt/log2/exp2, integer detection
+## 11. Sqrt/log2/exp2, integer detection
 
 Specifically `zkf_log2` and `zkf_exp2` can be used later to build arbitrary log/exp.
 
@@ -670,7 +599,7 @@ module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18,
 
 ---
 
-## 13. Compare and Sort
+## 12. Compare and Sort
 
 Registered floating-point comparison and min/max sort. Comparison requires canonicalization
 (exponent-zero inputs are treated as +0, exponent-all-ones inputs as signed infinity, fraction ignored for both classes),
@@ -749,7 +678,6 @@ division by zero asserts div0
 add/sub module implements both operations exactly per spec
 mul uses the same pack semantics as add/sub
 div quotient matches exact a/b rounded per spec
-div residual matches the documented a - b*q rule rounded per spec
 resize equals decode-then-pack into target format
 ```
 
