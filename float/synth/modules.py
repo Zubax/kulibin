@@ -15,10 +15,10 @@ import sys
 
 from common import REPO
 
-# The polynomial degree D for zkf_exp2 / zkf_log2 is a closed-form function of WMAN computed by the
-# generator; import the emitted table so the synth pipeline-depth metadata stays in lockstep with the RTL.
+# Latency is owned by the verification suite; importing it here keeps the HTML reports in lockstep with the
+# scoreboard delays used by the cocotb tests.
 sys.path.insert(0, str(REPO / "float" / "tb"))
-from zkf_trans_tables import SPECS as TRANS_SPECS  # noqa: E402  (path set up immediately above)
+from zkf_latency import div_qfrac as latency_div_qfrac, module_latency  # noqa: E402  (path set up immediately above)
 
 
 @dataclass(frozen=True)
@@ -633,66 +633,21 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
 
 
 def div_qfrac(spec: ModuleSpec) -> int:
-    qfrac_base = spec.wman + 2
-    return qfrac_base + (qfrac_base % 2)
+    return latency_div_qfrac(spec.wman)
 
 
 def register_stages(spec: ModuleSpec) -> int:
-    qfrac_base = spec.wman + 2
-    qfrac = qfrac_base + (qfrac_base % 2)
-    div_core_stages = 2 + (qfrac // 2)
-
-    # Every pack-based op ends in _zkf_pack, whose output stage is STAGE_OUTPUT (0 = combinational, 1 = registered).
-    if spec.kind == "pack":
-        return spec.stage_output
-    if spec.kind == "mul":
-        # 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split) + STAGE_PACK (pack input
-        # register) + STAGE_OUTPUT (pack output).
-        return (1 + spec.stage_input + spec.stage_output + spec.stage_pack
-                + (1 if spec.stage_product >= 1 else 0))
-    if spec.kind in {"add", "addsub"}:
-        # 4 base + STAGE_INPUT + STAGE_DECODE + STAGE_ALIGN + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
-        # STAGE_NORMALIZE adds 1 cycle per unit symmetrically to both sub-path (normshift internal) and add-path
-        # (s2x catch-up).
-        return (4 + spec.stage_input + spec.stage_output + spec.stage_decode + spec.stage_align
-                + spec.stage_normalize + spec.stage_pack)
-    if spec.kind == "fma":
-        # 5 base (product, order, align-capture, add, normalize+pack) + STAGE_INPUT (latched inputs)
-        # + STAGE_PRODUCT (DSP split) + STAGE_DECODE (decode/compare split) + STAGE_ALIGN (align split)
-        # + STAGE_NORMALIZE (sub-path normshift internal + add-path s2x catch-up) + STAGE_PACK (pack-input
-        # register) + STAGE_OUTPUT (pack output register).
-        return (5 + spec.stage_input + (1 if spec.stage_product >= 1 else 0)
-                + spec.stage_decode + spec.stage_align + spec.stage_normalize
-                + spec.stage_pack + spec.stage_output)
-    if spec.kind == "div_core":
-        return div_core_stages
-    if spec.kind == "div":
-        return div_core_stages + spec.stage_output + spec.stage_input + spec.stage_pack
-    if spec.kind in {"cmp", "sort"}:
-        return 1 + spec.stage_input
-    if spec.kind == "mul_ilog2_const":
-        return 1 + spec.stage_input + spec.stage_decode
-    if spec.kind == "from_int":
-        # 1 (S1 register) + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT.
-        return (1 + spec.stage_input + spec.stage_normalize + spec.stage_pack + spec.stage_output)
-    if spec.kind == "to_int":
-        return 4 + spec.stage_input          # does not use _zkf_pack; unaffected by the packer pipeline
-    if spec.kind == "resize":
-        # Both the widen-only fast path and the _zkf_pack path honor STAGE_OUTPUT; STAGE_INPUT adds the input pipe.
-        return spec.stage_output + spec.stage_input
-    if spec.kind in {"exp2", "log2"}:
-        # Closed-form depth: STAGE_INPUT + front + D*(2 + STAGE_PRODUCT) + extras
-        # + STAGE_PACK + STAGE_OUTPUT.
-        # Front stages: exp2 has 3 reduction + 2 ROM-read = 5; log2 has 1 P1 + 2 ROM-read + 2 final-mul base
-        # (registered inputs + outputs, see _zkf_log2_final_mul) = 5.
-        # log2 extras: final t*P product stages + STAGE_NORMALIZE (normshift internal barriers).
-        degree = TRANS_SPECS[(spec.kind, spec.wman)]["d"]
-        front = 5
-        log2_extra = (spec.stage_product + spec.stage_normalize) if spec.kind == "log2" else 0
-        return (spec.stage_input + front + log2_extra
-                + degree * (2 + spec.stage_product)
-                + spec.stage_pack + spec.stage_output)
-    raise ValueError(f"unsupported module kind: {spec.kind}")
+    return module_latency(
+        spec.kind,
+        wman=spec.wman,
+        stage_input=spec.stage_input,
+        stage_product=spec.stage_product,
+        stage_align=spec.stage_align,
+        stage_decode=spec.stage_decode,
+        stage_normalize=spec.stage_normalize,
+        stage_pack=spec.stage_pack,
+        stage_output=spec.stage_output,
+    )
 
 
 def format_register_stages(stages: int) -> str:

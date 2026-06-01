@@ -500,12 +500,13 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
 every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
-of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers.</p>
+of ignoring primary-input or primary-output paths. The harness registers are included in utilization numbers, but the
+DUT latency column excludes the harness and is computed by the same helper used by the cocotb scoreboards.</p>
 <p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
 helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
-<th>Module</th><th>Parameters</th><th>Register stages</th><th>Target</th><th>f max</th><th>Slack</th><th>Status</th>
+<th>Module</th><th>Parameters</th><th>DUT latency</th><th>Target</th><th>f max</th><th>Slack</th><th>Status</th>
 <th>LUT4</th><th>Registers</th><th>Slice</th><th>PIO</th><th>Logs</th>
 </tr></thead>
 <tbody>

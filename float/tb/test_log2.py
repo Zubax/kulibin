@@ -9,6 +9,7 @@ import numpy as np
 
 from zkf_model import ZkfFormat, hex_bits, log2_reference, mask, normal
 from zkf_operands import directed_numbers, random_bits, random_operand
+from zkf_latency import log2_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -93,13 +94,14 @@ async def log2_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.x.value = 0
 
-    from zkf_trans_tables import SPECS
-    # Register stages: STAGE_INPUT + 2 ROM-read + D*(2+SP) Horner + final-multiply + 1 P1
-    # + STAGE_NORMALIZE normshift + STAGE_PACK packer-input + STAGE_OUTPUT.
-    poly_degree = SPECS[("log2", context.wman)]["d"]
-    sp, sn = context.stage_product, context.stage_normalize
-    register_stages = (context.stage_input + 5 + sp + sn + context.stage_pack
-                       + poly_degree * (2 + sp) + context.stage_output)
+    register_stages = log2_latency(
+        context.wman,
+        stage_input=context.stage_input,
+        stage_product=context.stage_product,
+        stage_normalize=context.stage_normalize,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

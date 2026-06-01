@@ -26,6 +26,7 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
+from zkf_latency import fma_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -240,15 +241,15 @@ async def fma_runtime_cases(dut) -> None:
     dut.b.value = 0
     dut.c.value = 0
 
-    # zkf_fma: 5 stages (product, order, align-capture, add, normalize+pack) + STAGE_INPUT (latched inputs)
-    # + STAGE_PRODUCT (split multiply) + STAGE_DECODE (register decoded operands before compare/select)
-    # + STAGE_ALIGN (split alignment shifter) + STAGE_NORMALIZE (sub-path normshift internal + add-path s2x)
-    # + STAGE_PACK (registered packer inputs) + STAGE_OUTPUT (registered pack output).
-    register_stages = (5 + context.stage_input + (1 if context.stage_product >= 1 else 0)
-                       + (1 if context.stage_decode >= 1 else 0)
-                       + (1 if context.stage_align >= 1 else 0)
-                       + context.stage_normalize
-                       + context.stage_pack + context.stage_output)
+    register_stages = fma_latency(
+        stage_input=context.stage_input,
+        stage_product=context.stage_product,
+        stage_decode=context.stage_decode,
+        stage_align=context.stage_align,
+        stage_normalize=context.stage_normalize,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: FmaCase) -> dict[str, int]:

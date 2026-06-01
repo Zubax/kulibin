@@ -17,6 +17,7 @@ from zkf_model import (
     signed_to_bits,
 )
 from zkf_operands import directed_integers, random_integer
+from zkf_latency import from_int_latency
 from zkf_params import cast_context, check_width
 from zkf_stream import RegisterStageScoreboard, drive_signed, run_stream_cases, start_clock
 
@@ -101,8 +102,12 @@ async def from_int_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     drive_signed(dut.a, 0)
 
-    register_stages = (1 + context.stage_input + context.stage_normalize
-                       + context.stage_pack + context.stage_output)
+    register_stages = from_int_latency(
+        stage_input=context.stage_input,
+        stage_normalize=context.stage_normalize,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: FromIntCase) -> dict[str, int]:

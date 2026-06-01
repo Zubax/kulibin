@@ -18,6 +18,7 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
+from zkf_latency import div_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -50,13 +51,6 @@ class DivObservation:
     @property
     def round_increment(self) -> bool:
         return bool(self.guard and (self.round_bit or self.sticky or self.significand_lsb))
-
-
-def div_register_stages(wman: int) -> int:
-    # div_core overhead (2) + the radix-4 quotient stages (qfrac/2). STAGE_INPUT and STAGE_OUTPUT are added by callers.
-    qfrac_base = wman + 2
-    qfrac = qfrac_base + (qfrac_base % 2)
-    return (qfrac // 2) + 2
 
 
 def add_unique(
@@ -354,8 +348,12 @@ async def div_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = (div_register_stages(fmt.wman)
-                       + context.stage_input + context.stage_pack + context.stage_output)
+    register_stages = div_latency(
+        fmt.wman,
+        stage_input=context.stage_input,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

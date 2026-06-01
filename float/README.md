@@ -56,7 +56,7 @@ Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depen
 | Module                |   | Function                                                       | Remarks                     |
 |-----------------------|---|----------------------------------------------------------------|-----------------------------|
 | `zkf_abs`             | ⇝ | Absolute value.                                                |                             |
-| `zkf_neg`             | ⇝ | Negation.                                                      | May produce -0 (non-canon.) |
+| `zkf_neg`             | ⇝ | Negation.                                                      | May produce -0 (non-canonical)|
 | `zkf_is_finite`       | ⇝ | True iff `x` is finite.                                        |                             |
 | `zkf_saturate`        | ⇝ | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
 | `zkf_cmp`             | ⇻ | Compare two values.                                            |                             |
@@ -96,7 +96,7 @@ And so on.
 
 Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
 range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
-the existing basic operators.
+the existing basic operators: zkf_fma, zkf_div, etc.
 
 ## Semantics
 

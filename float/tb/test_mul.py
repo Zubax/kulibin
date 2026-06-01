@@ -16,6 +16,7 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
+from zkf_latency import mul_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -201,10 +202,12 @@ async def mul_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    # zkf_mul: 1 (product) + STAGE_INPUT (latched inputs) + STAGE_PRODUCT (DSP cascade split, >1 clamps to 1)
-    # + STAGE_PACK (latched pack inputs) + STAGE_OUTPUT (registered pack output). Default all-zero -> 1 stage.
-    register_stages = (1 + context.stage_input + (1 if context.stage_product >= 1 else 0)
-                       + context.stage_pack + context.stage_output)
+    register_stages = mul_latency(
+        stage_input=context.stage_input,
+        stage_product=context.stage_product,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: BinaryCase) -> dict[str, int]:

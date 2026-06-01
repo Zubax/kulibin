@@ -9,6 +9,7 @@ import numpy as np
 
 from zkf_model import ZkfFormat, exp2_reference, hex_bits, mask, normal
 from zkf_operands import directed_numbers, random_bits, random_operand
+from zkf_latency import exp2_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -92,12 +93,13 @@ async def exp2_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.x.value = 0
 
-    from zkf_trans_tables import SPECS
-    # Register stages: STAGE_INPUT + 3 reduction + 2 ROM-read + D*(2+SP) Horner
-    # + STAGE_PACK packer-input + STAGE_OUTPUT (D = closed-form degree).
-    poly_degree = SPECS[("exp2", context.wman)]["d"]
-    register_stages = (context.stage_input + 5 + poly_degree * (2 + context.stage_product)
-                       + context.stage_pack + context.stage_output)
+    register_stages = exp2_latency(
+        context.wman,
+        stage_input=context.stage_input,
+        stage_product=context.stage_product,
+        stage_pack=context.stage_pack,
+        stage_output=context.stage_output,
+    )
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: UnaryCase) -> dict[str, int]:

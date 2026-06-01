@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from common import SYNTH_REG_ATTR
-from modules import MUL_ILOG2_CONST_K, ModuleSpec
+from modules import MUL_ILOG2_CONST_K, ModuleSpec, register_stages
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -152,7 +152,8 @@ module {spec.top} (
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -225,7 +226,8 @@ module {spec.top} (
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -301,7 +303,8 @@ module {spec.top} (
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -380,7 +383,8 @@ module {spec.top} (
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -588,7 +592,8 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -668,7 +673,8 @@ module {spec.top} (
     zkf_cmp #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -745,7 +751,8 @@ module {spec.top} (
     zkf_sort #(
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -814,7 +821,8 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .K({MUL_ILOG2_CONST_K}),
         .STAGE_INPUT({spec.stage_input}),
-        .STAGE_DECODE({spec.stage_decode})
+        .STAGE_DECODE({spec.stage_decode}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -881,7 +889,8 @@ module {spec.top} (
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -945,7 +954,8 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .WINT({wint}),
-        .STAGE_INPUT({spec.stage_input})
+        .STAGE_INPUT({spec.stage_input}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1011,7 +1021,8 @@ module {spec.top} (
         .WEXP_OUT({spec.wexp_out}),
         .WMAN_OUT({spec.wman_out}),
         .STAGE_INPUT({spec.stage_input}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1076,7 +1087,8 @@ module {spec.top} (
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),
@@ -1152,7 +1164,8 @@ module {spec.top} (
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
-        .STAGE_OUTPUT({spec.stage_output})
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
     ) dut (
         .clk(clk),
         .rst(rst),

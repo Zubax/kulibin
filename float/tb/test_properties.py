@@ -31,6 +31,7 @@ from zkf_model import (
     zero,
 )
 from zkf_operands import directed_numbers, random_operand
+from zkf_latency import add_latency, mul_latency
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, is_resolvable, start_clock
 
@@ -92,12 +93,9 @@ def infer_stages(dut, stage_product: int = 0, stage_decode: int = 0, stage_align
     (0 = combinational output, default; 1 = registered output)."""
     name = str(dut._name)
     if "mul" in name:
-        # zkf_mul: 1 (product) + STAGE_OUTPUT (pack output) + STAGE_PRODUCT (DSP cascade split). Knobs clamp to 1.
-        return 1 + stage_output + (1 if stage_product >= 1 else 0)
+        return mul_latency(stage_product=stage_product, stage_output=stage_output)
     if "addsub" in name or "add" in name:
-        # zkf_add(sub): 4 stages + STAGE_OUTPUT (pack output) + STAGE_DECODE (decoded-operand register)
-        # + STAGE_ALIGN (align shifter split). Each knob clamps to 1.
-        return 4 + stage_output + (1 if stage_decode >= 1 else 0) + (1 if stage_align >= 1 else 0)
+        return add_latency(stage_decode=stage_decode, stage_align=stage_align, stage_output=stage_output)
     raise RuntimeError(f"unknown toplevel for property test: {name}")
 
 
