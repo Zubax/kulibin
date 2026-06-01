@@ -1,7 +1,7 @@
 # Zubax Kuibin floating point
 
 A small and FPGA-friendly floating point format that is similar to IEEE 754 but intentionally omits support for NaN,
-subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even.
+subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even (RNTE).
 Only one canonical positive zero representation exists.
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted.
@@ -68,7 +68,7 @@ Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depen
 | `zkf_div`             | ⇻ | `a ÷ b`; flags divide-by-zero.                                 |                             |
 | `zkf_fma`             | ⇻ | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | ⇻ | Cast float to signed two's-complement integer with saturation. |                             |
+| `zkf_to_int`          | ⇻ | Cast float to signed two's-complement integer with saturation. | RNTE                        |
 | `zkf_resize`          |   | Cast between different float formats.                          |                             |
 | `zkf_round`           |   | Round to integer in same format: RNTE/floor/ceil/trunc.        |                             |
 | `zkf_exp2`            | ⇻ | `2**x`                                                         | Faithful rounding, see below|
@@ -93,7 +93,11 @@ From these we get:
     asin(x)     = atan2(x, sqrt(1 - x*x))
     acos(x)     = atan2(sqrt(1 - x*x), x)
 
-    normalize_angle(x) = x - 2π × floor((x+π)/(2π))     ; [-π,+π)
+    normalize_angle(x) = x - 2π × floor((x+π)/(2π))                         ; [-π,+π)
+
+    INV_TAU = 1 / (2π)
+    normalize_angle_turns(x) = y - floor(y + 0.5); where y = x * INV_TAU    ; [-0.5,+0.5)
+
 
 And so on.
 
