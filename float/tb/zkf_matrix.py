@@ -266,6 +266,20 @@ def _resize(sim, tier, base, wi, mi, wo, mo, kind, count, si, so=None) -> Run:
     return _run("resize", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
+def _round(sim, tier, base, w, m, kind, count, *, si=None, sd=None, pa=None, so=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m)]
+    suffix = ""
+    if si is not None:
+        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+    if sd is not None:
+        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+    if pa is not None:
+        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+    if so is not None:
+        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+    return _run("round", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
+
+
 def _pipe(sim, tier, config, w, n, count) -> Run:
     return _run("pipe", sim, tier, config, [("W", w), ("N", n)], count=count, with_kind=False,
                 plus_names={"W": "ZKF_PIPE_W", "N": "ZKF_PIPE_N"})
@@ -393,6 +407,17 @@ def _per_pr(sim, out: list) -> None:
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, sn=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, pa=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=1, sn=1, pa=1))
+    # zkf_round: every operand is swept across all four rounding modes by the bench. UNARY covers the formats
+    # (w2_m4 exhaustive reaches the round-up-overflows-to-inf corner). The stage knobs (STAGE_INPUT via zkf_pipe,
+    # STAGE_PACK -> _zkf_pack.STAGE_INPUT, STAGE_OUTPUT -> _zkf_pack.STAGE_OUTPUT) are exercised once each plus
+    # all-on on a fast exhaustive format so a latency-bookkeeping regression is caught cheaply.
+    for cfg, w, m, k, c in UNARY:
+        out.append(_round(sim, "pr", cfg, w, m, k, c))
+    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sd=1))
+    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
+    out.append(_round(sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, sd=1, pa=1, so=1))
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))  # one-off
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
@@ -479,6 +504,17 @@ def _deep_correctness(out: list) -> None:
         for si in (0, 1):
             for so in (0, 1):
                 out.append(_resize(s, "deep", base, wi, mi, wo, mo, k, c, si, so=so))
+    # round: each unary deep format once for correctness, the full STAGE_INPUT x STAGE_PACK x STAGE_OUTPUT knob
+    # cartesian on a small exhaustive format, and the WEXP=8/WMAN=36 wide format (shared with the synth gate).
+    for w, m, k, c in UNARY_EXT:
+        out.append(_round(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
+    for si in (0, 1):
+        for sd in (0, 1):
+            for pa in (0, 1):
+                for so in (0, 1):
+                    out.append(_round(s, "deep", "w3m6_knobs", 3, 6, "exhaustive", 0, si=si, sd=sd, pa=pa, so=so))
+    out.append(_round(s, "deep", "w8m36", 8, 36, "random", 768))
+    out.append(_round(s, "deep", "w8m36_maxpipe", 8, 36, "random", 768, si=1, sd=1, pa=1, so=1))
 
 
 def _deep_coverage(out: list) -> None:
@@ -543,6 +579,13 @@ def _deep_coverage(out: list) -> None:
     for wi, mi, wo, mo in [(3, 4, 5, 6), (5, 6, 3, 4), (4, 5, 4, 4), (4, 4, 4, 5), (5, 4, 3, 6), (3, 6, 5, 4)]:
         for si in (0, 1):
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
+    # round coverage: cheap exhaustive formats toggle the rounder and the specials path (w2_m4 reaches the
+    # round-up overflow); the all-on knob run toggles the input/pack/output registers; the wide w8_m36 random run
+    # toggles the wide boundary-mask decoder and exponent-difference bits the tiny formats cannot reach.
+    for w, m in [(2, 4), (4, 5), (3, 6)]:
+        out.append(_round(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
+    out.append(_round(s, "deep", "w4m5_maxpipe", 4, 5, "exhaustive", 0, si=1, pa=1, so=1))
+    out.append(_round(s, "deep", "w8m36", 8, 36, "random", 1024))
     # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches that stay dark under the defaults, so the merged gate can
     # measure them: _zkf_pack g_out_reg (every packer op), zkf_pipe g_registered (div, via _zkf_pack_delay),
     # zkf_resize g_owr (widen path), and the standalone packer's registered-output and biased-exponent cones. One

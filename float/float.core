@@ -45,6 +45,7 @@ filesets:
       - hdl/_tables/_zkf_log2_m53.v
       - hdl/zkf_exp2.v
       - hdl/zkf_log2.v
+      - hdl/zkf_round.v
     file_type: verilogSource
 
   rtl_pack:
@@ -177,6 +178,13 @@ filesets:
       - hdl/zkf_resize.v
     file_type: verilogSource
 
+  rtl_round:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_pipe.v
+      - hdl/zkf_round.v
+    file_type: verilogSource
+
   rtl_exp2:
     files:
       - hdl/_zkf_pack.v
@@ -266,6 +274,8 @@ filesets:
       - tb/test_to_int.py:
           file_type: user
       - tb/test_resize.py:
+          file_type: user
+      - tb/test_round.py:
           file_type: user
       - tb/test_exp2.py:
           file_type: user
@@ -1118,6 +1128,42 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_resize
     parameters: *float_resize_params
+
+  sim_round_icarus:
+    filesets: [rtl_round, tb_cocotb]
+    toplevel: zkf_round
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_round
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_round_params
+      - WEXP
+      - WMAN
+      - STAGE_INPUT
+      - STAGE_DECODE
+      - STAGE_PACK
+      - STAGE_OUTPUT
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_DECODE
+      - ZKF_STAGE_PACK
+      - ZKF_STAGE_OUTPUT
+
+  sim_round_verilator:
+    filesets: [rtl_round, tb_cocotb]
+    toplevel: zkf_round
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_round
+    parameters: *float_round_params
 
   sim_exp2_icarus:
     filesets: [rtl_exp2, tb_cocotb]

@@ -512,6 +512,47 @@ def resize_reference(fmt_in: ZkfFormat, fmt_out: ZkfFormat, bits: int) -> int:
     return round_fraction_to_zkf(fmt_out, item.sign, magnitude)
 
 
+# Round-to-integer rounding modes for zkf_round. The integer encoding must match the localparam values in
+# hdl/zkf_round.v and the 2-bit round_mode port.
+ROUND_NEAREST_EVEN = 0   # round to nearest integer, ties to even (the IEEE default)
+ROUND_FLOOR = 1          # round toward -inf
+ROUND_CEIL = 2           # round toward +inf
+ROUND_TRUNC = 3          # round toward zero (truncate)
+ROUND_MODES = (ROUND_NEAREST_EVEN, ROUND_FLOOR, ROUND_CEIL, ROUND_TRUNC)
+
+
+def _round_signed_fraction_to_int(value: Fraction, mode: int) -> int:
+    """Round an exact signed value to an integer according to the selected zkf_round mode."""
+    if mode == ROUND_NEAREST_EVEN:
+        return _round_fraction_to_int_ties_even(value)  # floor-based helper is already symmetric for negatives
+    if mode == ROUND_FLOOR:
+        return math.floor(value)
+    if mode == ROUND_CEIL:
+        return math.ceil(value)
+    if mode == ROUND_TRUNC:
+        return math.trunc(value)
+    raise ValueError(f"invalid round mode: {mode}")
+
+
+def round_reference(fmt: ZkfFormat, mode: int, bits: int) -> int:
+    """Round a float to an integer value in the same format. Mirrors zkf_round: inf passes through, zero (and
+    flushed subnormals) yields +0, otherwise the magnitude is rounded to an integer per `mode` and re-encoded
+    exactly (so an unrepresentable rounded integer overflows to signed inf, and a zero result is canonical +0)."""
+    item = decode(fmt, bits)
+    if item.is_inf:
+        return canonical_inf(fmt, item.sign)
+    if item.is_zero:
+        return zero(fmt)
+
+    exp_unbiased = item.exp - fmt.bias
+    sig_int = significand(fmt, bits)
+    magnitude = Fraction(sig_int, 1) * pow2_fraction(exp_unbiased - fmt.wfrac)
+    rounded = _round_signed_fraction_to_int(-magnitude if item.sign else magnitude, mode)
+    if rounded == 0:
+        return zero(fmt)
+    return round_fraction_to_zkf(fmt, 1 if rounded < 0 else 0, Fraction(abs(rounded), 1))
+
+
 # --------------------------------------------------------------------------------------------------
 # Transcendental operators zkf_exp2 / zkf_log2.
 #

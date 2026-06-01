@@ -526,6 +526,44 @@ target overflow maps to signed infinity
 
 ---
 
+## Round To Integer Value
+
+Rounds a float to an integer value, producing a float of the same `WEXP`/`WMAN`. The rounding mode is chosen per
+transaction by a 2-bit `round_mode` input (tie it to a constant to let synthesis prune the unused mode logic).
+
+```verilog
+zkf_round #(
+    parameter int WEXP = 6,
+    parameter int WMAN = 18
+) (
+    input  wire clk,
+    input  wire rst,
+
+    input  wire             in_valid,
+    input  wire [WFULL-1:0] a,
+    input  wire       [1:0] round_mode,   // 0=nearest-even 1=floor 2=ceil 3=trunc
+
+    output wire             out_valid,
+    output wire [WFULL-1:0] y
+);
+```
+
+Rules:
+
+```text
++-inf passes through as canonical signed infinity
+exponent == 0 (zero and flushed subnormals) rounds to canonical +0
+already-integer values pass through unchanged
+mode 0: round to nearest integer, ties to even (the default IEEE mode)
+mode 1: floor (toward -inf)        ; increment magnitude iff sign and any fraction
+mode 2: ceil  (toward +inf)        ; increment magnitude iff not sign and any fraction
+mode 3: trunc (toward zero)        ; drop the fraction
+a zero-magnitude result canonicalizes to +0 regardless of sign
+a rounded integer that does not fit the format overflows to signed infinity
+```
+
+---
+
 ## 11. Sqrt/log2/exp2, integer detection
 
 Specifically `zkf_log2` and `zkf_exp2` can be used later to build arbitrary log/exp.

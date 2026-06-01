@@ -70,6 +70,7 @@ Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depen
 | `zkf_from_int`        | ⇻ | Cast signed two's-complement integer to float.                 |                             |
 | `zkf_to_int`          | ⇻ | Cast float to signed two's-complement integer with saturation. |                             |
 | `zkf_resize`          |   | Cast between different float formats.                          |                             |
+| `zkf_round`           |   | Round to integer in same format: RNTE/floor/ceil/trunc.        |                             |
 | `zkf_exp2`            | ⇻ | `2**x`                                                         | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
 | `zkf_pipe`            |   | Delay line of N register stages, W bits each.                  | No-op                       |
@@ -91,6 +92,8 @@ From these we get:
     atan(x)     = atan2(x, 1)
     asin(x)     = atan2(x, sqrt(1 - x*x))
     acos(x)     = atan2(sqrt(1 - x*x), x)
+
+    normalize_angle(x) = x - 2π × floor((x+π)/(2π))     ; [-π,+π)
 
 And so on.
 

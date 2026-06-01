@@ -451,6 +451,32 @@ MODULES = [
         wexp_out=8,
         wman_out=36,
     ),
+    # zkf_round (round-to-integer-valued float; runtime round_mode). The rounder is a variable-position
+    # boundary-mask + guard/sticky reduction + increment adder feeding _zkf_pack as an assembler. Unpipelined the
+    # cone is ~25 ns, so the headline configs carry STAGE_DECODE=1 (split mask generation from the reduction/add)
+    # and STAGE_PACK=1 (register the rounder->packer cut), giving three balanced logic stages that close 100 MHz.
+    ModuleSpec(
+        name="zkf_round",
+        label="zkf_round (WEXP=6, WMAN=18, STAGE_DECODE=1 + STAGE_PACK=1)",
+        top="zkf_round_synth_top",
+        kind="round",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        stage_decode=1,
+        stage_pack=1,
+    ),
+    ModuleSpec(
+        name="zkf_round_w8m36",
+        label="zkf_round (WEXP=8, WMAN=36, STAGE_DECODE=1 + STAGE_PACK=1)",
+        top="zkf_round_w8m36_synth_top",
+        kind="round",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        stage_decode=1,
+        stage_pack=1,
+    ),
     # zkf_exp2 / zkf_log2 (table + polynomial). Both close 100 MHz with margin on the LFE5U-12F at the 6/18
     # reference, but along opposite axes, so their headline entries differ (cf. how zkf_fma's plain entry carries
     # the knobs it needs to close while zkf_div's does not):
@@ -609,6 +635,12 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_pipe.v",
             hdl / "zkf_resize.v",
         ]
+    if spec.kind == "round":
+        return [
+            hdl / "_zkf_pack.v",
+            hdl / "zkf_pipe.v",
+            hdl / "zkf_round.v",
+        ]
     if spec.kind in {"exp2", "log2"}:
         # The generate-if selects the table whose name matches WMAN (the degree is a closed-form localparam inside the
         # table); the other WMAN branches reference undefined modules but are untaken, so synthesis prunes them (like
@@ -706,6 +738,9 @@ def params(spec: ModuleSpec) -> str:
             f"WEXP_IN={spec.wexp_in}, WMAN_IN={spec.wman_in}, "
             f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_si_suffix(spec)}"
         )
+    if spec.kind == "round":
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_si_suffix(spec)}{_sd_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind in {"cmp", "sort"}:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_si_suffix(spec)}"
     if spec.kind == "mul":

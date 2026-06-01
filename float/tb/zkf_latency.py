@@ -124,6 +124,10 @@ def resize_latency(*, stage_input: int = 0, stage_output: int = 0) -> int:
     return _enabled(stage_input) + _enabled(stage_output)
 
 
+def round_latency(*, stage_input: int = 0, stage_decode: int = 0, stage_pack: int = 0, stage_output: int = 0) -> int:
+    return _enabled(stage_input) + _enabled(stage_decode) + _enabled(stage_pack) + _enabled(stage_output)
+
+
 def exp2_latency(
     wman: int,
     *,
@@ -223,6 +227,9 @@ def module_latency(
         return to_int_latency(stage_input=stage_input)
     if kind == "resize":
         return resize_latency(stage_input=stage_input, stage_output=stage_output)
+    if kind == "round":
+        return round_latency(stage_input=stage_input, stage_decode=stage_decode,
+                             stage_pack=stage_pack, stage_output=stage_output)
     if kind == "exp2":
         return exp2_latency(
             wman,

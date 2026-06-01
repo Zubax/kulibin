@@ -1051,6 +1051,77 @@ endmodule
     )
 
 
+def write_round_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] a,
+    input  wire           [1:0] round_mode,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg           [1:0] r_round_mode;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+
+    assign out_valid = r_out_valid;
+    assign y         = r_y;
+
+    zkf_round #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_DECODE({spec.stage_decode}),
+        .STAGE_PACK({spec.stage_pack}),
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .round_mode(r_round_mode),
+        .out_valid(dut_out_valid),
+        .y(dut_y)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a          <= a;
+        r_round_mode <= round_mode;
+        r_y          <= dut_y;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_exp2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     path.write_text(
@@ -1225,6 +1296,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_to_int_wrapper(spec, path)
     elif spec.kind == "resize":
         write_resize_wrapper(spec, path)
+    elif spec.kind == "round":
+        write_round_wrapper(spec, path)
     elif spec.kind == "exp2":
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":
