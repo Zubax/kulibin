@@ -124,26 +124,27 @@ module zkf_round #(
     wire [WMAN-1:0] bit_pp_s1    = {{(WMAN-1){1'b0}}, 1'b1} << pp; // one-hot at the boundary (1 << pp)
     wire [WMAN-1:0] frac_mask_s1 = bit_pp_s1 - {{(WMAN-1){1'b0}}, 1'b1};  // low pp bits (the fractional part)
 
-    // Sub-one helpers and the signed exponent are cheap to fold into stage 1.
+    // Sub-one helpers folded into stage 1. The result's biased exponent is just exp_in (+carry, added in stage 2):
+    // it is forwarded to _zkf_pack with EXP_IS_BIASED=1, so neither this module nor the packer round-trips through
+    // the bias (no exp_in-BIAS subtractor here, no +BIAS adder in the packer).
     wire                  e_is_neg1_s1    = exp_in == BIAS_M1_VEC; // |value| in [0.5, 1): the 0.5 bit is the hidden bit
     wire                  frac_nonzero_s1 = |frac_in;
-    wire signed [WEU-1:0] e_s1            = $signed({{(WEU-WEXP){1'b0}}, exp_in}) - BIAS_EXT;
 
     // -- Optional STAGE_DECODE register. Reset clears only validity; payload free-runs (control-only reset).
     // Only sig, frac_mask and the one-hot bit_pp are registered; half_mask (= bit_pp >> 1) and below_mask
     // (= frac_mask ^ half_mask) are cheap re-derivations done in stage 2, so they need not occupy flops.
-    // Packed (LSB-first): is_inf, is_zero, frac_nonzero, e_is_neg1, sub_one, round_mode[2], sign, e[WEU],
+    // Packed (LSB-first): is_inf, is_zero, frac_nonzero, e_is_neg1, sub_one, round_mode[2], sign, exp_in[WEXP],
     // bit_pp, frac_mask, sig.
-    // O_E = 8: the five 1-bit specials (is_inf,is_zero,frac_nonzero,e_is_neg1,sub_one) + round_mode (2) + sign (1).
-    localparam O_E      = 8;
-    localparam O_BITPP  = O_E + WEU;
+    // O_EXP = 8: the five 1-bit specials (is_inf,is_zero,frac_nonzero,e_is_neg1,sub_one) + round_mode (2) + sign (1).
+    localparam O_EXP    = 8;
+    localparam O_BITPP  = O_EXP + WEXP;
     localparam O_FRAC   = O_BITPP + WMAN;
     localparam O_SIG    = O_FRAC + WMAN;
     localparam DEC_W    = O_SIG + WMAN;
     wire             dec_valid;
     wire [DEC_W-1:0] dec_payload;
     wire [DEC_W-1:0] s1_payload = {sig_s1, frac_mask_s1, bit_pp_s1,
-                                   e_s1, sign_in, round_mode_q, sub_one_s1, e_is_neg1_s1,
+                                   exp_in, sign_in, round_mode_q, sub_one_s1, e_is_neg1_s1,
                                    frac_nonzero_s1, is_zero_s1, is_inf_s1};
     zkf_pipe #(.W(DEC_W), .N(STAGE_DECODE ? 1 : 0)) u_decode_pipe (
         .clk(clk), .rst(rst),
@@ -153,7 +154,7 @@ module zkf_round #(
     wire [WMAN-1:0]       sig          = dec_payload[O_SIG   +: WMAN];
     wire [WMAN-1:0]       frac_mask    = dec_payload[O_FRAC  +: WMAN];
     wire [WMAN-1:0]       bit_pp       = dec_payload[O_BITPP +: WMAN];
-    wire signed [WEU-1:0] e_unb        = dec_payload[O_E     +: WEU];
+    wire      [WEXP-1:0]  exp_biased_d = dec_payload[O_EXP   +: WEXP];   // the input biased exponent (carried through)
     wire                  sign_d       = dec_payload[7];
     wire            [1:0] round_mode_d = dec_payload[6:5];
     wire                  sub_one      = dec_payload[4];
@@ -192,17 +193,19 @@ module zkf_round #(
     wire            carry      = inc_a & carry_plus;
 
     // -- Assemble the packer inputs. _zkf_pack receives an already-rounded normalized significand with no
-    // guard/round/sticky, so it only biases the exponent and canonicalizes specials.
-    wire signed [WEU-1:0] exp_unbiased_a = e_unb + $signed({{(WEU-1){1'b0}}, carry});
-    wire                  force_inf      = is_inf;
-    wire                  force_zero     = is_zero | (sub_one & ~inc_c);
-    wire [WMAN-1:0]       significand    = sub_one ? {1'b1, {WFRAC{1'b0}}} : sig_norm_a;
-    wire signed [WEU-1:0] exp_unbiased   = sub_one ? {WEU{1'b0}} : exp_unbiased_a;
+    // guard/round/sticky and a pre-biased exponent (EXP_IS_BIASED=1), so it only canonicalizes specials and
+    // detects overflow. The biased exponent is exp_in + carry; the sub-one branch is exactly +-1.0 (exp == BIAS).
+    // The overflow case still rides this exponent: max_finite (exp == 2^WEXP-2) + carry == 2^WEXP-1 == EXP_INF.
+    wire signed [WEU-1:0] exp_biased_a = $signed({{(WEU-WEXP){1'b0}},exp_biased_d}) + $signed({{(WEU-1){1'b0}},carry});
+    wire                  force_inf    = is_inf;
+    wire                  force_zero   = is_zero | (sub_one & ~inc_c);
+    wire [WMAN-1:0]       significand  = sub_one ? {1'b1, {WFRAC{1'b0}}} : sig_norm_a;
+    wire signed [WEU-1:0] exp_biased   = sub_one ? BIAS_EXT : exp_biased_a;
 
     _zkf_pack #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WEXP_UNBIASED(WEU),
-        .EXP_IS_BIASED(0),
+        .EXP_IS_BIASED(1),
         .ASSUME_NO_OVERFLOW(0),
         .STAGE_INPUT(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)
@@ -212,7 +215,7 @@ module zkf_round #(
         .sign(sign_d),
         .force_zero(force_zero),
         .force_inf(force_inf),
-        .exp_unbiased(exp_unbiased),
+        .exp_unbiased(exp_biased),
         .significand(significand),
         .guard(1'b0),
         .round(1'b0),

@@ -452,9 +452,10 @@ MODULES = [
         wman_out=36,
     ),
     # zkf_round (round-to-integer-valued float; runtime round_mode). The rounder is a variable-position
-    # boundary-mask + guard/sticky reduction + increment adder feeding _zkf_pack as an assembler. Unpipelined the
-    # cone is ~25 ns, so the headline configs carry STAGE_DECODE=1 (split mask generation from the reduction/add)
-    # and STAGE_PACK=1 (register the rounder->packer cut), giving three balanced logic stages that close 100 MHz.
+    # boundary-mask + guard/sticky reduction + increment adder feeding _zkf_pack as a pre-biased assembler
+    # (EXP_IS_BIASED=1, no bias round-trip). Unpipelined the cone is ~21 ns, so the headline configs carry
+    # STAGE_DECODE=1 (split mask generation from the reduction/add) and STAGE_PACK=1 (register the rounder->packer
+    # cut). At 8/36 the wider 36-bit reduction also needs STAGE_OUTPUT=1 to hold 100 MHz on the Spartan/nextpnr flow.
     ModuleSpec(
         name="zkf_round",
         label="zkf_round (WEXP=6, WMAN=18, STAGE_DECODE=1 + STAGE_PACK=1)",
@@ -468,7 +469,7 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_round_w8m36",
-        label="zkf_round (WEXP=8, WMAN=36, STAGE_DECODE=1 + STAGE_PACK=1)",
+        label="zkf_round (WEXP=8, WMAN=36, STAGE_DECODE=1 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
         top="zkf_round_w8m36_synth_top",
         kind="round",
         wexp=8,
@@ -476,6 +477,7 @@ MODULES = [
         wexp_unbiased=0,
         stage_decode=1,
         stage_pack=1,
+        stage_output=1,
     ),
     # zkf_exp2 / zkf_log2 (table + polynomial). Both close 100 MHz with margin on the LFE5U-12F at the 6/18
     # reference, but along opposite axes, so their headline entries differ (cf. how zkf_fma's plain entry carries
