@@ -38,6 +38,10 @@ References:
 - Intel Hyperflex Architecture High-Performance Design Handbook, "Reset Strategies":
   <https://docs.altera.com/r/docs/683353/25.1.1/hyperflex-architecture-high-performance-design-handbook/reset-strategies?contentId=gzd92HdsL40qZGHurB0ezg>
 
+When splitting an operator across multiple DSP tiles (e.g., product split), provide an operand-capture register
+stage before the DSPs; this allows the placer to put a latch directly in front of each tile,
+shielding the operator stage from the interconnect delays.
+
 ### Language
 
 Verilog style: 4-space indentation, concise module names, snake_case files and directories, and uppercase parameter/localparam names where practical.
@@ -49,7 +53,6 @@ FuseSoC core names follow `zubax:kulibin:<module>:0`; target names use `sim` or 
 In synthesizable code, prefer `case` statements over nested ternary operators unless there are contraindications.
 
 In complex modules, it is best to avoid a large number of named nets that are only used once; this does not help readability but rather the opposite.
-
 
 ## Verification
 
