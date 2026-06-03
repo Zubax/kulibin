@@ -220,9 +220,6 @@ def _emit_consts(s: Spec) -> str:
     w(f"localparam integer N    = {s.n};   // iterations (folded over the cycles selected by UNROLL100)")
     w(f"localparam integer WX   = {s.xw};")
     w(f"localparam integer WZ   = {s.zw};")
-    # UNROLL100 (iterations/cycle x100; 50 = the half-rate 2-cycle engine) is forwarded straight through from the
-    # top-level zkf_sincos to the generic engine, not a per-WMAN constant: the caller chooses it (with STAGE_WIDE) to
-    # trade latency for timing on wide datapaths. This core only forwards it -- the engine validates and uses it.
     w(f"localparam integer XF   = {s.xf};   // x/y fractional scale")
     w(f"localparam integer ZF   = {s.zf};   // angle (turns) fractional scale == WT + 2 + GUARD_ZF")
     w(f"localparam integer CWB  = {cwb};")
