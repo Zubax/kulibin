@@ -78,16 +78,7 @@ WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
 
 # WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
 # FPGA-friendly significand sizes and the standard IEEE 754 ones. New ones can be added easily.
-SUPPORTED_WMAN = [
-    11,     # IEEE 754 binary16
-    16,     # DSP tiles in Lattice iCE40 and similar
-    18,     # Classic FPGA DSP width, perhaps most common: ECP5, PolarFire, Trion, many Intel modes, etc.
-    24,     # IEEE 754 binary32; also fits Versal DSP58's 27x24 asymmetric multiplier side
-    27,     # Intel/Altera variable-precision DSPs; AMD/Xilinx DSP48E2/DSP58 large operand side, etc.
-    36,     # 2x18 (very common) or native Intel/Altera 36x36-style variable-precision mode
-    48,     # 2x24 or 3x16; with an 8-bit exponent amounts to 7 bytes exactly
-    53,     # IEEE 754 binary64
-]
+SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
 
 
 def ff_bits(wman: int) -> int:
