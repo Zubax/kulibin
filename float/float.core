@@ -33,6 +33,7 @@ filesets:
       - hdl/_tables/_zkf_exp2_m18.v
       - hdl/_tables/_zkf_exp2_m24.v
       - hdl/_tables/_zkf_exp2_m27.v
+      - hdl/_tables/_zkf_exp2_m32.v
       - hdl/_tables/_zkf_exp2_m36.v
       - hdl/_tables/_zkf_exp2_m48.v
       - hdl/_tables/_zkf_exp2_m53.v
@@ -41,6 +42,7 @@ filesets:
       - hdl/_tables/_zkf_log2_m18.v
       - hdl/_tables/_zkf_log2_m24.v
       - hdl/_tables/_zkf_log2_m27.v
+      - hdl/_tables/_zkf_log2_m32.v
       - hdl/_tables/_zkf_log2_m36.v
       - hdl/_tables/_zkf_log2_m48.v
       - hdl/_tables/_zkf_log2_m53.v
@@ -198,6 +200,7 @@ filesets:
       - hdl/_tables/_zkf_exp2_m18.v
       - hdl/_tables/_zkf_exp2_m24.v
       - hdl/_tables/_zkf_exp2_m27.v
+      - hdl/_tables/_zkf_exp2_m32.v
       - hdl/_tables/_zkf_exp2_m36.v
       - hdl/_tables/_zkf_exp2_m48.v
       - hdl/_tables/_zkf_exp2_m53.v
@@ -217,6 +220,7 @@ filesets:
       - hdl/_tables/_zkf_log2_m18.v
       - hdl/_tables/_zkf_log2_m24.v
       - hdl/_tables/_zkf_log2_m27.v
+      - hdl/_tables/_zkf_log2_m32.v
       - hdl/_tables/_zkf_log2_m36.v
       - hdl/_tables/_zkf_log2_m48.v
       - hdl/_tables/_zkf_log2_m53.v
@@ -236,6 +240,7 @@ filesets:
       - hdl/_tables/_zkf_cordic_m18.v
       - hdl/_tables/_zkf_cordic_m24.v
       - hdl/_tables/_zkf_cordic_m27.v
+      - hdl/_tables/_zkf_cordic_m32.v
       - hdl/_tables/_zkf_cordic_m36.v
       - hdl/_tables/_zkf_cordic_m48.v
       - hdl/_tables/_zkf_cordic_m53.v

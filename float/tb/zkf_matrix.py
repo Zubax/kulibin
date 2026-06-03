@@ -72,13 +72,15 @@ UNARY = [
     ("w11_m53_random", 11, 53, "random", 384),
 ]
 # transcendental (exp2/log2): table+polynomial unary ops; tables exist only for the generator's supported WMAN
-# (11,16,18,24,27,36,48,53 -- min is binary16's 11, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every
-# config here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m11. (config, wexp, wman, kind, count)
+# (11,16,18,24,27,32,36,48,53 -- min is binary16's 11, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every
+# config here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m11.
+# (config, wexp, wman, kind, count)
 TRANS = [
     ("w2_m11_exhaustive", 2, 11, "exhaustive", 0),    # wfull=13: cheap exhaustive at the minimum WMAN
     ("w3_m11_exhaustive", 3, 11, "exhaustive", 0),    # wfull=14: a second WEXP, still exhaustive
     ("w5_m11_random", 5, 11, "random", 512),          # binary16 significand width
     ("w8_m24_random", 8, 24, "random", 1024),
+    ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
     # Wide-exponent guard: WMAN=11 (the minimum) keeps the datapath small while WEXP=20 (vs <=11 elsewhere) and the
     # directed overflow/underflow/inf/pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
@@ -86,7 +88,7 @@ TRANS = [
 ]
 TRANS_EXT = [
     (2, 11, "exhaustive", 0), (3, 11, "exhaustive", 0),   # exhaustive at the minimum WMAN, two WEXP
-    (6, 16, "random", 512), (8, 27, "random", 512),       # mid-range supported WMAN (DSP-friendly sizes)
+    (6, 16, "random", 512), (8, 27, "random", 512), (8, 32, "random", 512),  # mid-range supported WMAN
     (14, 11, "random", 2000),  # wide exponent field (exhaustive infeasible at WMAN>=11), random sweep instead
 ]
 # pipe:     (config, width, stages, count)
