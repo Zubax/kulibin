@@ -41,9 +41,13 @@ to enable tuning for the target chip. Common options seen in most modules are:
 others control various computation stages.
 
 Some modules offer to split long multiplication into several stages via `STAGE_PRODUCT`;
-sometimes it helps, but sometimes it prevents the synthesizer from mapping the product do DSP slices,
-worsening the performance.
-Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
+usually this only helps if the operands exceed the width of the chip's DSP tile inputs.
+The value, as with any other STAGE knob, is the number of extra cycles in the multiplier and also a manual split knob:
+0 - no extra stages and no manual splitting, let the synthesizer arrange the circuit automatically in a single cycle.
+1 - same as above but adds an operand capture register stage before the multiplier, which allows the synthesizer
+to place a latch immediately before the DSP tile (or several if auto-split is happening) and in some cases (e.g. Vivado)
+retime multiplication across two stages.
+2+ - manually split the product into 2x2, 3x3, etc sub-products in as many stages (all use operand-capture stage).
 
 Some modules that use multiplication offer the optional `WMULTIPLIER` parameter that defaults to zero,
 but it can be set by the user to the argument width of the DSP tile multipliers available on-chip.
