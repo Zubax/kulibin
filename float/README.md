@@ -32,7 +32,7 @@ They do not offer any of the guarantees that are valid for the public modules.
 Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
 other modules since they always canonicalize inputs, but it is worth noting.
 
-### Latency tuning knobs
+### Tuning knobs
 
 Most modules provide pipelining knobs, like output register selection, internal registers, etc,
 to enable tuning for the target chip. Common options seen in most modules are:
@@ -44,6 +44,13 @@ Some modules offer to split long multiplication into several stages via `STAGE_P
 sometimes it helps, but sometimes it prevents the synthesizer from mapping the product do DSP slices,
 worsening the performance.
 Thus the effect of each knob has to be evaluated empirically against the specific flow and its settings.
+
+Some modules that use multiplication offer the optional `WMULTIPLIER` parameter that defaults to zero,
+but it can be set by the user to the argument width of the DSP tile multipliers available on-chip.
+This enables the library to optimally split wide multiplication (when it doesn't fit into a single DSP tile)
+across several tiles; this is significant when wide operands over 2x the native argument width are involved.
+If not specified, the library will split wide multiplication into equal-width operands, which is not always optimal.
+Common multiplier operand widths frequently found in FPGAs are 16, 18, and 24 bits.
 
 Every sequential module exposes a `LATENCY` parameter that defaults to the module's exact register-stage count
 for the current configuration. It is not a tuning knob -- changing it does not change the hardware. Its purpose is
