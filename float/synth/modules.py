@@ -36,12 +36,14 @@ class ModuleSpec:
     wexp_out: int = 0
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
-    stage_product: int = 0   # zkf_mul/fma: 0/1; zkf_exp2/log2: product computation staging.
+    stage_product: int = 0   # zkf_mul/fma: 0/1; zkf_exp2/log2: product staging; zkf_sincos: shared _zkf_pmul split 0..3.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
     stage_normalize: int = 0 # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
+    unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
+    wmultiplier: int = 0     # zkf_sincos: shared-multiply tile-width hint (0 = symmetric; >=8 derives the slice grid).
     synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
 
@@ -561,6 +563,44 @@ MODULES = [
         synth_device="45k",
         emit_schematic=False,
     ),
+    # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the
+    # tiny-input bypass multiply, and two _zkf_fixed_to_float back ends. The rotation array is pure logic; the only DSPs
+    # are the shared 2*pi linear-correction multiply. STAGE_DECODE=1 splits the input exponent-decode cone and
+    # STAGE_NORMALIZE=2 + STAGE_PACK=1 keep the two pre-pack cones under the 100 MHz gate across PNR seeds.
+    ModuleSpec(
+        name="zkf_sincos",
+        label="zkf_sincos (sin/cos of x turns, iterative folded CORDIC; one datapath reused over ceil(K*100/UNROLL100) "
+              "cycles + a shared linear-correction multiply, II = latency. The only DSPs are the 2*pi correction; it "
+              "fits the LFE5U-25F many times over. UNROLL100=100: one iteration per cycle, the shortest path)",
+        top="zkf_sincos_synth_top",
+        kind="sincos",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        unroll100=100,    # one CORDIC iteration per engine cycle (shortest combinational path).
+        stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz.
+        stage_normalize=2,  # both normshift barriers load-bearing (SN=1 reproducibly drops M18 to 99.5 MHz).
+        stage_pack=1,     # rounder pack register; both it and the 2x2 product split are needed for 100 MHz.
+    ),
+    # WEXP=8, WMAN=36: same folded engine, more iterations on a wider datapath. Still the default LFE5U-25F (the
+    # rotation array uses no DSPs; only the correction multiplies do).
+    ModuleSpec(
+        name="zkf_sincos_w8m36",
+        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 + STAGE_PRODUCT=3 (4x3 split) + "
+              "STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
+        top="zkf_sincos_w8m36_synth_top",
+        kind="sincos",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        unroll100=50,     # half-rate 2-cycle engine: the wide (XW=64) shift+add recurrence misses 100 MHz single-cycle.
+        stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz.
+        wmultiplier=18,   # 18-bit tile hint -> the 66x41 product derives a 4x3 single-tile grid (12 DSP) instead of
+                          #   the symmetric 3x3's 18; latency-neutral.
+        stage_normalize=2,
+        stage_pack=1,
+        emit_schematic=False,
+    ),
 ]
 
 
@@ -663,6 +703,24 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             # plus the normshift -> pack-input combine -> _zkf_pack pipeline shared with zkf_from_int.
             sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v", hdl / "_zkf_log2_final_mul.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
+    if spec.kind == "sincos":
+        # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic) bound per WMAN
+        # (_zkf_cordic_m<WMAN>) + the shared correction multiply (_zkf_pmul) + two _zkf_fixed_to_float back ends.
+        # Include both the default-WMAN (18) core and this spec's WMAN, deduped, so Yosys's hierarchy -check is
+        # satisfied for the generic zkf_sincos too.
+        def core(wman: int) -> Path:
+            return hdl / "_tables" / f"_zkf_cordic_m{wman}.v"
+        cores = [core(w) for w in sorted({18, spec.wman})]  # 18 = the default WMAN of zkf_sincos
+        return [
+            hdl / "_zkf_pack.v",
+            hdl / "zkf_pipe.v",
+            hdl / "_zkf_normshift.v",
+            hdl / "_zkf_fixed_to_float.v",
+            hdl / "_zkf_pmul.v",
+            hdl / "_zkf_cordic.v",
+            *cores,
+            hdl / "zkf_sincos.v",
+        ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
@@ -674,6 +732,7 @@ def register_stages(spec: ModuleSpec) -> int:
     return module_latency(
         spec.kind,
         wman=spec.wman,
+        unroll100=spec.unroll100,
         stage_input=spec.stage_input,
         stage_product=spec.stage_product,
         stage_align=spec.stage_align,

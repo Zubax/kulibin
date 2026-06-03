@@ -37,6 +37,7 @@ class TestContext:
     stage_normalize: int = 0 # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int (normshift internal barriers)
     stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
+    unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (mirrors the UNROLL100 vlogparam)
     exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees an in-range exponent)
 
@@ -174,6 +175,14 @@ def _stage_output() -> int:
     return value
 
 
+def _unroll100() -> int:
+    # Mirror the RTL UNROLL100 vlogparam (iterations/cycle x100, default 100) so the latency model matches the engine.
+    value = plusarg_int("ZKF_UNROLL100", 100)
+    if value != 50 and (value < 100 or value % 100 != 0):
+        raise ValueError(f"ZKF_UNROLL100 must be 50 or a positive multiple of 100, got {value}")
+    return value
+
+
 def _exp_is_biased() -> int:
     value = plusarg_int("ZKF_EXP_IS_BIASED", 0)
     if value not in (0, 1):
@@ -216,6 +225,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_normalize=_stage_normalize(),
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
+        unroll100=_unroll100(),
         exp_is_biased=_exp_is_biased(),
         assume_no_overflow=_assume_no_overflow(),
     )

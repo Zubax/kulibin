@@ -695,6 +695,207 @@ def log2_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
     return round_fraction_to_zkf(fmt, sign_out, abs(_mpf_to_fraction(val))), 0, 0
 
 
+# --------------------------------------------------------------------------------------------------
+# Trigonometric operator zkf_sincos: sin(2*pi*x), cos(2*pi*x), and the reduced quadrant.
+#
+# sincos_reference is bit-exact to the RTL datapath: the same mod-1 fixed-point reduction, the same per-segment
+# table+truncating-Horner from float/zkf_trig.py, the two factored final multiplies (t*S, (1-t)*C), the tiny-input
+# bypass (sin ~= 2*pi*x via one constant multiply, cos = +1), the quadrant routing, and the renormalize+pack back-end
+# (one _zkf_fixed_to_float per magnitude). So "RTL == reference" is an exact-match check.
+# sincos_true is the correctly-rounded mathematical result via mpmath (faithful rounding, <= 1 ULP).
+# --------------------------------------------------------------------------------------------------
+
+_TRIG_SPECS = None
+
+
+def _trig_spec(wman: int) -> dict:
+    global _TRIG_SPECS
+    if _TRIG_SPECS is None:
+        import zkf_trig_tables
+        _TRIG_SPECS = zkf_trig_tables.SPECS
+    try:
+        return _TRIG_SPECS[wman]
+    except KeyError:
+        raise KeyError(f"no sincos table for WMAN={wman}; run float/zkf_trig.py --emit")
+
+
+def _one_exactly(fmt: ZkfFormat) -> int:
+    return normal(fmt, 0, fmt.bias, 0)  # +1.0
+
+
+def _fixed_to_float_ref(
+    fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0, extra_sticky: int = 0
+) -> int:
+    """Mirror hdl/_zkf_fixed_to_float.v: normalize the unsigned magnitude, extract G/R/S, exp = exp_offset - count,
+    and pack (RTNE). mag == 0 forces +0 unless force_inf is set."""
+    zero_flag, count, aligned = normshift_reference(wmag, mag)
+    significand_value = (aligned >> (wmag - fmt.wman)) & mask(fmt.wman)
+    guard = (aligned >> (wmag - fmt.wman - 1)) & 1
+    round_bit = (aligned >> (wmag - fmt.wman - 2)) & 1
+    sticky = (1 if (aligned & mask(wmag - fmt.wman - 2)) else 0) | (extra_sticky & 1)
+    exp_unbiased = exp_offset - count
+    force_zero = 0 if force_inf else (1 if zero_flag else 0)
+    return pack_reference(fmt, sign, force_zero, force_inf, exp_unbiased, significand_value, guard, round_bit, sticky)
+
+
+def _cordic_rotate(spec: dict, z0: int) -> tuple[int, int, int]:
+    """Bit-exact fixed-point CORDIC rotation (rotation mode), mirroring hdl/_zkf_cordic.v. Runs K = spec['n']
+    iterations -- only ~WMAN/2, not to full precision -- and returns (x_K, y_K, z_K): the partially rotated vector at
+    scale 2**-xf and the small residual angle z_K at scale 2**-zf (turns). The caller finishes the rotation with one
+    linear step. The inverse gain (over K iterations) is folded into the x seed. Shifts truncate toward -inf, matching
+    Verilog `>>>`; the truncation bias over only K iterations stays below the result ULP (the linear correction, not
+    the iteration array, carries the small-angle precision)."""
+    n, kinv, lut = spec["n"], spec["kinv"], spec["lut"]
+    x, y, z = kinv, 0, z0
+    for i in range(n):
+        if z < 0:                                        # sigma = -1
+            x, y, z = x + (y >> i), y - (x >> i), z + lut[i]
+        else:                                            # sigma = +1
+            x, y, z = x - (y >> i), y + (x >> i), z - lut[i]
+    return x, y, z
+
+
+def sincos_reference(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
+    """Returns (sin_bits, cos_bits, quadrant), bit-exact to the CORDIC RTL.
+
+    Reduce |x| mod 1 to an FF-bit fraction -> 2-bit |x| quadrant + quadrant-local t in [0,1); fold the half-quadrant
+    symmetry to bring the local angle into one octant [0, pi/4]; rotate by CORDIC to (cos theta', sin theta'); unmap the
+    octant and quadrant; pack. Small octant-local angles (t' < TSA, where the rotation cannot place the tiny sine)
+    and under-resolution tiny inputs take a linear small-angle path: the small magnitude is 2*pi * (angle in turns)
+    via the generated 2*pi constant, the O(1) companion magnitude is exactly 1. After the octant fold cos(theta') is
+    never small, so only the sine side needs that path."""
+    d = decode(fmt, bits)
+    if d.is_inf:
+        s = canonical_inf(fmt, d.sign)
+        return s, s, 0                                   # +inf -> (+inf,+inf,0); -inf -> (-inf,-inf,0)
+    if d.is_zero:
+        return zero(fmt), _one_exactly(fmt), 0           # sin(0)=+0, cos(0)=+1
+
+    spec = _trig_spec(fmt.wman)
+    xf, zf, const2pi = spec["xf"], spec["zf"], spec["const2pi"]
+    wt = spec["wt"]                                      # quadrant-local coordinate width (FF - 2)
+    ff = wt + 2
+    zg = zf - (wt + 2)                                   # extra angle-accumulator fractional bits (GUARD_ZF)
+    # Uniform magnitude width: the small-angle bypass full product (const2pi * t') is the widest. The CORDIC magnitudes
+    # sit at scale 2**-xf (exp_offset EONE = WMAG-1-XF reads them back as themselves); the bypass/tiny paths shift EONE
+    # by the angle's own scale. Both fixed_to_float calls share one width and exp_offset convention (RTL mirrors it).
+    wmag = const2pi.bit_length() + wt + 1
+    eone = wmag - 1 - xf                                 # exp_offset for a magnitude at scale 2**-xf
+    one = (1 << xf, eone)                                # value +1.0
+    tsa = spec["tsa"]
+    sig = significand(fmt, bits)
+    e = d.exp - fmt.bias
+
+    # -- Reduce |x| mod 1 to the FF-bit fraction; SH = e - WFRAC + FF places |sig| at scale 2**-FF. Using
+    # sin(2*pi*x) = sign*sin(2*pi*|x|), cos(2*pi*x) = cos(2*pi*|x|) collapses the negate of x < 0 to a sin sign flip.
+    sh = e - fmt.wfrac + ff
+    tiny = sh < 0                                        # below the reducer's resolution -> small-angle path on |x|
+    lshamt = 0 if tiny else min(sh, ff)
+    frac_pos = (sig << lshamt) & mask(ff)
+    quadrant_abs = 0 if tiny else (frac_pos >> wt) & 3   # |x| quadrant (0 for tiny: |x| < 1/4)
+    t = sig if tiny else (frac_pos & mask(wt))           # quadrant-local coordinate, scale 2**-WT
+    tzero = (not tiny) and t == 0                        # frac(|x|)*4 integer: a quadrant boundary / exact magnitude
+
+    # -- Octant fold: bring the local angle into [0, pi/4] (t' <= 1/2). theta' in turns at scale 2**-zf is just t'.
+    half = 1 << (wt - 1)
+    oct_flip = (not tiny) and t > half                   # theta in (pi/4, pi/2): use the pi/2 - theta complement
+    tp = ((1 << wt) - t) if oct_flip else t
+
+    # -- Octant-local (sin theta', cos theta') as (magnitude, exp_offset) pairs at the uniform WMAG scale.
+    if tiny:
+        # Under-resolution: sin ~= 2*pi*|x| = 2*pi*|sig|*2**(e-wfrac); cos = +1.
+        sin_tp = (const2pi * sig, eone + e - fmt.wfrac)
+        cos_tp = one
+    elif tzero:
+        sin_tp, cos_tp = (0, eone), one                  # exact quadrant boundary: sin theta' = 0, cos theta' = 1
+    elif tp < tsa:
+        # Small octant-local angle (below the cos=1 limit): sin theta' ~= 2*pi*theta'_turns = 2*pi*tp*2**-(WT+2), cos=1.
+        sin_tp = (const2pi * tp, eone - (wt + 2))
+        cos_tp = one
+    else:
+        # K CORDIC iterations then ONE linear rotation by the residual z_K (radians phi = 2*pi*z_K*2**-zf):
+        #   sin theta' = y_K + x_K*phi,  cos theta' = x_K - y_K*phi.  The correction is a small fix-up added at the
+        #   CORDIC scale 2**-xf: corr = (x_K or y_K)*const2pi*z_K >> (xf+zf)   (const2pi = round(2*pi*2**xf)).
+        xk, yk, zk = _cordic_rotate(spec, tp << zg)      # seed z0 = t' shifted into the finer 2**-zf angle scale
+        # Linear termination corr = x_K*phi (phi = 2*pi*z_K, the tiny residual). Both factors are NARROWED to ~18-bit
+        # multiplier operands so each correction multiply is a single 18x18 DSP: phi keeps PHIW top bits of
+        # (const2pi*z_K)>>zf, and x_K/y_K keep their top XCW bits. The correction is a small fix-up added to the
+        # full-width y_K / x_K, so dropping these low bits stays < 1 ULP (--check confirms). Net: 2 correction DSPs.
+        n = spec["n"]
+        phiw = min(fmt.wman + 6, max(2, xf - n + 2))     # phi top bits (natural width XF-K+1, capped at WMAN+6)
+        phidrop = max(0, (xf - n + 2) - phiw)
+        xcw = fmt.wman + 6                               # x_K/y_K correction-operand top bits
+        xkdrop = (xf + 2) - xcw                          # XW = XF+2; keep the top XCW bits
+        phi = (const2pi * zk) >> (zf + phidrop)          # signed, PHIW bits, scale 2**-(xf - phidrop)
+        corr_s = ((xk >> xkdrop) * phi) >> (xf - xkdrop - phidrop)   # x_K*phi at scale 2**-xf
+        corr_c = ((yk >> xkdrop) * phi) >> (xf - xkdrop - phidrop)
+        sin_tp = (yk + corr_s, eone)
+        cos_tp = (xk - corr_c, eone)
+
+    # -- Unmap the octant (sin theta = cos theta', cos theta = sin theta' when folded), then the |x| quadrant.
+    sin_loc, cos_loc = (cos_tp, sin_tp) if oct_flip else (sin_tp, cos_tp)
+    sin_m, cos_m = (cos_loc, sin_loc) if (quadrant_abs & 1) else (sin_loc, cos_loc)
+    sin_sign = ((quadrant_abs >> 1) & 1) ^ d.sign        # sin is odd: negative x flips it
+    cos_sign = ((quadrant_abs >> 1) ^ quadrant_abs) & 1  # cos is even: unchanged by the sign of x
+    # Output quadrant = floor(frac(x)*4): for x >= 0 the |x| quadrant; for x < 0 it reflects about a turn.
+    if not d.sign:
+        quadrant = quadrant_abs
+    else:
+        quadrant = ((4 - quadrant_abs) & 3) if tzero else (3 - quadrant_abs)
+
+    sin_bits = _fixed_to_float_ref(fmt, sin_sign, sin_m[0], sin_m[1], wmag)
+    cos_bits = _fixed_to_float_ref(fmt, cos_sign, cos_m[0], cos_m[1], wmag)
+    return sin_bits, cos_bits, quadrant
+
+
+def sincos_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
+    """Correctly-rounded (ties-to-even) sin(2*pi*x), cos(2*pi*x), and quadrant = floor(frac(x)*4) mod 4 via mpmath.
+
+    The phase is reduced mod 1 *exactly* with integer arithmetic before the transcendental, so the periodic identity
+    sin(2*pi*x) = sin(2*pi*frac(x)) holds without the catastrophic large-argument cancellation that hits a direct
+    sin(2*pi*x) once x exceeds mpmath's working precision (x can reach ~2**1024 for WEXP=11)."""
+    import mpmath as mp
+    d = decode(fmt, bits)
+    if d.is_inf:
+        s = canonical_inf(fmt, d.sign)
+        return s, s, 0
+    if d.is_zero:
+        return zero(fmt), _one_exactly(fmt), 0
+
+    sig = significand(fmt, bits)
+    e = d.exp - fmt.bias
+    rsh = fmt.wfrac - e                                   # |x| = sig / 2**rsh
+    frac_abs = Fraction(0) if rsh <= 0 else Fraction(sig % (1 << rsh), 1 << rsh)
+    frac = (1 - frac_abs) if (d.sign and frac_abs != 0) else frac_abs   # frac(x) in [0,1)
+    # Decompose into quadrant + local coordinate exactly, then evaluate sin/cos of the first-quadrant local angle. This
+    # keeps mpmath off the cancellation-prone whole-turn angle and makes the exact zeros at the quadrant boundaries
+    # (t_local == 0) exactly 0 / +-1, matching the factored RTL rather than a spurious ~1e-16 residual.
+    q4 = frac * 4
+    quadrant = int(q4)                                    # floor (q4 in [0,4)); already in {0,1,2,3}
+    t_local = q4 - quadrant                               # in [0,1)
+    # Reduce to the octant so mpmath only ever evaluates an angle <= pi/4: no cos-near-pi/2 cancellation (which would
+    # need precision proportional to the exponent, e.g. ~1000 bits at WEXP=11), and tiny angles stay exact.
+    if t_local <= Fraction(1, 2):
+        theta = (mp.pi / 2) * mp.mpf(t_local.numerator) / mp.mpf(t_local.denominator)
+        s0, c0 = mp.sin(theta), mp.cos(theta)
+    else:
+        comp = 1 - t_local
+        theta = (mp.pi / 2) * mp.mpf(comp.numerator) / mp.mpf(comp.denominator)
+        s0, c0 = mp.cos(theta), mp.sin(theta)             # sin(pi/2-theta)=cos, cos(pi/2-theta)=sin
+    sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
+    sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
+    cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
+    return _round_mpf_to_zkf(fmt, sin_v), _round_mpf_to_zkf(fmt, cos_v), quadrant
+
+
+def _round_mpf_to_zkf(fmt: ZkfFormat, v) -> int:
+    """Round an mpmath value to ZKF (ties-to-even); exact zero -> +0."""
+    if v == 0:
+        return zero(fmt)
+    sign = 1 if v < 0 else 0
+    return round_fraction_to_zkf(fmt, sign, abs(_mpf_to_fraction(v)))
+
+
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
     item = decode(fmt, bits)
     if item.exp == 0:

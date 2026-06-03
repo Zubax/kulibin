@@ -1,0 +1,595 @@
+/// Iterative (single-transaction) sine and cosine of a phase in turns (with the reduced quadrant exposed):
+///   sin = sin(2*pi*x), cos = cos(2*pi*x)
+///
+/// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
+/// fixed data-invariant latency and pulses `out_valid` with the result, accepting the next transaction afterward.
+/// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
+/// Behavior:
+///
+///   x finite : sin = sin(2*pi*x), cos = cos(2*pi*x); quadrant = floor(frac(x)*4) mod 4
+///              Exact boundaries take the upper quadrant: 0->0, 1/4->1, 1/2->2, 3/4->3); exact-zero outputs are +0.
+///   x = +inf : sin = +inf, cos = +inf, quadrant = 0.
+///   x = -inf : sin = -inf, cos = -inf, quadrant = 0.
+///
+/// Algorithm (mixed CORDIC; the engine is in _zkf_cordic):
+///
+///  1. Reduce x mod 1 to the FF-bit fraction frac(x) (FF = WMAN + GUARD_FF): top 2 bits = |x| quadrant, low WT = FF-2
+///     bits = quadrant-local coordinate t (local angle (pi/2)*t). Reduce |x| and use the sin sign flip / quadrant
+///     reflection for x < 0. Fold the half-quadrant symmetry to bring the local angle theta' into [0, pi/4].
+///
+///  2. Run K CORDIC rotation iterations (rotation mode) on the folded engine to get (cos theta', sin theta') ~ at
+///     scale 2**-XF and the small residual angle z_K.
+///
+///  3. Finish with ONE linear rotation by the residual: sin = y_K + x_K*phi, cos = x_K - y_K*phi, phi = 2*pi*z_K. The
+///     correction multiplies (the operator's only ones) use the per-WMAN 2*pi constant. Tiny / below-TSA angles take
+///     the linear small-angle bypass (sin = 2*pi*theta'_turns, cos = 1) from the same 2*pi constant.
+///
+///  4. Unmap the octant and |x| quadrant; two _zkf_fixed_to_float back-ends renormalize and round.
+///
+/// Tuning knobs:
+///
+/// WMULTIPLIER: Optional DSP multiplier argument width hint if wide multiplication is used.
+///     By default (zero), the multiplication module will split arguments symmetrically, which is not always optimal.
+///     If nonzero, the multiplier derives the minimal (possibly asymmetric) slice grid so each slice fits a
+///     WMULTIPLIER-bit tile. This can significantly reduce DSP usage and may improve f_max.
+///
+/// UNROLL100={50,100,200,...}: CORDIC iterations per engine cycle x100. Values <100 split operations across cycles.
+///     Choose the maximum value that closes timings. It is forwarded to _zkf_cordic; refer there for details.
+///
+/// STAGE_INPUT={0,1}: Latch the input x before the decode, isolating it from upstream (+1 cycle).
+///
+/// STAGE_PRODUCT: Pipeline depth of the shared correction multiply and its default symmetric split.
+///     See _zkf_pmul for details. Value = latency cycle cost.
+///
+/// STAGE_NORMALIZE: Internal normshift barriers in each _zkf_fixed_to_float. Value = latency cycle cost.
+///
+/// STAGE_PACK={0,1}: Register the _zkf_pack input (insulates the rounder from the normshift cone) (+1 cycle).
+///
+/// STAGE_OUTPUT={0,1}: Register the results ahead of the out_ready hold (+1 cycle).
+
+`default_nettype none
+
+`define ZKF_SINCOS_K (((WMAN+1)/2) + 5)
+`define ZKF_SINCOS_LATENCY \
+    (10 + (2 * STAGE_PRODUCT) + ((`ZKF_SINCOS_K * 100 + UNROLL100 - 1) / UNROLL100) \
+        + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
+
+module zkf_sincos #(
+    parameter WEXP            = 6,      // exponent field width
+    parameter WMAN            = 18,     // significand precision including the hidden bit
+    parameter WMULTIPLIER     = 0,
+    parameter UNROLL100       = 100,
+    parameter STAGE_INPUT     = 0,
+    parameter STAGE_PRODUCT   = 0,
+    parameter STAGE_NORMALIZE = 0,
+    parameter STAGE_PACK      = 0,
+    parameter STAGE_OUTPUT    = 0,
+    parameter LATENCY         = `ZKF_SINCOS_LATENCY  // II in cycles; must equal `ZKF_SINCOS_LATENCY, checked below
+) (
+    input  wire                 clk,
+    input  wire                 rst,
+
+    input  wire                 in_valid,    // start a transaction (sampled only when in_ready)
+    output wire                 in_ready,    // high when idle and able to accept a transaction
+    input  wire [WEXP+WMAN-1:0] x,
+
+    output wire                 out_valid,   // result is ready; held until out_ready (back-pressure)
+    input  wire                 out_ready,   // consumer accepts the result on a cycle where out_valid & out_ready
+    output wire [WEXP+WMAN-1:0] sin,
+    output wire [WEXP+WMAN-1:0] cos,
+    output wire [1:0]           quadrant
+);
+    // verilator coverage_off
+    generate
+        if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
+            _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if (LATENCY != `ZKF_SINCOS_LATENCY) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
+    localparam WFRAC = WMAN - 1;
+    localparam WFULL = WEXP + WMAN;
+    // The CORDIC geometry MUST match zkf_trig.py (guard_ff, n_iters, GUARD_XY/ZF/Z, tsa_bits) and _zkf_cordic_m.
+    localparam integer GUARD_FF   = (12 > (WMAN / 2 + 2)) ? 12 : (WMAN / 2 + 2);
+    localparam integer GUARD_XY   = 8;
+    localparam integer GUARD_ZF   = 6;
+    localparam integer GUARD_Z    = 3;
+    localparam integer FF   = WMAN + GUARD_FF;          // reduced-fraction width: frac(x) at scale 2**-FF
+    localparam integer WT   = FF - 2;                   // quadrant-local coordinate width (top 2 bits = quadrant)
+    localparam integer K    = `ZKF_SINCOS_K;               // CORDIC iterations
+    localparam integer XF   = ((3 * WMAN + 1) / 2) + GUARD_XY;  // x/y fractional scale
+    localparam integer WX   = XF + 2;                   // signed x/y width
+    // Two wide-datapath register stages are always present: an octant-fold register splits the WT-wide octant-fold
+    // negate feeding the engine seed, and a merge-B3 register splits the WMAG-wide quadrant/octant magnitude muxing.
+    // Both are latency-only (the back-end is event-driven off the engine `done`).
+    localparam integer ZG   = GUARD_ZF;                 // angle fractional bits past the coordinate's WT+2
+    localparam integer ZF   = WT + 2 + GUARD_ZF;        // angle accumulator fractional scale
+    localparam integer WZ   = ZF + GUARD_Z;             // signed angle width
+    localparam integer CWB  = XF + 3;                   // 2*pi constant width (round(2*pi*2**XF) has XF+3 bits)
+    localparam integer TSA_BITS = (WT + 2) - ((WMAN + 1) / 2) - 3;  // small-angle handoff: t' < 2**TSA_BITS
+    localparam integer WMAG = CWB + WT + 1;             // uniform magnitude width (small-angle full product is widest)
+    localparam integer EONE = WMAG - 1 - XF;            // exp_offset reading a 2**-XF-scaled magnitude back as itself
+    localparam integer WOP  = (WMAN > (TSA_BITS + 1)) ? WMAN : (TSA_BITS + 1);  // small-angle operand width
+    // Correction-multiply operand widths (mirror tb/zkf_model.py): phi keeps WPHI top bits of (const2pi*z_K)>>zf,
+    // x_K/y_K keep WXC top bits -- so each correction multiply is small (~18 bits).
+    localparam integer PHI_NAT      = XF - K + 2;
+    localparam integer WPHI         = (WMAN + 6 < PHI_NAT) ? (WMAN + 6) : ((PHI_NAT > 2) ? PHI_NAT : 2);
+    localparam integer PHIDROP      = (PHI_NAT - WPHI > 0) ? (PHI_NAT - WPHI) : 0;
+    localparam integer WXC          = WMAN + 6;
+    localparam integer XKDROP       = WX - WXC;
+    localparam integer CORR_SHIFT   = XF - XKDROP - PHIDROP;
+
+    localparam integer BIAS     = (1 << (WEXP - 1)) - 1;
+    localparam integer SH_BASE  = BIAS - GUARD_FF - 1;
+    localparam integer WE       = WEXP + 1;              // signed unbiased exponent e = exp - BIAS
+    localparam integer WEU_RAW  = $clog2(WMAG + 1) + 2;
+    localparam integer WEU      = (WEU_RAW > (WEXP + 3)) ? WEU_RAW : (WEXP + 3);
+    // Engine sideband (carried through the CORDIC): {e, quad_abs, oct_flip, tzero, tiny, sa_sel, is_inf, sign}.
+    // The bypass operand is NOT carried here -- const2pi*operand is computed early (during the CORDIC) and latched,
+    // so the wide operand stays out of the engine's per-stage sideband registers.
+    localparam integer WSB      = WE + 8;
+
+    localparam integer WLSH               = $clog2(FF + 1);
+    localparam integer WSH                = $clog2((1 << (WEXP - 1)) + GUARD_FF + 2) + 2;
+    localparam signed [WSH-1:0] SH_BASE_S = SH_BASE[WSH-1:0];
+    localparam signed [WSH:0]   SH_HI_S   = SH_BASE + FF;   // SH_BASE + FF, the upper clamp bound, as a signed constant
+
+    // ============================================================================================================
+    // Front-end: accept a transaction, decode + reduce |x| mod 1, octant-fold, and start the folded CORDIC engine.
+    // ============================================================================================================
+    reg    busy;                              // a transaction is in flight (engine or back-end)
+    wire   accept = in_valid & in_ready;
+    assign in_ready = ~busy;
+
+    // STAGE_INPUT: latch the input x at accept, isolating the decode from the upstream input path.
+    wire             si_valid;
+    wire [WFULL-1:0] si_x;
+    generate
+        if (STAGE_INPUT == 0) begin : g_sin_comb
+            assign si_valid = accept; assign si_x = x;
+        end else begin : g_sin_reg
+            reg             r_si_valid;
+            reg [WFULL-1:0] r_si_x;
+            always @(posedge clk) begin
+                if (rst) r_si_valid <= 1'b0;
+                else     r_si_valid <= accept;
+                r_si_x <= x;
+            end
+            assign si_valid = r_si_valid; assign si_x = r_si_x;
+        end
+    endgenerate
+
+    // Decode (combinational): the raw fields, the shift-amount subtract sh = exp - SH_BASE, and the two clamp bounds.
+    // The bounds are PARALLEL comparisons of exp against constants (e_lo = exp < SH_BASE i.e. sh < 0; e_hi = exp >
+    // SH_BASE+FF i.e. sh > FF), so the shift-amount mux below is NOT a second carry chain in series with the subtract.
+    wire [WEXP-1:0]       e0  = si_x[WFULL-2:WFRAC];
+    wire signed [WSH-1:0] sh0 = $signed({{(WSH-WEXP){1'b0}}, e0}) - SH_BASE_S;
+    wire                  e_lo = $signed({1'b0, e0}) <  SH_BASE_S;   // exp < SH_BASE  (sh < 0: tiny -> lshamt 0)
+    wire                  e_hi = $signed({1'b0, e0}) >  SH_HI_S;     // exp > SH_BASE+FF (sh > FF: clamp lshamt = FF)
+    wire                  d_sign    = si_x[WFULL-1];
+    wire [WEXP-1:0]       d_exp     = e0;
+    wire [WFRAC-1:0]      d_frac    = si_x[WFRAC-1:0];
+    wire                  d_is_left = ~e_lo;
+    wire                  d_valid   = si_valid;
+
+    // Stage R1: latch + decode + clamped shift amount. Registered so the wide barrel shift is its own stage.
+    reg              r1_valid;                           // a freshly accepted transaction is in R1
+    reg              r1_sign, r1_is_inf, r1_is_left;
+    reg [WMAN-1:0]   r1_sig;
+    reg [WLSH-1:0]   r1_lshamt;
+    reg signed [WE-1:0] r1_e;
+    // verilator coverage_off
+    wire             is_zero = ~|d_exp;
+    wire             is_inf  =  &d_exp;
+    wire [WMAN-1:0]  sig_in  = is_zero ? {WMAN{1'b0}} : {1'b1, d_frac};
+    wire signed [WE-1:0]  e_in   = $signed({1'b0, d_exp}) - $signed(BIAS[WE-1:0]);
+    // Shift amount clamped to [0, FF]: the e_lo / e_hi range tests are precomputed (parallel to the subtract), so this
+    // is just a 3:1 mux selecting 0, FF, or the low bits of sh -- no compare in series with the subtract.
+    wire [WLSH-1:0]  lshamt  = e_lo ? {WLSH{1'b0}} : e_hi ? FF[WLSH-1:0] : sh0[WLSH-1:0];
+    // verilator coverage_on
+    always @(posedge clk) begin
+        if (rst) r1_valid <= 1'b0;
+        else     r1_valid <= d_valid;
+        r1_sign    <= d_sign;
+        r1_is_inf  <= is_inf;
+        r1_is_left <= d_is_left;
+        r1_sig     <= sig_in;
+        r1_lshamt  <= lshamt;
+        r1_e       <= e_in;
+    end
+
+    // Stage R2 combinational: the wide barrel shift -> quadrant / in-octant coordinate. The shift is the long cone,
+    // so its outputs are registered (R2) before the octant fold.
+    // verilator coverage_off
+    wire [FF-1:0] frac_pos  = {{(FF-WMAN){1'b0}}, r1_sig} << r1_lshamt;
+    wire [1:0]    quad_abs  = r1_is_inf ? 2'b00 : frac_pos[FF-1:FF-2];
+    wire [WT-1:0] t_abs     = frac_pos[WT-1:0];
+    wire          tzero_c   = ~|t_abs;
+    wire          tiny_c    = ~r1_is_left;
+    // verilator coverage_on
+
+    // Stage R2 register: hold the barrel-shift result so the octant fold below is a fresh combinational stage.
+    reg              r2_valid;
+    reg              r2_sign, r2_is_inf, r2_tiny, r2_tzero;
+    reg [1:0]        r2_quad;
+    reg [WT-1:0]     r2_t;
+    reg [WMAN-1:0]   r2_sig;
+    reg signed [WE-1:0] r2_e;
+    always @(posedge clk) begin
+        if (rst) r2_valid <= 1'b0;
+        else     r2_valid <= r1_valid;
+        r2_sign   <= r1_sign;
+        r2_is_inf <= r1_is_inf;
+        r2_tiny   <= tiny_c;
+        r2_tzero  <= tzero_c;
+        r2_quad   <= quad_abs;
+        r2_t      <= t_abs;
+        r2_sig    <= r1_sig;
+        r2_e      <= r1_e;
+    end
+
+    // Octant fold (combinational from R2): the pi/2-complement 2**WT - r2_t is a WT-wide two's-complement negate
+    // (the +1 is needed for relative accuracy of the small reflected sine near the fold boundary), whose carry chain
+    // is the dominant front-end cone on wide datapaths.
+    // verilator coverage_off
+    wire          oct_flip_c = (~r2_tiny) & (r2_t > {1'b1, {(WT-1){1'b0}}});
+    wire [WT-1:0] tp_w_c     = oct_flip_c ? (~r2_t + 1'b1) : r2_t;
+    // verilator coverage_on
+
+    // Fold register stage: hold the folded coordinate so the WT-wide negate above is its own stage,
+    // isolated from the seed-pack + engine-latch cone below.
+    wire                 f_valid, f_octflip, f_tiny, f_tzero, f_sign, f_inf;
+    wire [WT-1:0]        f_tpw;
+    wire [WMAN-1:0]      f_sig;
+    wire [1:0]           f_quad;
+    wire signed [WE-1:0] f_e;
+    reg                  fr_valid, fr_octflip, fr_tiny, fr_tzero, fr_sign, fr_inf;
+    reg [WT-1:0]         fr_tpw;
+    reg [WMAN-1:0]       fr_sig;
+    reg [1:0]            fr_quad;
+    reg signed [WE-1:0]  fr_e;
+    always @(posedge clk) begin
+        if (rst) fr_valid <= 1'b0;
+        else     fr_valid <= r2_valid;
+        fr_octflip <= oct_flip_c; fr_tpw <= tp_w_c; fr_tiny <= r2_tiny; fr_tzero <= r2_tzero;
+        fr_sign <= r2_sign; fr_inf <= r2_is_inf; fr_sig <= r2_sig; fr_quad <= r2_quad; fr_e <= r2_e;
+    end
+    assign f_valid = fr_valid; assign f_octflip = fr_octflip; assign f_tpw = fr_tpw;
+    assign f_tiny = fr_tiny; assign f_tzero = fr_tzero; assign f_sign = fr_sign; assign f_inf = fr_inf;
+    assign f_sig = fr_sig; assign f_quad = fr_quad; assign f_e = fr_e;
+
+    // Seed pack (combinational from the fold stage): small-angle select, bypass operand, seed angle z0, sideband.
+    // Small-angle handoff when the octant-local coordinate is below 2**TSA_BITS, i.e. its bits at TSA_BITS and above
+    // are all zero. Written as a slice reduction rather than `f_tpw < (1 << TSA_BITS)`: the unsized `1 << TSA_BITS`
+    // collapses to 0 once TSA_BITS >= 32 (WMAN >= 34, e.g. the synthesized WMAN=36) under standard constant sizing,
+    // which would silently disable the handoff -- and tools differ on whether context widens it. The slice form is
+    // exact and width-independent on every tool.
+    // verilator coverage_off
+    wire          sa_sel   = f_tiny | f_tzero | (~|f_tpw[WT-1:TSA_BITS]);
+    wire [WOP-1:0] operand = f_tiny ? {{(WOP-WMAN){1'b0}}, f_sig} : f_tpw[WOP-1:0];
+    wire signed [WZ-1:0] z0 = $signed({{(WZ-WT-ZG){1'b0}}, f_tpw, {ZG{1'b0}}});
+    wire [WSB-1:0] sb_red = {f_e, f_quad, f_octflip, f_tzero, f_tiny, sa_sel, f_inf, f_sign};
+    // verilator coverage_on
+    wire eng_start = f_valid;
+
+    // ============================================================================================================
+    // Folded CORDIC engine (rotation mode) selected per WMAN. start = eng_start; carries the sideband to done.
+    // ============================================================================================================
+    wire               cd_done;
+    wire [WSB-1:0]     cd_sb;
+    wire signed [WX-1:0] cd_xn, cd_yn;
+    wire signed [WZ-1:0] cd_zn;
+    wire [CWB-1:0]     const2pi;
+    `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
+        _zkf_cordic_m``W #(.MODE(0), .UNROLL100(UNROLL100), .WSB(WSB)) u_cordic ( \
+            .clk(clk), .rst(rst), .start(eng_start), .sb_in(sb_red), \
+            .x0({WX{1'b0}}), .y0({WX{1'b0}}), .z0(z0), \
+            .busy(), .done(cd_done), .sb_out(cd_sb), .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(const2pi));
+    generate
+        if (1'b0) begin : g_none
+        `ZKF_SINCOS_CORE(11)
+        `ZKF_SINCOS_CORE(12)
+        `ZKF_SINCOS_CORE(13)
+        `ZKF_SINCOS_CORE(14)
+        `ZKF_SINCOS_CORE(15)
+        `ZKF_SINCOS_CORE(16)
+        `ZKF_SINCOS_CORE(17)
+        `ZKF_SINCOS_CORE(18)
+        `ZKF_SINCOS_CORE(19)
+        `ZKF_SINCOS_CORE(20)
+        `ZKF_SINCOS_CORE(21)
+        `ZKF_SINCOS_CORE(22)
+        `ZKF_SINCOS_CORE(23)
+        `ZKF_SINCOS_CORE(24)
+        `ZKF_SINCOS_CORE(25)
+        `ZKF_SINCOS_CORE(26)
+        `ZKF_SINCOS_CORE(27)
+        `ZKF_SINCOS_CORE(28)
+        `ZKF_SINCOS_CORE(29)
+        `ZKF_SINCOS_CORE(30)
+        `ZKF_SINCOS_CORE(31)
+        `ZKF_SINCOS_CORE(32)
+        `ZKF_SINCOS_CORE(33)
+        `ZKF_SINCOS_CORE(34)
+        `ZKF_SINCOS_CORE(35)
+        `ZKF_SINCOS_CORE(36)
+        `ZKF_SINCOS_CORE(37)
+        `ZKF_SINCOS_CORE(38)
+        `ZKF_SINCOS_CORE(39)
+        `ZKF_SINCOS_CORE(40)
+        `ZKF_SINCOS_CORE(41)
+        `ZKF_SINCOS_CORE(42)
+        `ZKF_SINCOS_CORE(43)
+        `ZKF_SINCOS_CORE(44)
+        `ZKF_SINCOS_CORE(45)
+        `ZKF_SINCOS_CORE(46)
+        `ZKF_SINCOS_CORE(47)
+        `ZKF_SINCOS_CORE(48)
+        `ZKF_SINCOS_CORE(49)
+        `ZKF_SINCOS_CORE(50)
+        `ZKF_SINCOS_CORE(51)
+        `ZKF_SINCOS_CORE(52)
+        `ZKF_SINCOS_CORE(53)
+        end else begin : g_unsupported
+            _zkf_invalid_wman_out_of_range u_invalid();  // WMAN outside [11, 53]
+        end
+    endgenerate
+    `undef ZKF_SINCOS_CORE
+
+    // ============================================================================================================
+    // Back-end: one SHARED, pipelined multiplier time-shared over four products, told apart by a 2-bit sideband tag:
+    //   BYP : const2pi * operand     -- the small-angle bypass magnitude. operand is known pre-CORDIC, so BYP is issued
+    //         during the CORDIC (the multiply is otherwise idle then) and latched; the wide operand need not ride the
+    //         engine sideband. The pipelined multiply keeps it in flight independently of the later products.
+    //   PHI : tprod = const2pi * z_K -- the residual-angle product; issued at cd_done (z_K only then exists).
+    //   S,C : corr_s = x_K * phi, corr_c = y_K * phi,  phi = tprod >> (ZF+PHIDROP) narrowed     (~2*pi*z_K)
+    // PHI is serial (S and C both need phi), but S and C are mutually independent and are issued back-to-back into the
+    // pipelined multiply (II=1), overlapping in the pipe; the tag routes each result. The last product (C) folds
+    // straight into sin = y_K + corr_s / cos = x_K - corr_c the cycle it returns; the octant-local magnitudes then go
+    // to the merge.
+    // WCP sizes the multiply's B operand to hold both the narrowed residual z_K and the bypass operand (WOP wide).
+    localparam integer WCP = ((WOP > (ZF - K)) ? WOP : (ZF - K)) + 2;   // residual / bypass-operand width on B
+    localparam integer WA  = ((CWB + 1) > WXC) ? (CWB + 1) : WXC;       // shared-multiply operand a
+    localparam integer WB  = (WCP > WPHI) ? WCP : WPHI;                 // shared-multiply operand b
+    localparam integer WP  = WA + WB;                                   // shared-multiply product
+    localparam integer P_IDLE = 0, P_PHI = 1, P_SC = 2;
+    localparam [1:0] BYP_TAG = 2'd0, PHI_TAG = 2'd1, S_TAG = 2'd2, C_TAG = 2'd3;  // multiply sideband product tags
+
+    reg [2:0]            mphase;
+    reg [1:0]            sc_iss;                // S/C issue step: 0 -> issue S, 1 -> issue C, 2 -> done issuing
+    reg signed [WX-1:0]  e_xn, e_yn;
+    reg [WSB-1:0]        e_sb;
+    reg signed [WP-1:0]  tprod_r;        // PHI product const2pi*z_K registered; phi = tprod_r >> (ZF+PHIDROP)
+    reg signed [WP-1:0]  corr_s_r;       // S product (x_K*phi) registered; C product is consumed straight into b2_cos
+    reg [WMAG-1:0]       bypass_mag_r;   // const2pi*operand, computed during the CORDIC (small-angle bypass magnitude)
+
+    // verilator coverage_off
+    wire signed [WCP-1:0] cphi_op   = $signed(cd_zn[WCP-1:0]);          // narrowed CORDIC residual z_K (corr. angle)
+    wire signed [WPHI-1:0] phi      = tprod_r >>> (ZF + PHIDROP);       // ~2*pi*z_K, narrowed
+    wire signed [WXC-1:0]  xc       = e_xn >>> XKDROP;
+    wire signed [WXC-1:0]  yc       = e_yn >>> XKDROP;
+    // Shared-multiply operand select. a = const2pi for the const products (BYP during the CORDIC, PHI at cd_done);
+    // x_K / y_K for the S / C corrections. b = bypass operand (BYP), narrowed residual z_K (PHI), or phi (S/C).
+    wire                  issue_c   = (mphase == P_SC) && (sc_iss == 2'd1);
+    wire signed [WA-1:0]  mul_a_sel = (mphase != P_SC) ? $signed({{(WA-CWB){1'b0}}, const2pi})
+                                    : issue_c          ? $signed({{(WA-WXC){yc[WXC-1]}}, yc})
+                                    :                    $signed({{(WA-WXC){xc[WXC-1]}}, xc});
+    // In P_IDLE the multiply issues BYP at eng_start (b = bypass operand) and PHI at cd_done (b = the residual z_K read
+    // straight off the engine output cd_zn -- these two events are on distinct cycles); S/C present phi in P_SC.
+    wire signed [WB-1:0]  mul_b_sel = (mphase != P_IDLE) ? $signed({{(WB-WPHI){phi[WPHI-1]}}, phi})
+                                    : cd_done            ? $signed({{(WB-WCP){cphi_op[WCP-1]}}, cphi_op})
+                                    :                      $signed({{(WB-WOP){1'b0}}, operand});
+    wire [1:0]            mul_sb_in = (mphase != P_IDLE) ? (issue_c ? C_TAG : S_TAG)
+                                    : cd_done            ? PHI_TAG : BYP_TAG;
+    wire signed [WP-1:0]   pmul_p;             // exact product of the current phase's operands (shared multiply)
+    // verilator coverage_on
+
+    // One multiplier time-shared over the products. Up to two products are in flight at once (BYP overlaps the CORDIC;
+    // S/C are pipelined two-deep); the 2-bit sideband tag (sb_in -> sb_out) carried in step with each product routes
+    // its result. BYP and PHI are issued combinationally (at eng_start and cd_done, both in P_IDLE, off the engine
+    // outputs); S and C are issued by the FSM in P_SC.
+    wire       mul_valid;
+    wire [1:0] mul_sb_out;
+    wire       mul_in_valid = ((mphase == P_IDLE) && (eng_start | cd_done)) | ((mphase == P_SC) && (sc_iss < 2'd2));
+    _zkf_pmul #(
+        .WA(WA), .WB(WB), .A_SIGNED(1), .B_SIGNED(1), .WSB(2), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+    ) u_pmul (
+        .clk(clk), .rst(rst), .in_valid(mul_in_valid), .sb_in(mul_sb_in),
+        .a(mul_a_sel), .b(mul_b_sel),
+        .out_valid(mul_valid), .sb_out(mul_sb_out), .p(pmul_p)
+    );
+
+    reg signed [WX-1:0]  b2_sin, b2_cos;
+    reg [WMAG-1:0]       b2_sa;
+    reg [WSB-1:0]        b2_sb;
+    reg                  b2_valid;
+    always @(posedge clk) begin
+        if (rst) begin
+            mphase    <= P_IDLE[2:0];
+            sc_iss    <= 2'd0;
+            b2_valid  <= 1'b0;
+        end else begin
+            b2_valid  <= 1'b0;
+            if (mul_valid) begin
+                case (mul_sb_out)
+                    BYP_TAG: bypass_mag_r <= pmul_p;   // sign-extend the non-negative WP-bit product to WMAG (WMAG>WP)
+                    PHI_TAG: tprod_r      <= pmul_p;
+                    S_TAG:   corr_s_r     <= pmul_p;
+                    default: ;                                   // C_TAG: consumed directly into b2_cos below
+                endcase
+            end
+            case (mphase)
+                P_IDLE[2:0]: if (cd_done) begin                  // PHI issued combinationally this cycle (off cd_zn)
+                    e_xn <= cd_xn; e_yn <= cd_yn; e_sb <= cd_sb;
+                    mphase    <= P_PHI[2:0];
+                end
+                P_PHI[2:0]: if (mul_valid && (mul_sb_out == PHI_TAG)) begin   // phi captured above; begin S/C
+                    mphase <= P_SC[2:0];
+                    sc_iss <= 2'd0;
+                end
+                P_SC[2:0]: begin
+                    if (sc_iss < 2'd2) sc_iss <= sc_iss + 2'd1;  // issue S (sc_iss 0), then C (sc_iss 1), next cycle
+                    if (mul_valid && (mul_sb_out == C_TAG)) begin   // C is last: form sin/cos now, no PACK cycle
+                        b2_sin   <= e_yn + (corr_s_r >>> CORR_SHIFT);   // y_K + x_K*phi  (corr_s registered)
+                        b2_cos   <= e_xn - (pmul_p   >>> CORR_SHIFT);   // x_K - y_K*phi  (C product, live this cycle)
+                        b2_sa    <= bypass_mag_r;           // const2pi*operand, computed early during the CORDIC
+                        b2_sb    <= e_sb;
+                        b2_valid <= 1'b1;
+                        mphase   <= P_IDLE[2:0];
+                    end
+                end
+                default: mphase <= P_IDLE[2:0];
+            endcase
+        end
+    end
+
+    // Merge: octant + quadrant unmap, signs, exp_offset; then the two _zkf_fixed_to_float back-ends.
+    wire signed [WE-1:0] e_o     = $signed(b2_sb[WSB-1 -: WE]);
+    wire [1:0]           quad_o  = b2_sb[7 -: 2];
+    wire                 oct_o   = b2_sb[5];
+    wire                 tzero_o = b2_sb[4];
+    wire                 tiny_o  = b2_sb[3];
+    wire                 sa_o    = b2_sb[2];
+    wire                 inf_o   = b2_sb[1];
+    wire                 sign_o  = b2_sb[0];
+
+    localparam signed [WEU-1:0] EONE_S       = EONE;
+    localparam signed [WEU-1:0] EONE_M_WFRAC = EONE - WFRAC;
+    localparam signed [WEU-1:0] EONE_M_ZFT   = EONE - (WT + 2);
+    // verilator coverage_off
+    wire signed [WEU-1:0] e_ext = $signed({{(WEU-WE){e_o[WE-1]}}, e_o});
+    wire [WMAG-1:0] sin_tp_mag = sa_o ? (tzero_o ? {WMAG{1'b0}} : b2_sa)        : {{(WMAG-XF-1){1'b0}}, b2_sin[XF:0]};
+    wire [WMAG-1:0] cos_tp_mag = sa_o ? {{(WMAG-XF-1){1'b0}}, 1'b1, {XF{1'b0}}} : {{(WMAG-XF-1){1'b0}}, b2_cos[XF:0]};
+    wire signed [WEU-1:0] sin_tp_exp = (!sa_o | tzero_o) ? EONE_S
+                                     : tiny_o            ? (e_ext + EONE_M_WFRAC)
+                                     :                     EONE_M_ZFT;
+    // verilator coverage_on
+
+    wire [WMAG-1:0]       sin_loc_mag = oct_o ? cos_tp_mag : sin_tp_mag;
+    wire signed [WEU-1:0] sin_loc_exp = oct_o ? EONE_S     : sin_tp_exp;
+    wire [WMAG-1:0]       cos_loc_mag = oct_o ? sin_tp_mag : cos_tp_mag;
+    wire signed [WEU-1:0] cos_loc_exp = oct_o ? sin_tp_exp : EONE_S;
+    wire [WMAG-1:0]       sin_mag = quad_o[0] ? cos_loc_mag : sin_loc_mag;
+    wire signed [WEU-1:0] sin_exp = quad_o[0] ? cos_loc_exp : sin_loc_exp;
+    wire [WMAG-1:0]       cos_mag = quad_o[0] ? sin_loc_mag : cos_loc_mag;
+    wire signed [WEU-1:0] cos_exp = quad_o[0] ? sin_loc_exp : cos_loc_exp;
+    wire sin_sgn = inf_o ? sign_o : (quad_o[1] ^ sign_o);
+    wire cos_sgn = inf_o ? sign_o : (quad_o[1] ^ quad_o[0]);
+    wire [1:0] quad_out = inf_o   ? 2'b00
+                        : ~sign_o ? quad_o
+                        : tzero_o ? (2'd0 - quad_o)
+                        :           (2'd3 - quad_o);
+
+    // Stage B3: register the merged magnitude/exponent/sign/quadrant so the wide octant + quadrant magnitude muxing
+    // (WMAG-bit 4:1 trees) is its own stage.
+    wire                  m_valid, m_inf, m_sin_sgn, m_cos_sgn;
+    wire [WMAG-1:0]       m_sin_mag, m_cos_mag;
+    wire signed [WEU-1:0] m_sin_exp, m_cos_exp;
+    wire [1:0]            m_quad;
+    reg                  b3_valid, b3_inf, b3_sin_sgn, b3_cos_sgn;
+    reg [WMAG-1:0]       b3_sin_mag, b3_cos_mag;
+    reg signed [WEU-1:0] b3_sin_exp, b3_cos_exp;
+    reg [1:0]            b3_quad;
+    always @(posedge clk) begin
+        if (rst) b3_valid <= 1'b0;
+        else     b3_valid <= b2_valid;
+        b3_inf <= inf_o; b3_sin_sgn <= sin_sgn; b3_cos_sgn <= cos_sgn;
+        b3_sin_mag <= sin_mag; b3_cos_mag <= cos_mag;
+        b3_sin_exp <= sin_exp; b3_cos_exp <= cos_exp; b3_quad <= quad_out;
+    end
+    assign m_valid = b3_valid; assign m_inf = b3_inf;
+    assign m_sin_sgn = b3_sin_sgn; assign m_cos_sgn = b3_cos_sgn;
+    assign m_sin_mag = b3_sin_mag; assign m_cos_mag = b3_cos_mag;
+    assign m_sin_exp = b3_sin_exp; assign m_cos_exp = b3_cos_exp; assign m_quad = b3_quad;
+
+    // The two _zkf_fixed_to_float back-ends pulse `be_valid` with the (sin, cos, quadrant) result.
+    wire             be_valid;
+    wire [WFULL-1:0] be_sin, be_cos;
+    wire [1:0]       be_quad;
+    _zkf_fixed_to_float #(
+        .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
+        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .SB_W(2),
+        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
+    ) u_sin (
+        .clk(clk), .rst(rst),
+        .in_valid(m_valid), .sign(m_sin_sgn), .force_zero(1'b0), .force_inf(m_inf),
+        .exp_offset(m_sin_exp), .mag(m_sin_mag), .sb_in(m_quad),
+        .out_valid(be_valid), .y(be_sin), .sb_out(be_quad)
+    );
+    _zkf_fixed_to_float #(
+        .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
+        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .SB_W(2),
+        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
+    ) u_cos (
+        .clk(clk), .rst(rst),
+        .in_valid(m_valid), .sign(m_cos_sgn), .force_zero(1'b0), .force_inf(m_inf),
+        .exp_offset(m_cos_exp), .mag(m_cos_mag), .sb_in(2'b00),
+        .out_valid(), .y(be_cos), .sb_out()
+    );
+
+    // Output handshake with back-pressure. Only one transaction is ever in flight (busy stalls the engine until the
+    // finished result is taken), so the result simply waits for out_ready. STAGE_OUTPUT selects WHERE it is held:
+    //   0: combinational output -- be_* is presented on its valid cycle; a hold register catches it while out_ready is
+    //      low (no added latency when out_ready is high, the common case the published II assumes).
+    //   1: a hard output register drives sin/cos/quadrant DIRECTLY (no combinational logic after it); it captures the
+    //      result and holds it until out_ready (+1 cycle). This is the clean version a downstream stage registers off.
+    generate
+        if (STAGE_OUTPUT == 0) begin : g_out_comb
+            reg              pending;
+            reg [WFULL-1:0]  hold_sin, hold_cos;
+            reg [1:0]        hold_quad;
+            always @(posedge clk) begin
+                if (rst) pending <= 1'b0;
+                else if (be_valid & ~out_ready) begin
+                    pending  <= 1'b1;
+                    hold_sin <= be_sin; hold_cos <= be_cos; hold_quad <= be_quad;
+                end else if (pending & out_ready) begin
+                    pending  <= 1'b0;
+                end
+            end
+            assign out_valid = be_valid | pending;
+            assign sin       = pending ? hold_sin : be_sin;
+            assign cos       = pending ? hold_cos : be_cos;
+            assign quadrant  = pending ? hold_quad : be_quad;
+        end else begin : g_out_reg
+            reg              r_valid;
+            reg [WFULL-1:0]  r_sin, r_cos;
+            reg [1:0]        r_quad;
+            always @(posedge clk) begin
+                if (rst)            r_valid <= 1'b0;
+                else if (be_valid)  r_valid <= 1'b1;     // result captured -> output valid next cycle
+                else if (out_ready) r_valid <= 1'b0;     // consumed -> clear (single transaction: no new result yet)
+                if (be_valid) begin r_sin <= be_sin; r_cos <= be_cos; r_quad <= be_quad; end
+            end
+            assign out_valid = r_valid;
+            assign sin       = r_sin;
+            assign cos       = r_cos;
+            assign quadrant  = r_quad;
+        end
+    endgenerate
+
+    // busy: set on accept, cleared when the consumer takes the result (out_valid & out_ready). One transaction in
+    // flight at a time, so the engine/back-end stall while a finished result waits for out_ready (II = latency).
+    always @(posedge clk) begin
+        if (rst)                        busy <= 1'b0;
+        else if (accept)                busy <= 1'b1;
+        else if (out_valid & out_ready) busy <= 1'b0;
+    end
+
+    // verilator coverage_off
+    // Intentionally-partial nets: the engine residual angle cd_zn drives the linear correction only through its low
+    // bits (cd_zn[WCP-1:0]), and the octant-local magnitudes b2_sin/b2_cos are read only as their low XF+1 bits, so the
+    // upper bits never reach an output. Reduction-xor the full vectors so the leftover bits read as used.
+    wire _unused = ^{cd_zn, b2_sin, b2_cos};
+    // verilator coverage_on
+endmodule
+
+`undef ZKF_SINCOS_LATENCY
+`undef ZKF_SINCOS_K
+`default_nettype wire

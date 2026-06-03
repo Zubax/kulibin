@@ -1269,6 +1269,103 @@ endmodule
     )
 
 
+def write_sincos_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    path.write_text(
+        f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    output wire                 in_ready,
+    input  wire [{wfull - 1}:0] x,
+    output wire                 out_valid,
+    input  wire                 out_ready,
+    output wire [{wfull - 1}:0] sin,
+    output wire [{wfull - 1}:0] cos,
+    output wire [1:0]           quadrant
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg                 r_out_ready;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_x;
+
+    wire                 dut_in_ready;
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_sin;
+    wire [{wfull - 1}:0] dut_cos;
+    wire [1:0]           dut_quadrant;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_in_ready;
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_sin;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_cos;
+    {SYNTH_REG_ATTR}
+    reg [1:0]           r_quadrant;
+
+    assign in_ready  = r_in_ready;
+    assign out_valid = r_out_valid;
+    assign sin       = r_sin;
+    assign cos       = r_cos;
+    assign quadrant  = r_quadrant;
+
+    zkf_sincos #(
+        .WEXP({spec.wexp}),
+        .WMAN({spec.wman}),
+        .WMULTIPLIER({spec.wmultiplier}),
+        .UNROLL100({spec.unroll100}),
+        .STAGE_INPUT({spec.stage_input}),
+        .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_PACK({spec.stage_pack}),
+        .STAGE_OUTPUT({spec.stage_output}),
+        .LATENCY({register_stages(spec)})
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .in_ready(dut_in_ready),
+        .x(r_x),
+        .out_valid(dut_out_valid),
+        .out_ready(r_out_ready),
+        .sin(dut_sin),
+        .cos(dut_cos),
+        .quadrant(dut_quadrant)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_in_ready  <= 1'b0;
+            r_out_valid <= 1'b0;
+            r_out_ready <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_in_ready  <= dut_in_ready;
+            r_out_valid <= dut_out_valid;
+            r_out_ready <= out_ready;
+        end
+
+        r_x        <= x;
+        r_sin      <= dut_sin;
+        r_cos      <= dut_cos;
+        r_quadrant <= dut_quadrant;
+    end
+endmodule
+
+`default_nettype wire
+"""
+    )
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -1302,5 +1399,7 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":
         write_log2_wrapper(spec, path)
+    elif spec.kind == "sincos":
+        write_sincos_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")

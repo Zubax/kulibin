@@ -9,6 +9,7 @@ is the latency verified by the test suite, not a second copy of the arithmetic.
 from __future__ import annotations
 
 from zkf_trans_tables import SPECS as TRANS_SPECS
+from zkf_trig_tables import SPECS as TRIG_SPECS
 
 
 def _enabled(value: int) -> int:
@@ -168,10 +169,45 @@ def log2_latency(
     )
 
 
+def sincos_latency(
+    wman: int,
+    *,
+    unroll100: int = 100,
+    stage_input: int = 0,
+    stage_output: int = 0,
+    stage_product: int = 0,
+    stage_normalize: int = 0,
+    stage_pack: int = 0,
+    **_ignored: int,
+) -> int:
+    # Iterative (folded) CORDIC initiation interval = latency, measured accept -> out_valid. The cocotb testbench
+    # asserts the RTL matches this exactly, and the RTL LATENCY parameter (zkf_sincos.v) is the same closed form.
+    # Constant 10 = 1 (R1 decode) + 1 (R2 barrel shift) + 1 (engine start) + 1 (engine done)
+    #   + 4 (shared-multiply micro-sequence at STAGE_PRODUCT=0: PHI (issued on the cd_done cycle off cd_zn) + S/C
+    #        pipelined two-deep, the C product folding straight into sin/cos; no separate PACK cycle)
+    #   + 2 (always-on wide-datapath stages: octant-fold + merge-B3). The exponent decode is combinational.
+    # Each STAGE_PRODUCT unit adds one cycle to PHI and one across the pipelined S/C pair = 2*STAGE_PRODUCT.
+    # Then: rotation cycles = ceil(K*100/UNROLL100) (UNROLL100 = iterations/cycle x100: 50 = half-rate 2-cycle engine,
+    # 100 = 1/cycle, 200/300/400 = 2/3/4 per cycle); the optional STAGE_INPUT / STAGE_OUTPUT register stages (+1 each);
+    # plus STAGE_NORMALIZE + STAGE_PACK. out_ready adds nothing when held high.
+    if stage_product not in (0, 1, 2, 3):
+        raise ValueError(f"stage_product must be 0..3, got {stage_product}")
+    if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
+        raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
+    k = TRIG_SPECS[wman]["n"]
+    iter_cycles = (k * 100 + unroll100 - 1) // unroll100
+    return (
+        10 + 2 * _count(stage_product) + iter_cycles
+        + _count(stage_input) + _count(stage_output)
+        + _count(stage_normalize) + _count(stage_pack)
+    )
+
+
 def module_latency(
     kind: str,
     *,
     wman: int = 0,
+    unroll100: int = 100,
     stage_input: int = 0,
     stage_product: int = 0,
     stage_align: int = 0,
@@ -246,5 +282,15 @@ def module_latency(
             stage_normalize=stage_normalize,
             stage_pack=stage_pack,
             stage_output=stage_output,
+        )
+    if kind == "sincos":
+        return sincos_latency(
+            wman,
+            unroll100=unroll100,
+            stage_input=stage_input,
+            stage_output=stage_output,
+            stage_product=stage_product,
+            stage_normalize=stage_normalize,
+            stage_pack=stage_pack,
         )
     raise ValueError(f"unsupported module kind: {kind}")

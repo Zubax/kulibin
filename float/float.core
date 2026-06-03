@@ -25,6 +25,7 @@ filesets:
       - hdl/zkf_fma.v
       - hdl/_zkf_horner.v
       - hdl/_zkf_log2_final_mul.v
+      - hdl/_zkf_pmul.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/_tables/_zkf_exp2_m11.v
@@ -222,6 +223,31 @@ filesets:
       - hdl/zkf_log2.v
     file_type: verilogSource
 
+  rtl_sincos:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_pipe.v
+      - hdl/_zkf_normshift.v
+      - hdl/_zkf_fixed_to_float.v
+      - hdl/_zkf_pmul.v
+      - hdl/_zkf_cordic.v
+      - hdl/_tables/_zkf_cordic_m11.v
+      - hdl/_tables/_zkf_cordic_m16.v
+      - hdl/_tables/_zkf_cordic_m18.v
+      - hdl/_tables/_zkf_cordic_m24.v
+      - hdl/_tables/_zkf_cordic_m27.v
+      - hdl/_tables/_zkf_cordic_m36.v
+      - hdl/_tables/_zkf_cordic_m48.v
+      - hdl/_tables/_zkf_cordic_m53.v
+      - hdl/zkf_sincos.v
+    file_type: verilogSource
+
+  pmul_unit:
+    files:
+      - hdl/_zkf_pmul.v
+      - tb/_zkf_pmul_tb.v
+    file_type: verilogSource
+
   tb_mul_ilog2_const_wrap:
     files:
       - tb/zkf_mul_ilog2_const_wrap.v
@@ -238,6 +264,8 @@ filesets:
       - tb/zkf_stream.py:
           file_type: user
       - tb/zkf_operands.py:
+          file_type: user
+      - tb/zkf_trig_tables.py:
           file_type: user
       - tb/zkf_results.py:
           file_type: user
@@ -280,6 +308,8 @@ filesets:
       - tb/test_exp2.py:
           file_type: user
       - tb/test_log2.py:
+          file_type: user
+      - tb/test_sincos.py:
           file_type: user
       - tb/test_properties.py:
           file_type: user
@@ -380,6 +410,14 @@ parameters:
   ZKF_WMAN_OUT:
     datatype: int
     default: 11
+    paramtype: plusarg
+  UNROLL100:
+    datatype: int
+    default: 100
+    paramtype: vlogparam
+  ZKF_UNROLL100:
+    datatype: int
+    default: 100
     paramtype: plusarg
   STAGE_INPUT:
     datatype: int
@@ -1238,3 +1276,54 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_log2
     parameters: *float_log2_params
+
+  sim_pmul_icarus:
+    # Self-checking unit bench for the shared multiply: proves p == a*b exactly across signedness x STAGE_PRODUCT x
+    # several operand widths. Plain Verilog ($fatal on mismatch); not cocotb. Run: fusesoc run --target=sim_pmul_icarus
+    filesets: [pmul_unit]
+    toplevel: _zkf_pmul_tb
+    flow: sim
+    flow_options:
+      tool: icarus
+      timescale: 1ns/1ps
+      iverilog_options: [-g2012, -Wno-timescale]
+
+  sim_sincos_icarus:
+    filesets: [rtl_sincos, tb_cocotb]
+    toplevel: zkf_sincos
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_sincos
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale]
+    parameters: &float_sincos_params
+      - WEXP
+      - WMAN
+      - UNROLL100
+      - STAGE_INPUT
+      - STAGE_OUTPUT
+      - STAGE_PRODUCT
+      - STAGE_NORMALIZE
+      - STAGE_PACK
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_UNROLL100
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_OUTPUT
+      - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_sincos_verilator:
+    filesets: [rtl_sincos, tb_cocotb]
+    toplevel: zkf_sincos
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_sincos
+    parameters: *float_sincos_params

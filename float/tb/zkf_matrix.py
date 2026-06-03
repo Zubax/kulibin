@@ -285,9 +285,15 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
                 plus_names={"W": "ZKF_PIPE_W", "N": "ZKF_PIPE_N"})
 
 
-def _trans(module, sim, tier, base, w, m, kind, count, *, si=None, sp=None, sn=None, pa=None, so=None) -> Run:
+def _trans(module, sim, tier, base, w, m, kind, count, *,
+           si=None, sp=None, sn=None, pa=None, so=None, un=None) -> Run:
+    # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
+    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT); sincos uses un (UNROLL100), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT,
+    # its shared _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK). The decode and wide stages are always-on.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
+    if un is not None:
+        vlog.append(("UNROLL100", un)); suffix += f"_un{un}"
     if si is not None:
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sp is not None:
@@ -367,28 +373,50 @@ def _per_pr(sim, out: list) -> None:
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-    for op in ("exp2", "log2"):
+    for op in ("exp2", "log2", "sincos"):
         for cfg, w, m, k, c in TRANS:
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
+    for op in ("exp2", "log2"):
         # STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
         # are staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
+        # sincos shares STAGE_INPUT/STAGE_PRODUCT/STAGE_OUTPUT, plus its own UNROLL100 / STAGE_NORMALIZE / STAGE_PACK
+        # staging (the decode and wide-datapath register stages are always-on) -- all covered in its own rows below.
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, so=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=1))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=2))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=3))
         out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1, sp=1, so=1))
-    # STAGE_NORMALIZE for log2 controls the normalizer's STAGE_SPLIT. Cover it on a fast small format (it needs
-    # the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
+    # sincos throughput knob UNROLL100 (iterations/cycle x100): 50 = half-rate 2-cycle engine, 100 = the synthesized
+    # M18 rate, 200 = 2/cycle. Each changes the published II, so exercise it -- the test asserts measured == model.
+    out.append(_trans("sincos", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=50))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=200))
+    # sincos staging knobs (all bit-transparent vs the unstaged path; the test verifies bit-exactness + the latency
+    # model for each). Exercise on the cheap 5/11 format. STAGE_INPUT / STAGE_OUTPUT are the standard sequential-module
+    # register stages; the decode and wide-datapath stages are always-on (the synthesized WMAN=36 profile is un=50 +
+    # sp=3 + wmultiplier=18).
+    out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, so=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1, so=1))
+    # STAGE_PRODUCT: the shared correction multiply (_zkf_pmul) depth -- 1 = native + operand capture, 2 = 2x2 +
+    # capture, 3 = 3x3 + capture + row-sum. Bit-transparent; each adds 2*STAGE_PRODUCT cycles. Exercises every grid.
+    out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=3))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_un50_prod", 5, 11, "random", 256, un=50, sp=2))
+    # STAGE_NORMALIZE for log2 / sincos controls the normalizer's STAGE_SPLIT. Cover it on a fast small format
+    # (it needs the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sp=1, sn=1))
-    # STAGE_PACK is a new uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2. Exercise it on the cheapest
-    # exhaustive format: standalone and in combination with the other staging knobs.
+    out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=2))
+    # STAGE_PACK is a uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2/sincos. Exercise it on the
+    # cheapest exhaustive format: standalone and in combination with the other staging knobs.
     out.append(_trans("exp2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
+    out.append(_trans("sincos", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
-    # STAGE_PACK+STAGE_OUTPUT drives _zkf_fixed_to_float's _zkf_pack_delay with N=2, covering the delay-chain shift.
-    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1, so=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -473,12 +501,21 @@ def _deep_correctness(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
     # exp2/log2: STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT staging (one knob at a time off the baseline) across the
-    # deep transcendental format list.
+    # deep transcendental format list. sincos sweeps STAGE_PRODUCT (its shared _zkf_pmul split) plus its UNROLL100
+    # throughput knob and STAGE_NORMALIZE / STAGE_PACK; the testbench asserts measured II == model each time.
     for w, m, k, c in TRANS_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("exp2", "log2"):
             for si, sp, so in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)):
                 out.append(_trans(op, s, "deep", base, w, m, k, c, si=si, sp=sp, so=so))
+        for un in (50, 100, 200, 400):
+            out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=un))
+        for sp in (1, 2, 3):
+            out.append(_trans("sincos", s, "deep", base, w, m, k, c, sp=sp))
+        out.append(_trans("sincos", s, "deep", base, w, m, k, c, si=1, so=1, sn=1, pa=1))
+        # The synthesized wide profile (half-rate engine + 3x3 product split; the decode and wide front/back register
+        # stages are always-on), bit-transparent vs the unstaged path, exercised across the deep wide formats.
+        out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3))
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
     # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
@@ -546,15 +583,21 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
-    # exp2/log2 coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run covers the
-    # registered pack output, the sp=1 run toggles the 2x2 split logic.
+    # exp2/log2/sincos coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run
+    # covers the registered pack output, the sp=1 run toggles the 2x2 split logic. sincos also runs w5_m11 so the
+    # tiny-input bypass (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
     for w, m in [(2, 11), (3, 11)]:
-        for op in ("exp2", "log2"):
+        for op in ("exp2", "log2", "sincos"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_trans("exp2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
     out.append(_trans("log2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
     out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))  # toggle the 2x2 split logic
     out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))
+    # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob and the
+    # fixed-to-float normshift-barrier / pack-register toggles (it has STAGE_DECODE in place of STAGE_PRODUCT).
+    out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
+    out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
+    out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
     # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the
@@ -651,6 +694,7 @@ _FAST = [
     ("resize_si1", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 1)]),
     ("exp2", "exp2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
     ("log2", "log2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
+    ("sincos", "sincos", [("WEXP", 2), ("WMAN", 11), ("UNROLL100", 50)]),
 ]
 
 
