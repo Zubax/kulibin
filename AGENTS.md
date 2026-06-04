@@ -54,6 +54,8 @@ In synthesizable code, prefer `case` statements over nested ternary operators un
 
 In complex modules, it is best to avoid a large number of named nets that are only used once; this does not help readability but rather the opposite.
 
+Elaboration-time parameters specifying bit width have a leading `W`, e.g., `WEXP`, `WCOEF`.
+
 ## Verification
 
 Add or update a testbench for behavioral changes to RTL. Keep focused unit benches near the module under `tb/`, and register new filesets/targets in the module `.core` file. Before submitting changes, run `make lint` and `make verify`; for narrow edits, also run the affected `fusesoc run --target=...` command directly during development.
