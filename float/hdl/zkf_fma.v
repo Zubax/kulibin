@@ -60,14 +60,19 @@ module zkf_fma #(
         if (LATENCY != `ZKF_FMA_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
-        // STAGE_NORMALIZE=2 selects the 3-segment normalizer (_zkf_normshift STAGE_SPLIT=2), which needs at least three
-        // radix-4 levels - NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3 - so its two register barriers land at distinct positions
-        // and its latency is exactly 2, the +1 cycle the s2x payload realignment below assumes. NL4 >= 3 holds iff
-        // 2*WMAN+3 >= 17, i.e. WMAN >= 7; below that the barriers collapse to one, the normalizer becomes 1-cycle, and
-        // the sub path races ahead of the add path. STAGE_NORMALIZE=2 is a wide-format timing knob (the close-
-        // cancellation normalize is only slow at large WMAN), so narrow formats never need it: reject at elaboration.
-        if ((STAGE_NORMALIZE == 2) && (WMAN < 7)) begin : g_invalid_norm2_wman
-            _zkf_invalid_fma_stage_normalize2_requires_wman_ge_7 u_invalid();
+        // STAGE_INPUT / STAGE_DECODE / STAGE_PRODUCT are each realized locally as a single optional register, so only
+        // {0,1} is meaningful. STAGE_ALIGN / STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to their owners
+        // (_zkf_rshift_sticky / _zkf_normshift / _zkf_pack), which validate their own ranges -- including
+        // STAGE_NORMALIZE=2's "wide enough" requirement (_zkf_normshift's STAGE_SPLIT==2 && NL4<3 over the same
+        // 2*WMAN+3 width rejects WMAN<7), so no normalize-vs-WMAN check is duplicated here.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
+            _zkf_invalid_stage_decode u_invalid();
+        end
+        if ((STAGE_PRODUCT != 0) && (STAGE_PRODUCT != 1)) begin : g_invalid_stage_product
+            _zkf_invalid_stage_product u_invalid();
         end
     endgenerate
     // verilator coverage_on

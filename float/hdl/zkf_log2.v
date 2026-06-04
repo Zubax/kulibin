@@ -57,6 +57,12 @@ module zkf_log2 #(
         if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
+        // STAGE_PRODUCT / STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to their owners (the table core /
+        // _zkf_normshift / _zkf_pack), which validate their own ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
         if (LATENCY != `ZKF_LOG2_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -110,7 +116,7 @@ module zkf_log2 #(
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
     // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .frac(frac_in), \
             .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
     generate
@@ -205,7 +211,7 @@ module zkf_log2 #(
     // -- Normalize, combine, and pack via the shared back-end. The helper owns the _zkf_normshift instance
     // (STAGE_SPLIT = 1 + STAGE_NORMALIZE), the GRS extraction, exp_unbiased = (WNORM-1-F2) - shamt, the optional P2
     // pack-input register (STAGE_PACK_INPUT=1 since zkf_log2 needs the extra cycle for fmax closure), and the
-    // _zkf_pack output. The pole / domain_error flags ride the SB_W=2 sideband and emerge in lockstep with y.
+    // _zkf_pack output. The pole / domain_error flags ride the WSB=2 sideband and emerge in lockstep with y.
     wire [1:0] sb_out_flags;
     localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = WNORM - 1 - F2;
     _zkf_fixed_to_float #(
@@ -213,7 +219,7 @@ module zkf_log2 #(
         .WMAG(WNORM), .WEU(WEU),
         .EXP_IS_BIASED(0),
         .ASSUME_NO_OVERFLOW(1),  // log2(finite>0) is always representable, disable overflow detection circuit
-        .SB_W(2),
+        .WSB(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
         .STAGE_PACK(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)

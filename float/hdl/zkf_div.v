@@ -39,6 +39,11 @@ module zkf_div #(
 
     // verilator coverage_off
     generate
+        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
+        // STAGE_PACK / STAGE_OUTPUT forward to _zkf_pack, which validates its own ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
         if (LATENCY != `ZKF_DIV_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end

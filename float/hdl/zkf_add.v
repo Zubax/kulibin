@@ -48,6 +48,15 @@ module zkf_add #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // STAGE_INPUT and STAGE_DECODE are realized locally as a single optional register each, so only {0,1} is
+        // meaningful. STAGE_ALIGN / STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to their owners
+        // (_zkf_rshift_sticky / _zkf_normshift / _zkf_pack), which validate their own ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
+            _zkf_invalid_stage_decode u_invalid();
+        end
         if (LATENCY != `ZKF_ADD_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end

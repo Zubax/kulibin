@@ -7,14 +7,14 @@
 
 `default_nettype none
 
-module _zkf_log2_m16 #(parameter integer WMAN = 16, parameter integer D = 2, parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (
+module _zkf_log2_m16 #(parameter integer WMAN = 16, parameter integer D = 2, parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (
     input  wire                 clk,
     input  wire                 rst,
     input  wire                 in_valid,
-    input  wire       [SBW-1:0] sb_in,
+    input  wire       [WSB-1:0] sb_in,
     input  wire      [WMAN-2:0] frac,         // stored fraction t (WFRAC = WMAN-1 bits), in [0,1)
     output wire                 out_valid,
-    output wire       [SBW-1:0] sb_out,
+    output wire       [WSB-1:0] sb_out,
     output wire [2*WMAN+12-2:0] l_fix         // log2(1+t) at scale 2**-F2, F2 = WFRAC + CF, in [0,1)
 );
     // verilator coverage_off
@@ -27,9 +27,9 @@ module _zkf_log2_m16 #(parameter integer WMAN = 16, parameter integer D = 2, par
     localparam integer CW   = 31;
     localparam integer ACCW = 33;
     localparam integer NSEG = 64;
-    localparam integer HSBW = SBW + WFRAC;  // carry t alongside the sideband to the final multiply
+    localparam integer HSBW = WSB + WFRAC;  // carry t alongside the sideband to the final multiply
 
-    (* rom_style = "block", syn_romstyle = "EBR" *)  // The table is large, map it to a block ROM (EBR)
+    (* rom_style = "block" *)  // map a large table to block RAM
     reg [(D+1)*CW-1:0] rom [0:NSEG-1];
     initial begin
         rom[  0] = {31'h000078fa, 31'h7fd1d63d, 31'h1715475a};
@@ -113,12 +113,12 @@ module _zkf_log2_m16 #(parameter integer WMAN = 16, parameter integer D = 2, par
     wire signed [ACCW-1:0] acc;
     wire                   ev;
     wire      [HSBW-1:0]   esb;
-    _zkf_horner #(.D(D), .CW(CW), .RW(RW), .ACCW(ACCW), .SBW(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
+    _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
         .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
         .out_valid(ev), .sb_out(esb), .acc(acc));
     wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
-    wire [SBW-1:0]   sb_p   = esb[HSBW-1 -: SBW];
-    _zkf_log2_final_mul #(.WFRAC(WFRAC), .ACCW(ACCW), .F2(F2), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
+    wire [WSB-1:0]   sb_p   = esb[HSBW-1 -: WSB];
+    _zkf_log2_final_mul #(.WFRAC(WFRAC), .WACC(ACCW), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
         .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .frac(frac_p), .acc(acc),
         .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
     // verilator coverage_on

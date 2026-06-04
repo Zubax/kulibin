@@ -20,7 +20,7 @@
 ///                (e.g. zkf_log2, whose result is always representable for finite x). force_inf and the underflow
 ///                paths are unaffected.
 ///
-/// Callers that don't need the sideband should set its width SB_W=1 and stub with a constant.
+/// Callers that don't need the sideband should set its width WSB=1 and stub with a constant.
 
 `default_nettype none
 
@@ -32,7 +32,7 @@ module _zkf_fixed_to_float #(
     parameter WEU                   = 8,    // internal signed exponent width, also passed to _zkf_pack as WEXP_UNBIASED
     parameter integer EXP_IS_BIASED = 0,
     parameter ASSUME_NO_OVERFLOW    = 0,    // forwarded to _zkf_pack; 1 prunes overflow detect
-    parameter SB_W                  = 1,    // generic sideband width carried alongside the pipeline
+    parameter WSB                   = 1,    // generic sideband width carried alongside the pipeline
     parameter STAGE_NORMALIZE       = 0,    // {0,1,2} direct forward to _zkf_normshift.STAGE_SPLIT
     parameter STAGE_PACK            = 0,    // {0,1} direct forward to _zkf_pack.STAGE_INPUT
     parameter STAGE_OUTPUT          = 0     // {0,1} direct forward to _zkf_pack.STAGE_OUTPUT
@@ -46,11 +46,11 @@ module _zkf_fixed_to_float #(
     input  wire                  force_inf,
     input  wire signed [WEU-1:0] exp_offset,
     input  wire       [WMAG-1:0] mag,
-    input  wire       [SB_W-1:0] sb_in,
+    input  wire        [WSB-1:0] sb_in,
 
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y,
-    output wire      [SB_W-1:0] sb_out
+    output wire       [WSB-1:0] sb_out
 );
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
@@ -62,13 +62,9 @@ module _zkf_fixed_to_float #(
         if (WEU < $clog2(WMAG)) begin : g_invalid_weu_count
             _zkf_invalid_fixed_to_float_weu_too_narrow_for_count u_invalid();
         end
-        if ((STAGE_NORMALIZE < 0) || (STAGE_NORMALIZE > 2)) begin : g_invalid_stage_normalize
-            _zkf_invalid_stage_normalize_out_of_range u_invalid();
-        end
-        if ((STAGE_PACK < 0) || (STAGE_PACK > 1)) begin : g_invalid_stage_pack
-            _zkf_invalid_stage_pack_out_of_range u_invalid();
-        end
-        if (SB_W < 1) begin : g_invalid_sb_w
+        // STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT are forwarded as-is to their owners (_zkf_normshift.STAGE_SPLIT,
+        // _zkf_pack.STAGE_INPUT/STAGE_OUTPUT), which validate their own legal ranges -- no range check is duplicated here.
+        if (WSB < 1) begin : g_invalid_sb_w
             _zkf_invalid_sb_w_too_narrow u_invalid();
         end
     endgenerate
@@ -97,7 +93,7 @@ module _zkf_fixed_to_float #(
 
     // -- Delay sidebands alongside the normshift so they land with norm_aligned. zkf_pipe resets only the valid flag;
     // the payload free-runs (project reset policy). For STAGE_NORMALIZE=0 the pipe is a passthrough.
-    localparam PIPE_W = 3 + WEU + SB_W;
+    localparam PIPE_W = 3 + WEU + WSB;
     wire              sb_valid;
     wire [PIPE_W-1:0] sb_pipe_in;
     wire [PIPE_W-1:0] sb_pipe_out;
@@ -112,13 +108,13 @@ module _zkf_fixed_to_float #(
     // verilator coverage_on
     wire                    force_inf_d;
     wire signed [WEU-1:0]   exp_offset_d;
-    wire [SB_W-1:0]         sb_d = sb_pipe_out[SB_W-1:0];
+    wire [WSB-1:0]          sb_d = sb_pipe_out[WSB-1:0];
 
     assign sb_pipe_in   = {sign, force_zero, force_inf, exp_offset, sb_in};
     assign sign_d       = sb_pipe_out[PIPE_W-1];
     assign force_zero_d = sb_pipe_out[PIPE_W-2];
     assign force_inf_d  = sb_pipe_out[PIPE_W-3];
-    assign exp_offset_d = sb_pipe_out[SB_W +: WEU];
+    assign exp_offset_d = sb_pipe_out[WSB +: WEU];
 
     // -- Pack-input combine (combinational). Slicing follows zkf_from_int's pattern exactly: the leading WMAN bits
     // of the aligned bus carry the significand (hidden bit included), the next bit is guard, then round, and the OR
@@ -168,7 +164,7 @@ module _zkf_fixed_to_float #(
 
     // -- Forward sideband through the packer's input + output stages so sb_out lands with out_valid. Pure datapath:
     // the delay free-runs with no reset; sb_out is only sampled in lockstep with out_valid, which is reset.
-    _zkf_pack_delay #(.W(SB_W), .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)) u_sb_pack_delay (
+    _zkf_pack_delay #(.W(WSB), .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)) u_sb_pack_delay (
         .clk(clk), .x(sb_d), .y(sb_out)
     );
 endmodule

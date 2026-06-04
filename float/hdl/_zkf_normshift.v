@@ -28,8 +28,8 @@
 /// STAGE_SPLIT=2: two register barriers; the first sits right after the top (widest) radix-4 level (where the wide
 /// leading-zero OR-reductions and the largest barrel-shift muxes live) and the second at the existing midpoint. The
 /// pre-barrier digits/zero get the extra cycle of delay so the whole count and zero stay aligned. Useful at wide W
-/// where one barrier still leaves the top two levels in the same combinational stage (about +25-30% f_max at WMAN=36
-/// in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
+/// where one barrier still leaves the top two levels in the same combinational stage (a substantial f_max gain at wide
+/// WMAN in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
 /// NL4 >= 3 so the two barriers do not coincide.
 
 `default_nettype none

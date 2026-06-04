@@ -5,7 +5,7 @@
 /// The class-detection paths run in parallel with the wide compare so they do not extend its critical path.
 ///
 /// `a < b` is realized as an explicit subtraction whose borrow-out is the result; this maps directly to the
-/// FPGA's carry chain (CCU2 on Lattice). `a == b` is an XOR-reduce on the same operands; `a > b` is the
+/// FPGA's carry chain. `a == b` is an XOR-reduce on the same operands; `a > b` is the
 /// leftover case. See zkf_cmp for a registered variant.
 
 `default_nettype none

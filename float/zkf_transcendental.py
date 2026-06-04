@@ -250,12 +250,12 @@ class _Writer:
 
 def _rom_rows(w: _Writer, s: Spec) -> None:
     """Emit the coefficient ROM: one packed word per segment, rom[seg] = {c[D], ..., c[0]}, one (wide) line each."""
-    # ROM inference hint by size: tiny tables to soft logic (a whole BRAM would sit <1% full), larger ones to EBR.
-    # Attribute only -- contents and timing are unchanged.
+    # ROM inference hint by size: tiny tables stay in soft logic, larger ones map to block RAM. Portable, vendor-neutral
+    # attribute only -- contents and timing are unchanged.
     if s.nseg <= 16:
-        w('(* rom_style = "logic", syn_romstyle = "logic" *)  // The table is small, do not waste a BRAM on it')
+        w('(* rom_style = "logic" *) // keep a small table in logic')
     else:
-        w('(* rom_style = "block", syn_romstyle = "EBR" *)  // The table is large, map it to a block ROM (EBR)')
+        w('(* rom_style = "block" *)  // map a large table to block RAM')
     w("reg [(D+1)*CW-1:0] rom [0:NSEG-1];")
     w("initial begin")
     w.push()
@@ -290,7 +290,7 @@ def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
         wire signed [ACCW-1:0] acc;
         wire                   ev;
         wire      [HSBW-1:0]   esb;
-        _zkf_horner #(.D(D), .CW(CW), .RW(RW), .ACCW(ACCW), .SBW(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
+        _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
             .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
             .out_valid(ev), .sb_out(esb), .acc(acc));
     """)
@@ -320,20 +320,20 @@ def _emit_table(s: Spec) -> str:
     w("")
     if s.func == "exp2":
         w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
+          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (")
     else:
         w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (")
+          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (")
     w.push()
     if s.func == "exp2":
         w("""
             input  wire               clk,
             input  wire               rst,
             input  wire               in_valid,
-            input  wire     [SBW-1:0] sb_in,
+            input  wire     [WSB-1:0] sb_in,
             input  wire [WMAN+12-1:0] f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
             output wire               out_valid,
-            output wire     [SBW-1:0] sb_out,
+            output wire     [WSB-1:0] sb_out,
             output wire    [WMAN-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
             output wire               guard,
             output wire               round,
@@ -344,10 +344,10 @@ def _emit_table(s: Spec) -> str:
             input  wire                 clk,
             input  wire                 rst,
             input  wire                 in_valid,
-            input  wire       [SBW-1:0] sb_in,
+            input  wire       [WSB-1:0] sb_in,
             input  wire      [WMAN-2:0] frac,         // stored fraction t (WFRAC = WMAN-1 bits), in [0,1)
             output wire                 out_valid,
-            output wire       [SBW-1:0] sb_out,
+            output wire       [WSB-1:0] sb_out,
             output wire [2*WMAN+12-2:0] l_fix         // log2(1+t) at scale 2**-F2, F2 = WFRAC + CF, in [0,1)
         """)
     w.pop()
@@ -375,9 +375,9 @@ def _emit_table(s: Spec) -> str:
     w(f"localparam integer ACCW = {s.accw};")
     w(f"localparam integer NSEG = {s.nseg};")
     if s.func == "exp2":
-        w("localparam integer HSBW = SBW;")
+        w("localparam integer HSBW = WSB;")
     else:
-        w("localparam integer HSBW = SBW + WFRAC;  // carry t alongside the sideband to the final multiply")
+        w("localparam integer HSBW = WSB + WFRAC;  // carry t alongside the sideband to the final multiply")
     w("")
     _rom_rows(w, s)
     if s.func == "exp2":
@@ -401,8 +401,8 @@ def _emit_table(s: Spec) -> str:
         # _zkf_log2_final_mul and follows the same linear STAGE_PRODUCT depth contract as the Horner.
         w("""
             wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
-            wire [SBW-1:0]   sb_p   = esb[HSBW-1 -: SBW];
-            _zkf_log2_final_mul #(.WFRAC(WFRAC), .ACCW(ACCW), .F2(F2), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
+            wire [WSB-1:0]   sb_p   = esb[HSBW-1 -: WSB];
+            _zkf_log2_final_mul #(.WFRAC(WFRAC), .WACC(ACCW), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
                 .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .frac(frac_p), .acc(acc),
                 .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
         """)

@@ -57,6 +57,12 @@ module zkf_exp2 #(
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_exp2_wexp_too_wide_unportable u_invalid();
         end
+        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
+        // STAGE_PRODUCT / STAGE_PACK / STAGE_OUTPUT forward to their owners (the table core / _zkf_pack), which
+        // validate their own ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
         if (LATENCY != `ZKF_EXP2_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -171,7 +177,7 @@ module zkf_exp2 #(
     // parameter), so the Horner depth / latency cannot drift.
     // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_e), .f(r0_f), \
             .out_valid(ev_valid), .sb_out(sb_out_e), .significand(eval_sig), \
             .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));

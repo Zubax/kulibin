@@ -16,24 +16,24 @@
 
 module _zkf_log2_final_mul #(
     parameter integer WFRAC         = 17,
-    parameter integer ACCW          = 35,
+    parameter integer WACC          = 35,
     parameter integer F2            = 47,    // = WFRAC + CF
-    parameter integer SBW           = 1,
+    parameter integer WSB           = 1,
     parameter integer STAGE_PRODUCT = 0      // product computation staging; see _zkf_horner
 ) (
     input  wire                    clk,
     input  wire                    rst,
     input  wire                    in_valid,
-    input  wire        [SBW-1:0]   sb_in,
+    input  wire        [WSB-1:0]   sb_in,
     input  wire        [WFRAC-1:0] frac,
     // acc carries the Horner result P(t) = log2(1+t)/t in [1, 1/ln2] at scale 2**CF; its bits above CF are structural
     // headroom that never toggle. Its meaningful bits are exercised end-to-end by the log2 suite (i_acc below mirrors
     // it one register stage later).
     // verilator coverage_off
-    input  wire signed [ACCW-1:0]  acc,     // > 0 in this regime
+    input  wire signed [WACC-1:0]  acc,     // > 0 in this regime
     // verilator coverage_on
     output wire                    out_valid,
-    output wire        [SBW-1:0]   sb_out,
+    output wire        [WSB-1:0]   sb_out,
     output wire        [F2-1:0]    l_fix
 );
     // verilator coverage_off
@@ -47,14 +47,14 @@ module _zkf_log2_final_mul #(
     // Operand chunk widths (acc treated as unsigned, since acc > 0 in the log2 t*P regime).
     localparam integer WFA_LO = (WFRAC + 1) / 2;
     localparam integer WFA_HI = WFRAC - WFA_LO;
-    localparam integer WAC_LO = (ACCW + 1) / 2;
-    localparam integer WAC_HI = ACCW - WAC_LO;
+    localparam integer WAC_LO = (WACC + 1) / 2;
+    localparam integer WAC_HI = WACC - WAC_LO;
     localparam integer WFA0 = (WFRAC + 2) / 3;
     localparam integer WFA1 = (WFRAC + 1) / 3;
     localparam integer WFA2 = (WFRAC - WFA0 - WFA1 > 0) ? (WFRAC - WFA0 - WFA1) : 1;
-    localparam integer WAC0 = (ACCW + 2) / 3;
-    localparam integer WAC1 = (ACCW + 1) / 3;
-    localparam integer WAC2 = (ACCW - WAC0 - WAC1 > 0) ? (ACCW - WAC0 - WAC1) : 1;
+    localparam integer WAC0 = (WACC + 2) / 3;
+    localparam integer WAC1 = (WACC + 1) / 3;
+    localparam integer WAC2 = (WACC - WAC0 - WAC1 > 0) ? (WACC - WAC0 - WAC1) : 1;
 
     // -- Input register stage: latch the operands at the module boundary so the multiply has registers on BOTH sides
     // (this register maps to the DSP's input register; the partial-product registers below are the output side). The
@@ -63,10 +63,10 @@ module _zkf_log2_final_mul #(
     // operands free-run (only valid is reset), per the project reset policy.
     reg  [WFRAC-1:0]       i_frac;
     // verilator coverage_off
-    reg  signed [ACCW-1:0] i_acc;   // mirrors the acc port (structural top bits); see the acc port comment above
+    reg  signed [WACC-1:0] i_acc;   // mirrors the acc port (structural top bits); see the acc port comment above
     // verilator coverage_on
     reg                    i_v;
-    reg  [SBW-1:0]         i_sb;
+    reg  [WSB-1:0]         i_sb;
     always @(posedge clk) begin
         if (rst) i_v <= 1'b0;
         else     i_v <= in_valid;
@@ -77,19 +77,19 @@ module _zkf_log2_final_mul #(
 
     wire [WFRAC-1:0]        p_frac;
     // verilator coverage_off
-    wire signed [ACCW-1:0]  p_acc;
+    wire signed [WACC-1:0]  p_acc;
     // verilator coverage_on
     wire                    p_v;
-    wire [SBW-1:0]          p_sb;
+    wire [WSB-1:0]          p_sb;
 
     generate
         if ((STAGE_PRODUCT == 2) || (STAGE_PRODUCT == 3)) begin : g_product_input_stage
             reg [WFRAC-1:0]        x_frac;
             // verilator coverage_off
-            reg signed [ACCW-1:0]  x_acc;
+            reg signed [WACC-1:0]  x_acc;
             // verilator coverage_on
             reg                    x_v;
-            reg [SBW-1:0]          x_sb;
+            reg [WSB-1:0]          x_sb;
             always @(posedge clk) begin
                 if (rst) x_v <= 1'b0;
                 else     x_v <= i_v;
@@ -113,11 +113,11 @@ module _zkf_log2_final_mul #(
         if (STAGE_PRODUCT == 0) begin : g_single
             // -- 1 multiply stage (after the shared input register): single combinational multiply, truncate, register.
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] prod = p_frac * p_acc;
+            wire [WFRAC+WACC-1:0] prod = p_frac * p_acc;
             // verilator coverage_on
             reg [F2-1:0]  r_l;
             reg           r_v;
-            reg [SBW-1:0] r_sb;
+            reg [WSB-1:0] r_sb;
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
                 else     r_v <= p_v;
@@ -133,7 +133,7 @@ module _zkf_log2_final_mul #(
             wire [WFA_LO-1:0]            fa_lo = p_frac[WFA_LO-1:0];
             wire [WFA_HI-1:0]            fa_hi = p_frac[WFRAC-1:WFA_LO];
             wire [WAC_LO-1:0]            ac_lo = p_acc[WAC_LO-1:0];
-            wire [WAC_HI-1:0]            ac_hi = p_acc[ACCW-1:WAC_LO];
+            wire [WAC_HI-1:0]            ac_hi = p_acc[WACC-1:WAC_LO];
             wire [WFA_LO+WAC_LO-1:0]     q_ll  = fa_lo * ac_lo;
             wire [WFA_LO+WAC_HI-1:0]     q_lh  = fa_lo * ac_hi;
             wire [WFA_HI+WAC_LO-1:0]     q_hl  = fa_hi * ac_lo;
@@ -144,7 +144,7 @@ module _zkf_log2_final_mul #(
             reg  [WFA_HI+WAC_HI-1:0]     m_q_hh;
             // verilator coverage_on
             reg                          m_v;
-            reg  [SBW-1:0]               m_sb;
+            reg  [WSB-1:0]               m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
                 else     m_v <= p_v;
@@ -155,14 +155,14 @@ module _zkf_log2_final_mul #(
                 m_sb   <= p_sb;
             end
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] sum2 = ({{(WFRAC+ACCW-WFA_HI-WAC_HI){1'b0}}, m_q_hh} << (WFA_LO + WAC_LO))
-                                       + ({{(WFRAC+ACCW-WFA_HI-WAC_LO){1'b0}}, m_q_hl} << WFA_LO)
-                                       + ({{(WFRAC+ACCW-WFA_LO-WAC_HI){1'b0}}, m_q_lh} << WAC_LO)
-                                       +  {{(WFRAC+ACCW-WFA_LO-WAC_LO){1'b0}}, m_q_ll};
+            wire [WFRAC+WACC-1:0] sum2 = ({{(WFRAC+WACC-WFA_HI-WAC_HI){1'b0}}, m_q_hh} << (WFA_LO + WAC_LO))
+                                       + ({{(WFRAC+WACC-WFA_HI-WAC_LO){1'b0}}, m_q_hl} << WFA_LO)
+                                       + ({{(WFRAC+WACC-WFA_LO-WAC_HI){1'b0}}, m_q_lh} << WAC_LO)
+                                       +  {{(WFRAC+WACC-WFA_LO-WAC_LO){1'b0}}, m_q_ll};
             // verilator coverage_on
             reg [F2-1:0]  r_l;
             reg           r_v;
-            reg [SBW-1:0] r_sb;
+            reg [WSB-1:0] r_sb;
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
                 else     r_v <= m_v;
@@ -180,7 +180,7 @@ module _zkf_log2_final_mul #(
             wire [WFA2-1:0] fa2 = p_frac[WFRAC-1:WFA0+WFA1];
             wire [WAC0-1:0] ac0 = p_acc[WAC0-1:0];
             wire [WAC1-1:0] ac1 = p_acc[WAC0+WAC1-1:WAC0];
-            wire [WAC2-1:0] ac2 = p_acc[ACCW-1:WAC0+WAC1];
+            wire [WAC2-1:0] ac2 = p_acc[WACC-1:WAC0+WAC1];
             wire [WFA0+WAC0-1:0] q00 = fa0 * ac0;
             wire [WFA0+WAC1-1:0] q01 = fa0 * ac1;
             wire [WFA0+WAC2-1:0] q02 = fa0 * ac2;
@@ -202,7 +202,7 @@ module _zkf_log2_final_mul #(
             reg  [WFA2+WAC2-1:0] m_q22;
             // verilator coverage_on
             reg                  m_v;
-            reg  [SBW-1:0]       m_sb;
+            reg  [WSB-1:0]       m_sb;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
                 else     m_v <= p_v;
@@ -213,19 +213,19 @@ module _zkf_log2_final_mul #(
             end
             // -- Stage 2: row sums (each sums 3 sub-products with frac-chunk shifts <= WFRAC). --
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] row0 = ({{(WFRAC+ACCW-WFA2-WAC0){1'b0}}, m_q20} << (WFA0 + WFA1))
-                                       + ({{(WFRAC+ACCW-WFA1-WAC0){1'b0}}, m_q10} << WFA0)
-                                       +  {{(WFRAC+ACCW-WFA0-WAC0){1'b0}}, m_q00};
-            wire [WFRAC+ACCW-1:0] row1 = ({{(WFRAC+ACCW-WFA2-WAC1){1'b0}}, m_q21} << (WFA0 + WFA1))
-                                       + ({{(WFRAC+ACCW-WFA1-WAC1){1'b0}}, m_q11} << WFA0)
-                                       +  {{(WFRAC+ACCW-WFA0-WAC1){1'b0}}, m_q01};
-            wire [WFRAC+ACCW-1:0] row2 = ({{(WFRAC+ACCW-WFA2-WAC2){1'b0}}, m_q22} << (WFA0 + WFA1))
-                                       + ({{(WFRAC+ACCW-WFA1-WAC2){1'b0}}, m_q12} << WFA0)
-                                       +  {{(WFRAC+ACCW-WFA0-WAC2){1'b0}}, m_q02};
-            reg [WFRAC+ACCW-1:0] s_row0, s_row1, s_row2;
+            wire [WFRAC+WACC-1:0] row0 = ({{(WFRAC+WACC-WFA2-WAC0){1'b0}}, m_q20} << (WFA0 + WFA1))
+                                       + ({{(WFRAC+WACC-WFA1-WAC0){1'b0}}, m_q10} << WFA0)
+                                       +  {{(WFRAC+WACC-WFA0-WAC0){1'b0}}, m_q00};
+            wire [WFRAC+WACC-1:0] row1 = ({{(WFRAC+WACC-WFA2-WAC1){1'b0}}, m_q21} << (WFA0 + WFA1))
+                                       + ({{(WFRAC+WACC-WFA1-WAC1){1'b0}}, m_q11} << WFA0)
+                                       +  {{(WFRAC+WACC-WFA0-WAC1){1'b0}}, m_q01};
+            wire [WFRAC+WACC-1:0] row2 = ({{(WFRAC+WACC-WFA2-WAC2){1'b0}}, m_q22} << (WFA0 + WFA1))
+                                       + ({{(WFRAC+WACC-WFA1-WAC2){1'b0}}, m_q12} << WFA0)
+                                       +  {{(WFRAC+WACC-WFA0-WAC2){1'b0}}, m_q02};
+            reg [WFRAC+WACC-1:0] s_row0, s_row1, s_row2;
             // verilator coverage_on
             reg                  s_v;
-            reg  [SBW-1:0]       s_sb;
+            reg  [WSB-1:0]       s_sb;
             always @(posedge clk) begin
                 if (rst) s_v <= 1'b0;
                 else     s_v <= m_v;
@@ -236,11 +236,11 @@ module _zkf_log2_final_mul #(
             end
             // -- Stage 3: combine the 3 row sums (acc-chunk shifts) and truncate to F2. --
             // verilator coverage_off
-            wire [WFRAC+ACCW-1:0] sum3 = (s_row2 << (WAC0 + WAC1)) + (s_row1 << WAC0) + s_row0;
+            wire [WFRAC+WACC-1:0] sum3 = (s_row2 << (WAC0 + WAC1)) + (s_row1 << WAC0) + s_row0;
             // verilator coverage_on
             reg [F2-1:0]  r_l;
             reg           r_v;
-            reg [SBW-1:0] r_sb;
+            reg [WSB-1:0] r_sb;
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
                 else     r_v <= s_v;
@@ -253,7 +253,7 @@ module _zkf_log2_final_mul #(
         end else begin : g_invalid
             assign l_fix     = {F2{1'b0}};
             assign out_valid = 1'b0;
-            assign sb_out    = {SBW{1'b0}};
+            assign sb_out    = {WSB{1'b0}};
         end
     endgenerate
 endmodule

@@ -7,14 +7,14 @@
 
 `default_nettype none
 
-module _zkf_exp2_m18 #(parameter integer WMAN = 18, parameter integer D = 2, parameter integer SBW = 1, parameter integer STAGE_PRODUCT = 0) (
+module _zkf_exp2_m18 #(parameter integer WMAN = 18, parameter integer D = 2, parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (
     input  wire               clk,
     input  wire               rst,
     input  wire               in_valid,
-    input  wire     [SBW-1:0] sb_in,
+    input  wire     [WSB-1:0] sb_in,
     input  wire [WMAN+12-1:0] f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
     output wire               out_valid,
-    output wire     [SBW-1:0] sb_out,
+    output wire     [WSB-1:0] sb_out,
     output wire    [WMAN-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
     output wire               guard,
     output wire               round,
@@ -29,9 +29,9 @@ module _zkf_exp2_m18 #(parameter integer WMAN = 18, parameter integer D = 2, par
     localparam integer CW   = 33;
     localparam integer ACCW = 35;
     localparam integer NSEG = 64;
-    localparam integer HSBW = SBW;
+    localparam integer HSBW = WSB;
 
-    (* rom_style = "block", syn_romstyle = "EBR" *)  // The table is large, map it to a block ROM (EBR)
+    (* rom_style = "block" *)  // map a large table to block RAM
     reg [(D+1)*CW-1:0] rom [0:NSEG-1];
     initial begin
         rom[  0] = {33'h00000f754, 33'h000b17198, 33'h040000007};
@@ -115,7 +115,7 @@ module _zkf_exp2_m18 #(parameter integer WMAN = 18, parameter integer D = 2, par
     wire signed [ACCW-1:0] acc;
     wire                   ev;
     wire      [HSBW-1:0]   esb;
-    _zkf_horner #(.D(D), .CW(CW), .RW(RW), .ACCW(ACCW), .SBW(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
+    _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
         .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
         .out_valid(ev), .sb_out(esb), .acc(acc));
     assign significand = acc[CF -: WMAN];

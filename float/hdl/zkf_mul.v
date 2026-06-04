@@ -3,12 +3,12 @@
 /// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
-/// STAGE_PRODUCT=0: single-cycle multiplication. The DSP cascade (e.g. 4*MULT18X18D + 2*ALU54B for WMAN=36 on ECP5)
+/// STAGE_PRODUCT=0: single-cycle multiplication. The DSP multiply/accumulate cascade the operand width fans out into
 ///   is one combinational hop into the s1_mag register. Usually this is the best option.
 ///
 /// STAGE_PRODUCT>=1: split the product into a 2*2 grid of (ceil(WMAN/2)) wide partial products, register them,
 ///   then sum in the next cycle. Synthesis tools absorb the partial-product registers as DSP output registers and
-///   the sum as the ALU54B-style cascade, splitting the chain across two clock periods. Costs one extra pipeline
+///   the sum as the accumulate-adder cascade, splitting the chain across two clock periods. Costs one extra pipeline
 ///   cycle of latency. Values above 1 are treated as 1; further splits are reserved for future expansion.
 ///
 /// STAGE_PACK=0: pack inputs are combinational (default).
@@ -44,6 +44,14 @@ module zkf_mul #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        // STAGE_INPUT and STAGE_PRODUCT are realized locally as a single optional register each (single vs 2x2 product),
+        // so only {0,1} is meaningful. STAGE_PACK / STAGE_OUTPUT forward to _zkf_pack, which validates its own ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_PRODUCT != 0) && (STAGE_PRODUCT != 1)) begin : g_invalid_stage_product
+            _zkf_invalid_stage_product u_invalid();
         end
         if (LATENCY != `ZKF_MUL_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();

@@ -39,6 +39,11 @@ module zkf_from_int #(
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
+        // STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to _zkf_fixed_to_float's owners, which validate ranges.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
         if (LATENCY != `ZKF_FROM_INT_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -98,7 +103,7 @@ module zkf_from_int #(
     // -- Normalize-and-pack. _zkf_fixed_to_float owns the _zkf_normshift instance, the combinational significand /
     // G / R / sticky extraction, the exp_unbiased = EXP_BIASED_TOP - shamt arithmetic (forwarded to _zkf_pack with
     // EXP_IS_BIASED=1 so the packer skips the bias add), and the _zkf_pack output stage. STAGE_NORMALIZE and
-    // STAGE_PACK forward directly to the helper. SB_W=1 is unused; sb_in is tied to 1'b0 and sb_out is discarded.
+    // STAGE_PACK forward directly to the helper. WSB=1 is unused; sb_in is tied to 1'b0 and sb_out is discarded.
     localparam integer EXP_BIASED_TOP = EXP_BIASED_MAX;
     // verilator coverage_off
     wire sb_out_unused;
@@ -108,7 +113,7 @@ module zkf_from_int #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WMAG(WX), .WEU(WEU),
         .EXP_IS_BIASED(1),
-        .SB_W(1),
+        .WSB(1),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
         .STAGE_PACK(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)

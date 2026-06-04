@@ -157,7 +157,7 @@ module _zkf_to_fixpoint #(
 
     // Predicates as unsigned comparisons of exp_in against compile-time non-negative constants. Constants out of
     // exp_in's unsigned range resolve at elaboration and emit no runtime logic; in-range constants map to a shallow
-    // LUT compare rather than a WEU-wide signed subtract, so the predicate does not chain a wide CCU2 stack onto
+    // LUT compare rather than a WEU-wide signed subtract, so the predicate does not chain a wide carry-chain stack onto
     // the critical path feeding the shifter mux.
     wire is_left_shift;
     wire mag_too_big;

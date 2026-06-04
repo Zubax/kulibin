@@ -19,7 +19,7 @@
 /// Each iteration: x' = x -/+ (y >>> i); y' = y +/- (x >>> i); z' = z -/+ L[i]. The shift `>>> i` truncates toward
 /// -inf (matches the Python model's `>> i`). In the fold the shift amount i is the running iteration index, so it is a
 /// variable (barrel) shift and L[i] is a variable index into the flat LUT bus -- unlike the pipelined CORDIC's
-/// per-stage constant shifts. Each update is one controlled add/sub (a + (b ^ {W{sub}}) + sub -> one CCU2 chain).
+/// per-stage constant shifts. Each update is one controlled add/sub (a + (b ^ {W{sub}}) + sub -> one carry/adder chain).
 ///
 /// Structure: a single x/y rotator (fast = U iters/cycle, or pipe = one iter / two cycles) that consumes a sigma
 /// stream, plus -- only when PARALLEL is set in rotation mode -- a separate z-engine that produces that stream ahead of

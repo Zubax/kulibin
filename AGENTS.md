@@ -56,6 +56,8 @@ In complex modules, it is best to avoid a large number of named nets that are on
 
 Elaboration-time parameters specifying bit width have a leading `W`, e.g., `WEXP`, `WCOEF`.
 
+A module that forwards an elaboration-time parameter down the hierarchy without actually using it should not attempt to validate it, unless it somehow nontrivially depends on its value. This is done to reduce unnecessary coupling.
+
 ## Verification
 
 Add or update a testbench for behavioral changes to RTL. Keep focused unit benches near the module under `tb/`, and register new filesets/targets in the module `.core` file. Before submitting changes, run `make lint` and `make verify`; for narrow edits, also run the affected `fusesoc run --target=...` command directly during development.

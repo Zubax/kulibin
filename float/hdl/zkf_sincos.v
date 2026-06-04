@@ -93,6 +93,11 @@ module zkf_sincos #(
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end
+        // STAGE_OUTPUT is owned here (the output-register generate below); STAGE_PACK/STAGE_NORMALIZE/STAGE_PRODUCT are
+        // forwarded to their owners (_zkf_pack / _zkf_normshift / _zkf_pmul) and validated there, not duplicated here.
+        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
+            _zkf_invalid_stage_output u_invalid();
+        end
         if (LATENCY != `ZKF_SINCOS_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -535,7 +540,7 @@ module zkf_sincos #(
     wire [1:0]       be_quad;
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
-        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .SB_W(2),
+        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .WSB(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
     ) u_sin (
         .clk(clk), .rst(rst),
@@ -545,7 +550,7 @@ module zkf_sincos #(
     );
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
-        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .SB_W(2),
+        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .WSB(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
     ) u_cos (
         .clk(clk), .rst(rst),

@@ -66,6 +66,12 @@ module _zkf_pack #(
         if ((ASSUME_NO_OVERFLOW < 0) || (ASSUME_NO_OVERFLOW > 1)) begin : g_invalid_assume_no_overflow
             _zkf_invalid_assume_no_overflow_out_of_range u_invalid();
         end
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
+            _zkf_invalid_stage_output u_invalid();
+        end
     endgenerate
     // verilator coverage_on
 

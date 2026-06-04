@@ -26,6 +26,14 @@ module _zkf_rshift_sticky #(
     input  wire [WSHIFT-1:0] shamt,
     output wire      [W-1:0] y
 );
+    // verilator coverage_off
+    generate
+        if ((STAGE_SPLIT != 0) && (STAGE_SPLIT != 1)) begin : g_invalid_stage_split
+            _zkf_invalid_stage_split u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
     localparam WLOCAL = $clog2(W);
     localparam NSTAGE = (WLOCAL + 1) / 2;        // radix-4 stages
     localparam WPAIR  = NSTAGE * 2;              // shamt bits the cascade would consume
