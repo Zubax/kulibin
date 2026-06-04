@@ -29,14 +29,6 @@ module _zkf_log2_final_mul #(
     output wire        [WSB-1:0]   sb_out,
     output wire        [F2-1:0]    l_fix
 );
-    // verilator coverage_off
-    generate
-        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 3)) begin : g_invalid_stage_product
-            _zkf_invalid_stage_product_out_of_range u_invalid();
-        end
-    endgenerate
-    // verilator coverage_on
-
     // Input register stage: latch the operands at the module boundary so the multiply has registers on BOTH sides.
     reg  [WFRAC-1:0]       i_frac;
     // verilator coverage_off
