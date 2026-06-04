@@ -216,11 +216,14 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
                 target=target, root_module=root_module)
 
 
-def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None) -> Run:
+def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None,
+         wm=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if wm is not None:
+        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
     if si is not None:
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sd is not None:
@@ -288,10 +291,11 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
 
 
 def _trans(module, sim, tier, base, w, m, kind, count, *,
-           si=None, sp=None, sn=None, pa=None, so=None, un=None, parallel=None) -> Run:
+           si=None, sp=None, sn=None, pa=None, so=None, un=None, parallel=None, wm=None) -> Run:
     # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
-    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT); sincos uses un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so
-    # (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK).
+    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); sincos uses un
+    # (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared
+    # _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK), wm (WMULTIPLIER).
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if un is not None:
@@ -302,6 +306,8 @@ def _trans(module, sim, tier, base, w, m, kind, count, *,
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if wm is not None:
+        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
     if pa is not None:
@@ -510,9 +516,10 @@ def _deep_correctness(out: list) -> None:
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
     # Widened STAGE_PRODUCT split depths (2 = 2x2, 3 = 3x3) on the wide WMAN=36 format where the multi-tile grid
-    # actually matters, plus a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric.
-    out.append(_fma(s, "deep", "w8m36_sp2", 8, 36, "random", 768, sp=2, sd=1, sa=1, sn=2))
-    out.append(_fma(s, "deep", "w8m36_sp3", 8, 36, "random", 768, sp=3, sd=1, sa=1, sn=2))
+    # actually matters, with a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric --
+    # mirroring the synthesized zkf_fma_w8m36 operating points exactly.
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=2, wm=18, sd=1, sa=1, sn=2))
+    out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
         out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0,
                         sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
@@ -542,6 +549,12 @@ def _deep_correctness(out: list) -> None:
         # The synthesized wide profile (half-rate engine + 3x3 product split; the decode and wide front/back register
         # stages are always-on), bit-transparent vs the unstaged path, exercised across the deep wide formats.
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3))
+    # The exact synthesized WEXP=8/WMAN=36 transcendental operating points, end to end with WMULTIPLIER=18 (the 18-bit
+    # DSP-tile grid the Diamond/LSE flow needs): exp2 at STAGE_PRODUCT=3, log2 at STAGE_PRODUCT=4 (the two-stage pmul
+    # reduction that closes log2 timing). WMULTIPLIER is bit-transparent, but pinning the shipped grid here exercises
+    # the full datapath at the operating point that synthesis actually builds rather than only the symmetric default.
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=4, wm=18, sn=2, pa=1, so=1))
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
     # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),

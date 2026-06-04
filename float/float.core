@@ -452,6 +452,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  WMULTIPLIER:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_WMULTIPLIER:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_OUTPUT:
     datatype: int
     default: 0
@@ -593,6 +601,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - WMULTIPLIER
       - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
@@ -603,6 +612,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
       - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
@@ -679,6 +689,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - WMULTIPLIER
       - STAGE_DECODE
       - STAGE_ALIGN
       - STAGE_NORMALIZE
@@ -692,6 +703,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
       - ZKF_STAGE_DECODE
       - ZKF_STAGE_ALIGN
       - ZKF_STAGE_NORMALIZE
@@ -1234,6 +1246,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - WMULTIPLIER
       - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
@@ -1244,6 +1257,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
       - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 
@@ -1270,6 +1284,7 @@ targets:
       - WMAN
       - STAGE_INPUT
       - STAGE_PRODUCT
+      - WMULTIPLIER
       - STAGE_NORMALIZE
       - STAGE_PACK
       - STAGE_OUTPUT
@@ -1281,6 +1296,7 @@ targets:
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
       - ZKF_STAGE_NORMALIZE
       - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
@@ -1322,6 +1338,7 @@ targets:
       - STAGE_INPUT
       - STAGE_OUTPUT
       - STAGE_PRODUCT
+      - WMULTIPLIER
       - STAGE_NORMALIZE
       - STAGE_PACK
       - ZKF_WEXP
@@ -1331,6 +1348,7 @@ targets:
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_OUTPUT
       - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
       - ZKF_STAGE_NORMALIZE
       - ZKF_STAGE_PACK
       - ZKF_KIND

@@ -40,7 +40,7 @@ def mul_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    # stage_product (0..3) forwards to _zkf_pmul, whose latency is 1 + stage_product, so it contributes its raw count.
+    # stage_product (0..4) forwards to _zkf_pmul, whose latency is 1 + stage_product, so it contributes its raw count.
     return 1 + _enabled(stage_input) + _count(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
 
 

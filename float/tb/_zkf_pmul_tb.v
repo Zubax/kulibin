@@ -42,10 +42,10 @@ module _zkf_pmul_tb;
 
     // SS = signed*signed (sincos), UU = unsigned (mul/fma), SU/US mixed. Widths cover the exact sincos shared-
     // multiply sizes (29x20 = WMAN11, 39x24 = WMAN18, 66x41 = WMAN36) plus asymmetric (13x25), matched (18x18),
-    // and the minimum widths (3x4) that still allow the 3x3 split. STAGE_PRODUCT 0..3 each.
+    // and the minimum widths (3x4) that still allow the 3x3 split. STAGE_PRODUCT 0..3 each, plus the SP=4 block below.
     localparam integer N = 62;
     wire [N-1:0] bad;
-    // Positional connections keep this 44-entry coverage table readable; the helper has a fixed, obvious interface.
+    // Positional connections keep this coverage table readable; the helper has a fixed, obvious interface.
     // verilog_lint: waive-start module-parameter
     // verilog_lint: waive-start module-port
     pmul_check #(29, 20, 1, 1, 0) k00 (clk, rst, a_drv, b_drv, bad[0]);

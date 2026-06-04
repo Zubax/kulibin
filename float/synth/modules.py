@@ -36,7 +36,7 @@ class ModuleSpec:
     wexp_out: int = 0
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
-    stage_product: int = 0   # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..3.
+    stage_product: int = 0   # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..4.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
     stage_normalize: int = 0 # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
