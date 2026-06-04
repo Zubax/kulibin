@@ -292,6 +292,7 @@ module zkf_sincos #(
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     wire [CWB-1:0]     const2pi;
+    // A WMAN without a pre-generated table names a missing module and fails loudly. We still list every possible WMAN.
     `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_cordic_m``W #(.MODE(0), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WSB(WSB)) u_cordic ( \
             .clk(clk), .rst(rst), .start(eng_start), .sb_in(sb_red), \
@@ -344,7 +345,7 @@ module zkf_sincos #(
         `ZKF_SINCOS_CORE(52)
         `ZKF_SINCOS_CORE(53)
         end else begin : g_unsupported
-            _zkf_invalid_wman_out_of_range u_invalid();  // WMAN outside [11, 53]
+            _zkf_invalid_wman_out_of_range u_invalid();
         end
     endgenerate
     `undef ZKF_SINCOS_CORE

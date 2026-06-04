@@ -107,8 +107,8 @@ module zkf_log2 #(
     wire [SBW-1:0] sb_out_l;
     wire [F2-1:0]  l_fix;
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
-    // the LATENCY parameter), so the Horner depth / latency cannot drift. A WMAN without a pre-generated table names a
-    // now-missing module and fails loudly.
+    // the LATENCY parameter), so the Horner depth / latency cannot drift.
+    // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .frac(frac_in), \
@@ -159,7 +159,7 @@ module zkf_log2 #(
         `ZKF_LOG2_TABLE(52)
         `ZKF_LOG2_TABLE(53)
         end else begin : g_unsupported
-            _zkf_invalid_unsupported_table_wman u_invalid();  // run float/zkf_transcendental.py --emit
+            _zkf_invalid_unsupported_table_wman u_invalid();
         end
     endgenerate
     `undef ZKF_LOG2_TABLE

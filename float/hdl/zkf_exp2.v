@@ -168,8 +168,8 @@ module zkf_exp2 #(
     wire            eval_sticky;
     // The table+polynomial core is pre-generated per WMAN by zkf_transcendental.py as _zkf_exp2_m<WMAN>. We pass the
     // closed-form degree D below; the core asserts it equals the degree its ROM was fitted for (mirrors the LATENCY
-    // parameter), so the Horner depth / latency cannot drift. A WMAN without a pre-generated table names a now-missing
-    // module and fails loudly.
+    // parameter), so the Horner depth / latency cannot drift.
+    // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .SBW(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_e), .f(r0_f), \
@@ -221,7 +221,7 @@ module zkf_exp2 #(
         `ZKF_EXP2_TABLE(52)
         `ZKF_EXP2_TABLE(53)
         end else begin : g_unsupported
-            _zkf_invalid_unsupported_table_wman u_invalid();  // run zkf_transcendental.py --emit
+            _zkf_invalid_unsupported_table_wman u_invalid();
         end
     endgenerate
     `undef ZKF_EXP2_TABLE
