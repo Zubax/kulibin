@@ -79,6 +79,9 @@ module _zkf_pmul #(
 
     // Even split helpers: slice k of an N-way split of a w-bit operand. Low slices (small k) absorb the remainder,
     // so widths are ceil(w/N) down to floor(w/N) and sum to w; offsets are the running prefix sum.
+    // verilator coverage_off
+    // Constant functions evaluated only at elaboration (every call site below is a localparam), so they carry no
+    // runtime line coverage; suppress them from the line gate.
     function automatic integer slc_w(input integer w, input integer n, input integer k);
         slc_w = (w + n - 1 - k) / n;
     endfunction
@@ -89,6 +92,7 @@ module _zkf_pmul #(
             for (i = 0; i < k; i = i + 1) slc_off = slc_off + ((w + n - 1 - i) / n);
         end
     endfunction
+    // verilator coverage_on
 
     // Operand-capture stage (STAGE_PRODUCT >= 1): register the free-floating operands right before the product so
     // the placer can sit a latch at the DSP inputs.

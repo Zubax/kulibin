@@ -19,7 +19,8 @@
 ///     _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input register,
 ///     and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path is needed.
 ///
-/// STAGE_PRODUCT selects product computation staging; see _zkf_horner & _zkf_log2_final_mul for details.
+/// STAGE_PRODUCT selects product computation staging; see _zkf_pmul for details.
+/// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
 /// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
 /// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
 /// STAGE_OUTPUT={0,1} registers the output.
@@ -34,7 +35,8 @@ module zkf_log2 #(
     parameter WEXP            = 6,    // exponent field width
     parameter WMAN            = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT     = 0,    // 0: combinational inputs;   1: latch inputs before any logic (+1 stage)
-    parameter STAGE_PRODUCT   = 0,    // number of extra stages in product compute; see _zkf_horner&_zkf_log2_final_mul
+    parameter STAGE_PRODUCT   = 0,    // forwarded to _zkf_pmul
+    parameter WMULTIPLIER     = 0,    // forwarded to _zkf_pmul
     parameter STAGE_NORMALIZE = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
     parameter STAGE_PACK      = 0,    // 0: comb pack input; 1: register pack input (insulates rounder from normshift)
     parameter STAGE_OUTPUT    = 0,    // 0: combinational outputs;     1: registered outputs, +1 stage
@@ -116,7 +118,7 @@ module zkf_log2 #(
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
     // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .frac(frac_in), \
             .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
     generate

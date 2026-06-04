@@ -290,7 +290,7 @@ def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
         wire signed [ACCW-1:0] acc;
         wire                   ev;
         wire      [HSBW-1:0]   esb;
-        _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
+        _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_h (
             .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
             .out_valid(ev), .sb_out(esb), .acc(acc));
     """)
@@ -320,10 +320,10 @@ def _emit_table(s: Spec) -> str:
     w("")
     if s.func == "exp2":
         w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (")
+          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0, parameter integer WMULTIPLIER = 0) (")
     else:
         w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (")
+          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0, parameter integer WMULTIPLIER = 0) (")
     w.push()
     if s.func == "exp2":
         w("""
@@ -402,7 +402,7 @@ def _emit_table(s: Spec) -> str:
         w("""
             wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
             wire [WSB-1:0]   sb_p   = esb[HSBW-1 -: WSB];
-            _zkf_log2_final_mul #(.WFRAC(WFRAC), .WACC(ACCW), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT)) u_tp (
+            _zkf_log2_final_mul #(.WFRAC(WFRAC), .WACC(ACCW), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_tp (
                 .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .frac(frac_p), .acc(acc),
                 .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
         """)

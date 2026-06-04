@@ -40,7 +40,8 @@ def mul_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    return 1 + _enabled(stage_input) + _enabled(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
+    # stage_product (0..3) forwards to _zkf_pmul, whose latency is 1 + stage_product, so it contributes its raw count.
+    return 1 + _enabled(stage_input) + _count(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
 
 
 def add_latency(
@@ -76,7 +77,7 @@ def fma_latency(
     return (
         5
         + _enabled(stage_input)
-        + _enabled(stage_product)
+        + _count(stage_product)  # forwards to _zkf_pmul (latency 1 + stage_product); contributes its raw count
         + _enabled(stage_decode)
         + _enabled(stage_align)
         + _count(stage_normalize)

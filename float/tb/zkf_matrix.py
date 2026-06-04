@@ -344,6 +344,10 @@ def _per_pr(sim, out: list) -> None:
     # New uniform STAGE_PACK knob (forwards to _zkf_pack.STAGE_INPUT) for mul: standalone and full-shield check.
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_binary("mul", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sp=1, si=1, pa=1, so=1))
+    # STAGE_PRODUCT 2/3 (widened from {0,1}) forward to _zkf_pmul's 2x2 / 3x3 split grids; exercise both split depths
+    # for bit-exactness + the latency bookkeeping on a fast exhaustive format.
+    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=2))
+    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=3))
     for si in (0, 1):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
@@ -359,6 +363,10 @@ def _per_pr(sim, out: list) -> None:
                                        (0, 0, 0, 0, 0, 1, 0), (0, 0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1, 1)]:
         out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256,
                         sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
+    # STAGE_PRODUCT 2/3 (widened from {0,1}) forward to _zkf_pmul's 2x2 / 3x3 split grids; exercise both on the fast
+    # format for bit-exactness + the latency bookkeeping.
+    out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=2))
+    out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=3))
     # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3, i.e. WMAN >= 7
     # (smaller WMAN collapses its two register barriers and is rejected at elaboration), so it cannot use the w4/m6
     # knob format above. Exercise it at the WMAN=7 guard boundary - the smallest format permitted, and a WINDEX-
@@ -475,7 +483,7 @@ def _deep_correctness(out: list) -> None:
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
-        for sp in (0, 1):
+        for sp in (0, 1, 2, 3):  # _zkf_pmul depth: single / capture+native / 2x2 / 3x3
             for si in (0, 1):
                 for so in (0, 1):
                     out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, si=si, so=so))
@@ -501,6 +509,10 @@ def _deep_correctness(out: list) -> None:
                                             sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
+    # Widened STAGE_PRODUCT split depths (2 = 2x2, 3 = 3x3) on the wide WMAN=36 format where the multi-tile grid
+    # actually matters, plus a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric.
+    out.append(_fma(s, "deep", "w8m36_sp2", 8, 36, "random", 768, sp=2, sd=1, sa=1, sn=2))
+    out.append(_fma(s, "deep", "w8m36_sp3", 8, 36, "random", 768, sp=3, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
         out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0,
                         sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
@@ -598,15 +610,16 @@ def _deep_coverage(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
     # exp2/log2/sincos coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run
-    # covers the registered pack output, the sp=1 run toggles the 2x2 split logic. sincos also runs w5_m11 so the
-    # tiny-input bypass (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
+    # covers the registered pack output, the sp=2 run toggles the shared _zkf_pmul 2x2 split via the Horner multiply
+    # (sp=1 is operand-capture + native multiply; the registered 2x2 split starts at sp=2). sincos also runs w5_m11 so
+    # the tiny-input bypass (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
     for w, m in [(2, 11), (3, 11)]:
         for op in ("exp2", "log2", "sincos"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_trans("exp2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
     out.append(_trans("log2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
-    out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))  # toggle the 2x2 split logic
-    out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=1))
+    out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=2))  # toggle the _zkf_pmul 2x2 split
+    out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=2))
     # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob and the
     # fixed-to-float normshift-barrier / pack-register toggles (it has STAGE_DECODE in place of STAGE_PRODUCT).
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))

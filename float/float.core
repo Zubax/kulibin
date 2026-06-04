@@ -61,6 +61,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/zkf_pipe.v
+      - hdl/_zkf_pmul.v
       - hdl/zkf_mul.v
     file_type: verilogSource
 
@@ -77,6 +78,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/zkf_pipe.v
+      - hdl/_zkf_pmul.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/zkf_fma.v
@@ -192,6 +194,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/zkf_pipe.v
+      - hdl/_zkf_pmul.v
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_horner.v
@@ -211,6 +214,7 @@ filesets:
     files:
       - hdl/_zkf_pack.v
       - hdl/zkf_pipe.v
+      - hdl/_zkf_pmul.v
       - hdl/_zkf_normshift.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_horner.v

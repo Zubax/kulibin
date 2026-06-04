@@ -81,7 +81,6 @@ module _zkf_pack #(
 
     localparam [WEXP-1:0] EXP_BIAS       = {1'b0, {WEXP-1{1'b1}}};
     localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
-    localparam [WEXP-1:0] EXP_MAX_FINITE = EXP_INF - {{(WEXP-1){1'b0}}, 1'b1};
 
     // Optional input register stage. When STAGE_INPUT=1, the input ports are captured here and the rest of the
     // packer's combinational cone runs from the registered copies; this isolates a wide upstream cone (e.g. a

@@ -20,7 +20,8 @@
 /// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
 /// ROM read is registered, so no single stage carries both a wide carry chain and a multiply.
 ///
-/// STAGE_PRODUCT selects product computation staging; see _zkf_horner.
+/// STAGE_PRODUCT selects product computation staging; see _zkf_pmul.
+/// WMULTIPLIER optionally hints the native DSP tile argument width; see _zkf_pmul.
 /// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
 /// STAGE_OUTPUT={0,1} registers the output.
 
@@ -33,7 +34,8 @@ module zkf_exp2 #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
-    parameter STAGE_PRODUCT = 0,    // product computation staging; see _zkf_horner
+    parameter STAGE_PRODUCT = 0,    // see _zkf_pmul
+    parameter WMULTIPLIER   = 0,    // see _zkf_pmul
     parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
     parameter STAGE_OUTPUT  = 0,    // 0: combinational outputs;  1: registered outputs, +1 stage
     parameter LATENCY       = `ZKF_EXP2_LATENCY   // must equal the register-stage count; checked below
@@ -177,7 +179,7 @@ module zkf_exp2 #(
     // parameter), so the Horner depth / latency cannot drift.
     // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_eval ( \
+        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_e), .f(r0_f), \
             .out_valid(ev_valid), .sb_out(sb_out_e), .significand(eval_sig), \
             .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));

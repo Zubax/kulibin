@@ -151,6 +151,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output}),
         .LATENCY({register_stages(spec)})
@@ -379,6 +380,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_DECODE({spec.stage_decode}),
         .STAGE_ALIGN({spec.stage_align}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
@@ -1157,6 +1159,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output}),
         .LATENCY({register_stages(spec)})
@@ -1233,6 +1236,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
         .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output}),

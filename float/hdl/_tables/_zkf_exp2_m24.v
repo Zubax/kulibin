@@ -7,7 +7,7 @@
 
 `default_nettype none
 
-module _zkf_exp2_m24 #(parameter integer WMAN = 24, parameter integer D = 3, parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0) (
+module _zkf_exp2_m24 #(parameter integer WMAN = 24, parameter integer D = 3, parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0, parameter integer WMULTIPLIER = 0) (
     input  wire               clk,
     input  wire               rst,
     input  wire               in_valid,
@@ -83,7 +83,7 @@ module _zkf_exp2_m24 #(parameter integer WMAN = 24, parameter integer D = 3, par
     wire signed [ACCW-1:0] acc;
     wire                   ev;
     wire      [HSBW-1:0]   esb;
-    _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT)) u_h (
+    _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_h (
         .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
         .out_valid(ev), .sb_out(esb), .acc(acc));
     assign significand = acc[CF -: WMAN];

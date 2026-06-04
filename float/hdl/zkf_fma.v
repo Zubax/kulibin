@@ -6,9 +6,8 @@
 /// STAGE_INPUT=0: operands feed the datapath combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
 ///
-/// STAGE_PRODUCT=0: single-cycle multiplication (combinational a*b into the product register, default).
-/// STAGE_PRODUCT=1: split the product into a 2*2 grid of partial products registered one stage earlier and
-///   summed in the next cycle, exactly as zkf_mul does, so the DSP cascade closes in two periods (+1 cycle).
+/// STAGE_PRODUCT selects the number of extra multiplier stages, it is forwarded to _zkf_pmul as-is, refer there.
+/// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
 ///
 /// STAGE_DECODE=0: the decoded/normalized operands feed the magnitude-compare and operand-select combinationally.
 /// STAGE_DECODE=1: register them first, splitting the wide compare+select cone (+1 cycle).
@@ -33,7 +32,8 @@ module zkf_fma #(
     parameter WEXP            = 6,  // exponent field width
     parameter WMAN            = 18, // significand precision including the hidden bit
     parameter STAGE_INPUT     = 0,  // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
-    parameter STAGE_PRODUCT   = 0,  // 0 = combinational multiply; >=1 = split 2*2 product grid (+1 cycle)
+    parameter STAGE_PRODUCT   = 0,  // forwarded to _zkf_pmul
+    parameter WMULTIPLIER     = 0,  // forwarded to _zkf_pmul
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
     parameter STAGE_NORMALIZE = 0,  // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
@@ -60,19 +60,11 @@ module zkf_fma #(
         if (LATENCY != `ZKF_FMA_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
-        // STAGE_INPUT / STAGE_DECODE / STAGE_PRODUCT are each realized locally as a single optional register, so only
-        // {0,1} is meaningful. STAGE_ALIGN / STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to their owners
-        // (_zkf_rshift_sticky / _zkf_normshift / _zkf_pack), which validate their own ranges -- including
-        // STAGE_NORMALIZE=2's "wide enough" requirement (_zkf_normshift's STAGE_SPLIT==2 && NL4<3 over the same
-        // 2*WMAN+3 width rejects WMAN<7), so no normalize-vs-WMAN check is duplicated here.
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end
         if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
             _zkf_invalid_stage_decode u_invalid();
-        end
-        if ((STAGE_PRODUCT != 0) && (STAGE_PRODUCT != 1)) begin : g_invalid_stage_product
-            _zkf_invalid_stage_product u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -138,10 +130,10 @@ module zkf_fma #(
     wire p_inf  = ~p_zero & (a_inf | b_inf);
     wire p_sign = a_sign ^ b_sign;
 
-    // Biased product exponent base, a_exp + b_exp - BIAS. The +product_high normalize adjust is folded in just
-    // before the product register (mag_ep_finite, see the retiming note there), once the product's leading bit is
-    // known. Carrying the BIASED exponent (rather than unbiased) lets the packer skip its bias add (EXP_IS_BIASED=1),
-    // keeping that adder off the result-exponent critical path, exactly as zkf_add does.
+    // Biased product exponent base, a_exp + b_exp - BIAS. It rides the multiplier sideband un-adjusted; the
+    // +product_high normalize adjust is applied combinationally on the product-stage output (pr_ep_finite), once the
+    // product's leading bit is known. Carrying the BIASED exponent (rather than unbiased) lets the packer skip its bias
+    // add (EXP_IS_BIASED=1), keeping that adder off the result-exponent critical path, exactly as zkf_add does.
     // verilator coverage_off
     // Zero-extension padding of non-negative exponent fields plus the compile-time-constant bias.
     wire signed [WEU-1:0] a_exp_ext = {{(WEU-WEXP){1'b0}}, a_exp};
@@ -150,123 +142,42 @@ module zkf_fma #(
     // verilator coverage_on
     wire signed [WEU-1:0] p_exp_base = a_exp_ext + b_exp_ext - bias_ext;
 
-    // -- Multiply (optionally split) + payload carried to the product register ----------------------------------
-    wire                  mag_valid;
-    wire       [WMAG-1:0] mag;
-    wire                  m_p_sign;
-    wire                  m_p_zero;
-    wire                  m_p_inf;
-    wire signed [WEU-1:0] m_p_exp_base;
-    wire       [WMAN-1:0] m_c_sig;
-    wire       [WEXP-1:0] m_c_exp;
-    wire                  m_c_sign;
-    wire                  m_c_zero;
-    wire                  m_c_inf;
+    // Shared multiplier: a_sig*b_sig (both unsigned) through _zkf_pmul.
+    localparam WSB_FMA = WEU + WMAN + WEXP + 6;
+    wire [WSB_FMA-1:0] mul_sb_in = {p_sign, p_zero, p_inf, p_exp_base, c_sig, c_exp, c_sign, c_zero, c_inf};
+    wire [WSB_FMA-1:0] mul_sb_out;
 
-    generate
-        if (STAGE_PRODUCT == 0) begin : g_mul_unsplit
-            assign mag          = a_sig * b_sig;
-            assign mag_valid    = in_valid_q;
-            assign m_p_sign     = p_sign;
-            assign m_p_zero     = p_zero;
-            assign m_p_inf      = p_inf;
-            assign m_p_exp_base = p_exp_base;
-            assign m_c_sig      = c_sig;
-            assign m_c_exp      = c_exp;
-            assign m_c_sign     = c_sign;
-            assign m_c_zero     = c_zero;
-            assign m_c_inf      = c_inf;
-        end else begin : g_mul_split
-            // a_sig*b_sig via a 2*2 grid of half-width partial products registered one cycle earlier, summed here
-            // (cf. zkf_mul); the c bundle and product control ride the same register so they stay aligned.
-            localparam WLO = (WMAN + 1) / 2;
-            localparam WHI = WMAN - WLO;
-            // verilator coverage_off
-            wire [WLO-1:0] a_lo = a_sig[WLO-1:0];
-            wire [WHI-1:0] a_hi = a_sig[WMAN-1:WLO];
-            wire [WLO-1:0] b_lo = b_sig[WLO-1:0];
-            wire [WHI-1:0] b_hi = b_sig[WMAN-1:WLO];
-            // verilator coverage_on
+    wire                  pr_valid;
+    wire       [WMAG-1:0] pr_product_raw;
+    wire                  pr_p_sign  = mul_sb_out[WSB_FMA-1];
+    wire                  pr_p_zero  = mul_sb_out[WSB_FMA-2];
+    wire                  pr_p_inf   = mul_sb_out[WSB_FMA-3];
+    wire signed [WEU-1:0] pr_ep_base = $signed(mul_sb_out[WSB_FMA-4 -: WEU]);
+    wire       [WMAN-1:0] pr_c_sig   = mul_sb_out[WSB_FMA-4-WEU -: WMAN];
+    wire       [WEXP-1:0] pr_c_exp   = mul_sb_out[WSB_FMA-4-WEU-WMAN -: WEXP];
+    wire                  pr_c_sign  = mul_sb_out[2];
+    wire                  pr_c_zero  = mul_sb_out[1];
+    wire                  pr_c_inf   = mul_sb_out[0];
 
-            reg                  g_valid;
-            reg                  g_p_sign;
-            reg                  g_p_zero;
-            reg                  g_p_inf;
-            reg signed [WEU-1:0] g_p_exp_base;
-            reg       [WMAN-1:0] g_c_sig;
-            reg       [WEXP-1:0] g_c_exp;
-            reg                  g_c_sign;
-            reg                  g_c_zero;
-            reg                  g_c_inf;
-            reg [(WLO+WLO)-1:0]  g_p_ll;
-            reg [(WLO+WHI)-1:0]  g_p_lh;
-            reg [(WHI+WLO)-1:0]  g_p_hl;
-            reg [(WHI+WHI)-1:0]  g_p_hh;
+    _zkf_pmul #(
+        .WA(WMAN), .WB(WMAN), .A_SIGNED(0), .B_SIGNED(0),
+        .WSB(WSB_FMA), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+    ) u_pmul (
+        .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(mul_sb_in),
+        .a(a_sig), .b(b_sig),
+        .out_valid(pr_valid), .sb_out(mul_sb_out), .p(pr_product_raw)
+    );
 
-            always @(posedge clk) begin
-                if (rst) g_valid <= 1'b0;
-                else     g_valid <= in_valid_q;
-                g_p_sign     <= p_sign;
-                g_p_zero     <= p_zero;
-                g_p_inf      <= p_inf;
-                g_p_exp_base <= p_exp_base;
-                g_c_sig      <= c_sig;
-                g_c_exp      <= c_exp;
-                g_c_sign     <= c_sign;
-                g_c_zero     <= c_zero;
-                g_c_inf      <= c_inf;
-                g_p_ll       <= a_lo * b_lo;
-                g_p_lh       <= a_lo * b_hi;
-                g_p_hl       <= a_hi * b_lo;
-                g_p_hh       <= a_hi * b_hi;
-            end
-
-            // verilator coverage_off
-            wire [WMAG-1:0] hh_ext = {{(WMAG - 2*WHI - 2*WLO){1'b0}}, g_p_hh, {(2*WLO){1'b0}}};
-            wire [WMAG-1:0] lh_ext = {{(WMAG - WLO - WHI - WLO){1'b0}}, g_p_lh, {WLO{1'b0}}};
-            wire [WMAG-1:0] hl_ext = {{(WMAG - WHI - WLO - WLO){1'b0}}, g_p_hl, {WLO{1'b0}}};
-            wire [WMAG-1:0] ll_ext = {{(WMAG - 2*WLO){1'b0}}, g_p_ll};
-            // verilator coverage_on
-            assign mag          = hh_ext + lh_ext + hl_ext + ll_ext;
-            assign mag_valid    = g_valid;
-            assign m_p_sign     = g_p_sign;
-            assign m_p_zero     = g_p_zero;
-            assign m_p_inf      = g_p_inf;
-            assign m_p_exp_base = g_p_exp_base;
-            assign m_c_sig      = g_c_sig;
-            assign m_c_exp      = g_c_exp;
-            assign m_c_sign     = g_c_sign;
-            assign m_c_zero     = g_c_zero;
-            assign m_c_inf      = g_c_inf;
-        end
-    endgenerate
-
-    // -- Product normalization, retimed to the producing side of the product register ---------------------------
+    // -- Product normalization, combinational on the product-stage output. --------------------------------------
     // A nonzero hidden-bit product has its leading one at bit WMAG-1 (value in [2,4)) or WMAG-2 (value in [1,2)).
-    // Doing the normalize HERE - before the product register, in the slack of the multiply stage - instead of after
-    // it keeps the +1 exponent adjust and the normalize shift off the HEAD of the magnitude-compare cone (the
-    // critical path), so that cone now begins at the exponent subtract rather than clk->q -> adder. mag and
-    // m_p_exp_base are the common interface of both STAGE_PRODUCT branches, so this retiming is identical for the
-    // split and unsplit multiply.
-    wire                  mag_high      = mag[WMAG-1];
+    // The normalize and the +1 exponent adjust therefore sit at the HEAD of the magnitude-compare cone; this is the
+    // fmax trade-off of owning the product register inside _zkf_pmul.
+    wire                  mag_high        = pr_product_raw[WMAG-1];
     // verilator coverage_off
-    wire        [WMAG-1:0] mag_norm      = mag_high ? mag : (mag << 1);
-    wire signed [WEU-1:0]  mag_high_ext  = {{(WEU-1){1'b0}}, mag_high};
+    wire        [WMAG-1:0] pr_product_norm = mag_high ? pr_product_raw : (pr_product_raw << 1);
+    wire signed [WEU-1:0]  mag_high_ext    = {{(WEU-1){1'b0}}, mag_high};
     // verilator coverage_on
-    wire signed [WEU-1:0]  mag_ep_finite = m_p_exp_base + mag_high_ext;
-
-    // -- Product stage register: normalized product magnitude + adjusted exponent + product control + c bundle ---
-    reg                  pr_valid;
-    reg       [WMAG-1:0] pr_product_norm;
-    reg                  pr_p_sign;
-    reg                  pr_p_zero;
-    reg                  pr_p_inf;
-    reg signed [WEU-1:0] pr_ep_finite;
-    reg       [WMAN-1:0] pr_c_sig;
-    reg       [WEXP-1:0] pr_c_exp;
-    reg                  pr_c_sign;
-    reg                  pr_c_zero;
-    reg                  pr_c_inf;
+    wire signed [WEU-1:0]  pr_ep_finite    = pr_ep_base + mag_high_ext;
 
     // -- Decode / normalize (combinational from the product stage) ----------------------------------------------
     wire             pr_p_finite = ~pr_p_zero & ~pr_p_inf;
@@ -595,33 +506,19 @@ module zkf_fma #(
     );
 
     // Stream pipeline. Reset clears only stream validity; payload registers free-run (s0b_valid is reset inside its
-    // own generate block under STAGE_ALIGN). The pr/s0/s1/s2 captures are unconditional; the add-path s2x catch-up
-    // is a STAGE_NORMALIZE-deep register pipe that keeps the add path aligned with the normshift's internal
-    // register cycles. STAGE_NORMALIZE=0 is a pure passthrough (no s2x registers); each unit adds 1 cycle.
+    // own generate block under STAGE_ALIGN; the product stage lives inside _zkf_pmul). The s0/s1/s2 captures are
+    // unconditional; the add-path s2x catch-up is a STAGE_NORMALIZE-deep register pipe that keeps the add path aligned
+    // with the normshift's internal register cycles. STAGE_NORMALIZE=0 is a pure passthrough; each unit adds 1 cycle.
     always @(posedge clk) begin
         if (rst) begin
-            pr_valid <= 1'b0;
             s0_valid <= 1'b0;
             s1_valid <= 1'b0;
             s2_valid <= 1'b0;
         end else begin
-            pr_valid <= mag_valid;
             s0_valid <= d_valid;
             s1_valid <= s0b_valid;
             s2_valid <= s1_valid;
         end
-
-        // Product stage capture.
-        pr_product_norm <= mag_norm;
-        pr_p_sign       <= m_p_sign;
-        pr_p_zero       <= m_p_zero;
-        pr_p_inf        <= m_p_inf;
-        pr_ep_finite    <= mag_ep_finite;
-        pr_c_sig        <= m_c_sig;
-        pr_c_exp        <= m_c_exp;
-        pr_c_sign       <= m_c_sign;
-        pr_c_zero       <= m_c_zero;
-        pr_c_inf        <= m_c_inf;
 
         // Stage 0 capture: magnitude-ordered operands, alignment shift, special controls.
         s0_finite_sign <= finite_sign;
