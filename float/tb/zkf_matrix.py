@@ -195,11 +195,14 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
 
 # --- builders that mirror the former bash helpers -------------------------------------------------
 def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None,
-            pa=None, so=None, target=None, root_module=None) -> Run:
+            pa=None, so=None, wm=None, target=None, root_module=None) -> Run:
+    # wm (WMULTIPLIER) is only meaningful for the multiply (zkf_mul); the other _binary ops do not declare it.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if wm is not None:
+        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
     if si is not None:
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sd is not None and sa is not None:
@@ -516,8 +519,8 @@ def _deep_correctness(out: list) -> None:
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
     # Widened STAGE_PRODUCT split depths (2 = 2x2, 3 = 3x3) on the wide WMAN=36 format where the multi-tile grid
-    # actually matters, with a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric --
-    # mirroring the synthesized zkf_fma_w8m36 operating points exactly.
+    # actually matters, with a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric.
+    # sp=2 is the depth the synthesized zkf_fma_w8m36 ships; sp=3 additionally exercises the 3x3 grid end to end.
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=2, wm=18, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
@@ -546,13 +549,16 @@ def _deep_correctness(out: list) -> None:
         for sp in (1, 2, 3):
             out.append(_trans("sincos", s, "deep", base, w, m, k, c, sp=sp))
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, si=1, so=1, sn=1, pa=1))
-        # The synthesized wide profile (half-rate engine + 3x3 product split; the decode and wide front/back register
-        # stages are always-on), bit-transparent vs the unstaged path, exercised across the deep wide formats.
-        out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3))
-    # The exact synthesized WEXP=8/WMAN=36 transcendental operating points, end to end with WMULTIPLIER=18 (the 18-bit
-    # DSP-tile grid the Diamond/LSE flow needs): exp2 at STAGE_PRODUCT=3, log2 at STAGE_PRODUCT=4 (the two-stage pmul
-    # reduction that closes log2 timing). WMULTIPLIER is bit-transparent, but pinning the shipped grid here exercises
-    # the full datapath at the operating point that synthesis actually builds rather than only the symmetric default.
+        # The synthesized wide profile's multiply (half-rate engine + 3x3 product split pinned to the WMULTIPLIER=18
+        # 18-bit DSP-tile grid, as zkf_sincos_w8m36 ships), bit-transparent vs the unstaged path, across the deep wide
+        # formats. STAGE_NORMALIZE / STAGE_PACK are swept separately above; here the focus is the wide multiplier grid.
+        out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3, wm=18))
+    # The exact synthesized WEXP=8/WMAN=36 multiply-bearing operating points, end to end with WMULTIPLIER=18 (the
+    # 18-bit DSP-tile grid the Diamond/LSE flow needs): mul at STAGE_PRODUCT=2, exp2 at STAGE_PRODUCT=3, log2 at
+    # STAGE_PRODUCT=4 (the two-stage pmul reduction that closes log2 timing). WMULTIPLIER is bit-transparent, but
+    # pinning the shipped grid here exercises the full datapath at the operating point that synthesis actually builds
+    # rather than only the symmetric default.
+    out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=4, wm=18, sn=2, pa=1, so=1))
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
