@@ -19,8 +19,7 @@
 /// WMULTIPLIER chooses the grid construction (no effect on the latency), and applies only when the operands are
 /// actually split (STAGE_PRODUCT >= 2, otherwise ignored):
 ///
-///   WMULTIPLIER=0: symmetric split GA = GB = {native, native, 2, 3}[STAGE_PRODUCT].
-///
+///   WMULTIPLIER=0: symmetric split GA = GB = {native, native, 2, 3, 3}[STAGE_PRODUCT].
 ///   WMULTIPLIER>0: Each slice fits a WMULTIPLIER-bit signed/unsigned tile; the caller states its DSP width once;
 ///                  the core derives the minimal -- possibly asymmetric -- grid, e.g. 66x41 -> 4x3.
 ///                  P = WMULTIPLIER for the fully-unsigned grid, WMULTIPLIER-1 when a signed operand is present.
@@ -29,8 +28,9 @@
 ///
 ///   STAGE_PRODUCT=0: single behavioural `a*b` -> output reg.
 ///   STAGE_PRODUCT=1: operand-capture reg, then the SAME native `a*b` -> output reg (enables better auto-tiling).
-///   STAGE_PRODUCT=2: operand-capture reg, manual 2x2 split
-///   STAGE_PRODUCT=3: operand-capture reg, manual 3x3 split
+///   STAGE_PRODUCT=2: operand-capture reg, manual 2x2 split (one registered partial-product reduction).
+///   STAGE_PRODUCT=3: operand-capture reg, manual 3x3 split (row-sum register, then the column-sum register).
+///   STAGE_PRODUCT=4: same 3x3 grid, but the final column sum is pipelined into two stages (pairwise, then sum).
 
 `default_nettype none
 
@@ -43,18 +43,18 @@ module _zkf_pmul #(
     parameter integer STAGE_PRODUCT = 0,
     parameter integer WMULTIPLIER   = 0
 ) (
-    input  wire                 clk,
-    input  wire                 rst,        // resets only the valid pipe (control); datapath regs free-run
-    input  wire                 in_valid,
-    input  wire       [WSB-1:0] sb_in,
-    input  wire        [WA-1:0] a,
-    input  wire        [WB-1:0] b,
-    output wire                 out_valid,
-    output wire       [WSB-1:0] sb_out,
-    output wire     [WA+WB-1:0] p           // exact a*b (raw bits; caller assigns signedness)
+    input  wire             clk,
+    input  wire             rst,        // resets only the valid pipe (control); datapath regs free-run
+    input  wire             in_valid,
+    input  wire   [WSB-1:0] sb_in,
+    input  wire    [WA-1:0] a,
+    input  wire    [WB-1:0] b,
+    output wire             out_valid,
+    output wire   [WSB-1:0] sb_out,
+    output wire [WA+WB-1:0] p           // exact a*b (raw bits; caller assigns signedness)
 );
     localparam integer WP  = WA + WB;
-    localparam integer SYM = (STAGE_PRODUCT == 3) ? 3 : 2;
+    localparam integer SYM = (STAGE_PRODUCT >= 3) ? 3 : 2;
     // Signedness-aware slice payload: a signed*unsigned slice product must carry the unsigned operand as
     // non-negative-signed (+1 bit, an unavoidable behavioural cost), so only the fully-unsigned mode uses the full
     // WMULTIPLIER payload. P = 1 when WMULTIPLIER = 0 keeps the (then-unused) ceil division well-defined.
@@ -65,7 +65,7 @@ module _zkf_pmul #(
 
     // verilator coverage_off
     generate
-        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 3)) begin : g_invalid_stage_product
+        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 4)) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
         end
         if ((WMULTIPLIER != 0) && (WMULTIPLIER < 8)) begin : g_invalid_wmultiplier
@@ -265,6 +265,79 @@ module _zkf_pmul #(
                     r_sb <= s_sb;
                 end
                 assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
+            end else if (STAGE_PRODUCT == 4) begin : g_rows2
+                // Same GA x GB signed grid as g_rows, but the final GA-way column sum is split across two register
+                // stages: pairwise partial sums (s_col), then their sum. Halves the reduction adder depth for very
+                // wide accumulators where the single-stage column sum is the limiter.
+                // verilator coverage_off
+                wire signed [WP-1:0] brow [0:GA*GB-1];
+                // verilator coverage_on
+                genvar zi, zj;
+                for (zi = 0; zi < GA; zi = zi + 1) begin : g_brow_row
+                    for (zj = 0; zj < GB; zj = zj + 1) begin : g_brow_col
+                        localparam integer OJ = slc_off(WB, GB, zj);
+                        assign brow[zi*GB + zj] = $signed(m_pp[zi*GB + zj]) <<< OJ;
+                    end
+                end
+                reg signed [WP-1:0] rowc [0:GA-1];
+                integer zr, zc;
+                always @* begin
+                    for (zr = 0; zr < GA; zr = zr + 1) begin
+                        rowc[zr] = {WP{1'b0}};
+                        for (zc = 0; zc < GB; zc = zc + 1) rowc[zr] = rowc[zr] + brow[zr*GB + zc];
+                    end
+                end
+                reg signed [WP-1:0] s_row [0:GA-1];
+                reg           s_v;
+                reg [WSB-1:0] s_sb;
+                integer zs;
+                always @(posedge clk) begin
+                    if (rst) s_v <= 1'b0;
+                    else     s_v <= m_v;
+                    for (zs = 0; zs < GA; zs = zs + 1) s_row[zs] <= rowc[zs];
+                    s_sb <= m_sb;
+                end
+                // verilator coverage_off
+                wire signed [WP-1:0] arow [0:GA-1];
+                wire signed [WP-1:0] psum [0:((GA+1)/2)-1];
+                // verilator coverage_on
+                genvar yi;
+                for (yi = 0; yi < GA; yi = yi + 1) begin : g_arow
+                    localparam integer OI = slc_off(WA, GA, yi);
+                    assign arow[yi] = s_row[yi] <<< OI;
+                end
+                localparam integer NH = (GA + 1) / 2;     // pairwise partial sums of the GA shifted rows
+                genvar hi;
+                for (hi = 0; hi < NH; hi = hi + 1) begin : g_psum
+                    if (2*hi + 1 < GA) begin : g_pair assign psum[hi] = arow[2*hi] + arow[2*hi + 1]; end
+                    else               begin : g_lone assign psum[hi] = arow[2*hi];                  end
+                end
+                reg signed [WP-1:0] s_col [0:NH-1];
+                reg           t_v;
+                reg [WSB-1:0] t_sb;
+                integer zt;
+                always @(posedge clk) begin
+                    if (rst) t_v <= 1'b0;
+                    else     t_v <= s_v;
+                    for (zt = 0; zt < NH; zt = zt + 1) s_col[zt] <= psum[zt];
+                    t_sb <= s_sb;
+                end
+                reg signed [WP-1:0] csum;
+                integer zk;
+                always @* begin
+                    csum = {WP{1'b0}};
+                    for (zk = 0; zk < NH; zk = zk + 1) csum = csum + s_col[zk];
+                end
+                reg [WP-1:0]  r_p;
+                reg           r_v;
+                reg [WSB-1:0] r_sb;
+                always @(posedge clk) begin
+                    if (rst) r_v <= 1'b0;
+                    else     r_v <= t_v;
+                    r_p  <= csum;
+                    r_sb <= t_sb;
+                end
+                assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
             end else begin : g_invalid_grid_stage
                 _zkf_invalid_pmul_grid_stage u_invalid();
             end
@@ -387,6 +460,78 @@ module _zkf_pmul #(
                     else     r_v <= s_v;
                     r_p  <= csum;
                     r_sb <= s_sb;
+                end
+                assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
+            end else if (STAGE_PRODUCT == 4) begin : g_rows2
+                // Fully-unsigned counterpart of the signed g_rows2: same GA x GB grid as g_rows, with the final
+                // GA-way column sum split into a registered pairwise partial-sum stage followed by their sum.
+                // verilator coverage_off
+                wire [WP-1:0] brow [0:GA*GB-1];
+                // verilator coverage_on
+                genvar zi, zj;
+                for (zi = 0; zi < GA; zi = zi + 1) begin : g_brow_row
+                    for (zj = 0; zj < GB; zj = zj + 1) begin : g_brow_col
+                        localparam integer OJ = slc_off(WB, GB, zj);
+                        assign brow[zi*GB + zj] = m_pp[zi*GB + zj] << OJ;
+                    end
+                end
+                reg [WP-1:0] rowc [0:GA-1];
+                integer zr, zc;
+                always @* begin
+                    for (zr = 0; zr < GA; zr = zr + 1) begin
+                        rowc[zr] = {WP{1'b0}};
+                        for (zc = 0; zc < GB; zc = zc + 1) rowc[zr] = rowc[zr] + brow[zr*GB + zc];
+                    end
+                end
+                reg [WP-1:0]  s_row [0:GA-1];
+                reg           s_v;
+                reg [WSB-1:0] s_sb;
+                integer zs;
+                always @(posedge clk) begin
+                    if (rst) s_v <= 1'b0;
+                    else     s_v <= m_v;
+                    for (zs = 0; zs < GA; zs = zs + 1) s_row[zs] <= rowc[zs];
+                    s_sb <= m_sb;
+                end
+                // verilator coverage_off
+                wire [WP-1:0] arow [0:GA-1];
+                wire [WP-1:0] psum [0:((GA+1)/2)-1];
+                // verilator coverage_on
+                genvar yi;
+                for (yi = 0; yi < GA; yi = yi + 1) begin : g_arow
+                    localparam integer OI = slc_off(WA, GA, yi);
+                    assign arow[yi] = s_row[yi] << OI;
+                end
+                localparam integer NH = (GA + 1) / 2;     // pairwise partial sums of the GA shifted rows
+                genvar hi;
+                for (hi = 0; hi < NH; hi = hi + 1) begin : g_psum
+                    if (2*hi + 1 < GA) begin : g_pair assign psum[hi] = arow[2*hi] + arow[2*hi + 1]; end
+                    else               begin : g_lone assign psum[hi] = arow[2*hi];                  end
+                end
+                reg [WP-1:0]  s_col [0:NH-1];
+                reg           t_v;
+                reg [WSB-1:0] t_sb;
+                integer zt;
+                always @(posedge clk) begin
+                    if (rst) t_v <= 1'b0;
+                    else     t_v <= s_v;
+                    for (zt = 0; zt < NH; zt = zt + 1) s_col[zt] <= psum[zt];
+                    t_sb <= s_sb;
+                end
+                reg [WP-1:0] csum;
+                integer zk;
+                always @* begin
+                    csum = {WP{1'b0}};
+                    for (zk = 0; zk < NH; zk = zk + 1) csum = csum + s_col[zk];
+                end
+                reg [WP-1:0]  r_p;
+                reg           r_v;
+                reg [WSB-1:0] r_sb;
+                always @(posedge clk) begin
+                    if (rst) r_v <= 1'b0;
+                    else     r_v <= t_v;
+                    r_p  <= csum;
+                    r_sb <= t_sb;
                 end
                 assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
             end else begin : g_invalid_grid_stage

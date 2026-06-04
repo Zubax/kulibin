@@ -546,12 +546,21 @@ MODULES = [
         stage_output=1,
     ),
     # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The shallow product modes are deep DSP
-    # cascades that top out near 60 MHz; STAGE_PRODUCT=3 cuts the operands into <=18-bit chunks and adds the
-    # operand-capture stage. With STAGE_INPUT/STAGE_OUTPUT shielding the wide decode and pack, these need ~36
-    # MULT18X18D, so they target the LFE5U-45F (72 DSP) via synth_device.
+    # cascades that top out near 60 MHz; the split product modes cut the operands into chunks and add the
+    # operand-capture stage. WMULTIPLIER=18 pins each slice to an 18-bit DSP tile: a symmetric STAGE_PRODUCT=3 split
+    # (WMULTIPLIER=0) would cut the 53-bit accumulator into 18/18/17-bit slices, but the signed slice product then
+    # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice LSE drops the whole
+    # Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives a 4x3 (signed)
+    # / 2x3 (unsigned final mul) grid whose slices fit one tile each, so every multiply maps to DSP on both Yosys and
+    # Diamond/LSE; latency is unchanged. exp2 closes at STAGE_PRODUCT=3 (single-stage GA-way column sum); log2's larger
+    # design (the extra final t*P multiply + the wide normshift back-end) places its Horner reduction worse, so its
+    # single-stage GA=4 column sum is the Diamond/LSE limiter (~77 MHz, insensitive to retiming and PAR effort). log2
+    # therefore uses STAGE_PRODUCT=4, which keeps the same DSP grid but splits that final column sum into a registered
+    # pairwise reduction (105+ MHz). These need <=48 MULT18X18D, so they target the LFE5U-45F (72 DSP) via synth_device.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + "
+              "STAGE_OUTPUT=1; LFE5U-45F)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
@@ -559,22 +568,24 @@ MODULES = [
         wexp_unbiased=0,
         stage_input=1,
         stage_product=3,
+        wmultiplier=18,
         stage_output=1,
         synth_device="45k",
         emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + "
-              "STAGE_NORMALIZE=2 (deep normshift split) + STAGE_PACK=1 (register pack inputs) + "
-              "STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=4 (3x3 grid + two-stage reduction) + "
+              "WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 (deep normshift split) + STAGE_PACK=1 "
+              "(register pack inputs) + STAGE_OUTPUT=1; LFE5U-45F)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
-        stage_product=3,
+        stage_product=4,
+        wmultiplier=18,
         stage_normalize=2,
         stage_pack=1,
         stage_output=1,

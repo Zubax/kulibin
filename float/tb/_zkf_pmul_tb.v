@@ -1,5 +1,5 @@
 // Exactness bench for the shared pipelined multiply _zkf_pmul: proves p == a*b (with per-operand signedness) for
-// every STAGE_PRODUCT in {0,1,2,3}, both signedness flags, and several (WA,WB) including the exact sincos widths.
+// every STAGE_PRODUCT in {0,1,2,3,4}, both signedness flags, and several (WA,WB) including the exact sincos widths.
 // Inputs are held stable and the result sampled after the deepest pipeline settles, so one check covers any latency.
 
 `timescale 1ns / 1ps
@@ -43,7 +43,7 @@ module _zkf_pmul_tb;
     // SS = signed*signed (sincos), UU = unsigned (mul/fma), SU/US mixed. Widths cover the exact sincos shared-
     // multiply sizes (29x20 = WMAN11, 39x24 = WMAN18, 66x41 = WMAN36) plus asymmetric (13x25), matched (18x18),
     // and the minimum widths (3x4) that still allow the 3x3 split. STAGE_PRODUCT 0..3 each.
-    localparam integer N = 52;
+    localparam integer N = 62;
     wire [N-1:0] bad;
     // Positional connections keep this 44-entry coverage table readable; the helper has a fixed, obvious interface.
     // verilog_lint: waive-start module-parameter
@@ -103,13 +103,27 @@ module _zkf_pmul_tb;
     pmul_check #(36, 36, 0, 0, 3, 18) k49 (clk, rst, a_drv, b_drv, bad[49]);  // unsigned 2x2 (full-width slices)
     pmul_check #(40, 20, 0, 0, 3, 18) k50 (clk, rst, a_drv, b_drv, bad[50]);  // unsigned 3x2
     pmul_check #(50, 50, 0, 0, 2, 12) k51 (clk, rst, a_drv, b_drv, bad[51]);  // unsigned 5x5 (small tile, big grid)
+    // STAGE_PRODUCT=4: same grid as 3, but the final column sum is split into a registered pairwise stage. Covers the
+    // exact WMAN=36 log2 widths (Horner 53x28 signed -> 4x2 grid GA=4; final mul 35x53 unsigned -> 2x3 grid GA=2),
+    // both symmetric (3x3, GA=3 -> odd pairwise) and WMULTIPLIER grids, and every signedness, so NH = (GA+1)/2 is
+    // exercised for GA in {2,3,4} (lone-term and pair-term reductions both hit).
+    pmul_check #(53, 28, 1, 0, 4, 18) k52 (clk, rst, a_drv, b_drv, bad[52]);  // log2 Horner (signed path) 4x2, GA=4
+    pmul_check #(35, 53, 0, 0, 4, 18) k53 (clk, rst, a_drv, b_drv, bad[53]);  // log2 final mul (unsigned) 2x3, GA=2
+    pmul_check #(66, 41, 1, 1, 4, 18) k54 (clk, rst, a_drv, b_drv, bad[54]);  // signed 4x3, GA=4
+    pmul_check #(66, 41, 1, 1, 4, 0)  k55 (clk, rst, a_drv, b_drv, bad[55]);  // signed symmetric 3x3, GA=3 (odd)
+    pmul_check #(29, 20, 1, 1, 4, 0)  k56 (clk, rst, a_drv, b_drv, bad[56]);  // signed symmetric, GA=3
+    pmul_check #(29, 20, 0, 0, 4, 0)  k57 (clk, rst, a_drv, b_drv, bad[57]);  // unsigned symmetric, GA=3
+    pmul_check #(39, 24, 1, 0, 4, 0)  k58 (clk, rst, a_drv, b_drv, bad[58]);  // mixed (signed path) symmetric, GA=3
+    pmul_check #(18, 18, 0, 0, 4, 0)  k59 (clk, rst, a_drv, b_drv, bad[59]);  // unsigned symmetric, GA=3
+    pmul_check #(3,  4,  1, 1, 4, 0)  k60 (clk, rst, a_drv, b_drv, bad[60]);  // minimum width signed, GA=3
+    pmul_check #(40, 20, 0, 0, 4, 18) k61 (clk, rst, a_drv, b_drv, bad[61]);  // unsigned 3x2, GA=3
     // verilog_lint: waive-stop module-port
     // verilog_lint: waive-stop module-parameter
 
     task automatic run_vec(input logic [63:0] av, input logic [63:0] bv);
         begin
             a_drv = av; b_drv = bv;
-            repeat (7) @(posedge clk);          // let the deepest pipeline (latency 4) settle on the held inputs
+            repeat (8) @(posedge clk);          // let the deepest pipeline (latency 5, SP=4) settle on the held inputs
             if (bad !== {N{1'b0}}) begin
                 $display("FAIL a=%h b=%h bad=%h", av, bv, bad);
                 fails = fails + 1;

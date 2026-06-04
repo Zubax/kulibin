@@ -47,7 +47,9 @@ The value, as with any other STAGE knob, is the number of extra cycles in the mu
 1 - same as above but adds an operand capture register stage before the multiplier, which allows the synthesizer
 to place a latch immediately before the DSP tile (or several if auto-split is happening) and in some cases (e.g. Vivado)
 retime multiplication across two stages.
-2+ - manually split the product into 2x2, 3x3, etc sub-products in as many stages (all use operand-capture stage).
+2/3 - manually split the product into a 2x2/3x3 grid of sub-products (all use the operand-capture stage), summing
+the partial products in as many registered reduction stages.
+4 - same 3x3 grid as 3, but the final partial-product reduction is itself pipelined into two registered stages.
 
 Some modules that use multiplication offer the optional `WMULTIPLIER` parameter that defaults to zero,
 but it can be set by the user to the argument width of the DSP tile multipliers available on-chip.

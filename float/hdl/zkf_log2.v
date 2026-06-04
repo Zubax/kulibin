@@ -59,9 +59,6 @@ module zkf_log2 #(
         if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
-        // STAGE_PRODUCT / STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to their owners (the table core /
-        // _zkf_normshift / _zkf_pack), which validate their own ranges.
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end

@@ -93,8 +93,6 @@ module zkf_sincos #(
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end
-        // STAGE_OUTPUT is owned here (the output-register generate below); STAGE_PACK/STAGE_NORMALIZE/STAGE_PRODUCT are
-        // forwarded to their owners (_zkf_pack / _zkf_normshift / _zkf_pmul) and validated there, not duplicated here.
         if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
             _zkf_invalid_stage_output u_invalid();
         end

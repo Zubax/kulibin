@@ -610,16 +610,19 @@ def _deep_coverage(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
     # exp2/log2/sincos coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run
-    # covers the registered pack output, the sp=2 run toggles the shared _zkf_pmul 2x2 split via the Horner multiply
-    # (sp=1 is operand-capture + native multiply; the registered 2x2 split starts at sp=2). sincos also runs w5_m11 so
-    # the tiny-input bypass (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
+    # covers the registered pack output, and the sp=2/3/4 runs toggle the shared _zkf_pmul split-product paths via the
+    # Horner multiply (sp=1 is operand-capture + native multiply; the registered 2x2 flat sum is sp=2; the 3x3 row-sum
+    # reduction is sp=3 (g_rows); sp=4 (g_rows2) adds the second, pairwise reduction stage -- the synthesized log2_w8m36
+    # operating point). sincos also runs w5_m11 so the tiny-input bypass (e <= -(GUARD_FF+2), only reached once the
+    # exponent field is wide enough) toggles too.
     for w, m in [(2, 11), (3, 11)]:
         for op in ("exp2", "log2", "sincos"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_trans("exp2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
     out.append(_trans("log2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
-    out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=2))  # toggle the _zkf_pmul 2x2 split
-    out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=2))
+    for sp in (2, 3, 4):  # 2 = flat 2x2 sum, 3 = row-sum (g_rows), 4 = two-stage reduction (g_rows2, log2_w8m36 synth)
+        out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=sp))
+        out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=sp))
     # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob and the
     # fixed-to-float normshift-barrier / pack-register toggles (it has STAGE_DECODE in place of STAGE_PRODUCT).
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))

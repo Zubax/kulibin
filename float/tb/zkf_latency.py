@@ -195,8 +195,8 @@ def sincos_latency(
     # Decoupled z-path (parallel): the z-recurrence runs at full rate (k cycles), reaching z_done ZGAP = iter_cycles - k
     # ahead of done, so PHI is issued early and its PMUL_L = 1+STAGE_PRODUCT pipeline overlaps the CORDIC; the back-end
     # skips the P_PHI wait, cutting SAVED = min(PMUL_L, ZGAP). Only legal half-rate. Mirrors ZKF_SINCOS_LATENCY exactly.
-    if stage_product not in (0, 1, 2, 3):
-        raise ValueError(f"stage_product must be 0..3, got {stage_product}")
+    if stage_product not in (0, 1, 2, 3, 4):
+        raise ValueError(f"stage_product must be 0..4, got {stage_product}")
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
     k = TRIG_SPECS[wman]["n"]
