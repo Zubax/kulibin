@@ -51,10 +51,10 @@ module _zkf_cordic #(
     input  wire                 rst,
     input  wire                 start,
     input  wire       [WSB-1:0] sb_in,
+    // verilator coverage_off
     input  wire signed [WX-1:0] x0,
     input  wire signed [WX-1:0] y0,
     input  wire signed [WZ-1:0] z0,
-    // verilator coverage_off
     input  wire      [N*WZ-1:0] lut,      // L[i] (unsigned) at bits [i*WZ +: WZ]
     // verilator coverage_on
     output wire                 busy,

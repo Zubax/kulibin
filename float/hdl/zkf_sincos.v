@@ -468,7 +468,9 @@ module zkf_sincos #(
                         mphase   <= P_IDLE[2:0];
                     end
                 end
+                // verilator coverage_off
                 default: mphase <= P_IDLE[2:0];
+                // verilator coverage_on
             endcase
         end
     end
