@@ -118,7 +118,7 @@ module _zkf_cordic #(
                 end else begin
                     z_dn_r <= 1'b0;
                     if (!z_run_r) begin
-                        if (start) begin
+                        if (start && !run_r) begin  // Premature start while busy breaks correctness.
                             z_r        <= z0;
                             zi_r       <= {WI{1'b0}};
                             sig_mem[0] <= z0[WZ-1];     // sigma_0 = sign(z0), read by the rotator at iteration 0
