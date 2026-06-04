@@ -5,7 +5,12 @@
 
 `default_nettype none
 
-module _zkf_cordic_m16 #(parameter integer MODE = 0, parameter integer UNROLL100 = 100, parameter integer WSB = 1) (
+module _zkf_cordic_m16 #(
+    parameter integer MODE      = 0,
+    parameter integer UNROLL100 = 100,
+    parameter integer PARALLEL  = (UNROLL100 < 100) ? 1 : 0,
+    parameter integer WSB       = 1
+) (
     input  wire                clk,
     input  wire                rst,
     input  wire                start,
@@ -15,6 +20,7 @@ module _zkf_cordic_m16 #(parameter integer MODE = 0, parameter integer UNROLL100
     input  wire signed [ 36:0] z0,
     output wire                busy,
     output wire                done,
+    output wire                z_done,
     output wire      [WSB-1:0] sb_out,
     output wire signed [ 33:0] xn,
     output wire signed [ 33:0] yn,
@@ -52,10 +58,12 @@ module _zkf_cordic_m16 #(parameter integer MODE = 0, parameter integer UNROLL100
     // the x0/y0 inputs are then ignored. Vectoring mode (atan2) uses the x0/y0 vector inputs as given.
     wire signed [WX-1:0] seed_x = (MODE == 0) ? KINV       : x0;
     wire signed [WX-1:0] seed_y = (MODE == 0) ? {WX{1'b0}} : y0;
-    _zkf_cordic #(.N(N), .UNROLL100(UNROLL100), .WX(WX), .WZ(WZ), .MODE(MODE), .WSB(WSB)) u_cordic (
+    _zkf_cordic #(
+        .N(N), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WX(WX), .WZ(WZ), .MODE(MODE), .WSB(WSB)
+    ) u_cordic (
         .clk(clk), .rst(rst), .start(start), .sb_in(sb_in),
         .x0(seed_x), .y0(seed_y), .z0(z0), .lut(LUT),
-        .busy(busy), .done(done), .sb_out(sb_out), .xn(xn), .yn(yn), .zn(zn)
+        .busy(busy), .done(done), .z_done(z_done), .sb_out(sb_out), .xn(xn), .yn(yn), .zn(zn)
     );
 endmodule
 

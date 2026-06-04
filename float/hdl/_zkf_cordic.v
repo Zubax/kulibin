@@ -21,18 +21,31 @@
 /// variable (barrel) shift and L[i] is a variable index into the flat LUT bus -- unlike the pipelined CORDIC's
 /// per-stage constant shifts. Each update is one controlled add/sub (a + (b ^ {W{sub}}) + sub -> one CCU2 chain).
 ///
+/// Structure: a single x/y rotator (fast = U iters/cycle, or pipe = one iter / two cycles) that consumes a sigma
+/// stream, plus -- only when PARALLEL is set in rotation mode -- a separate z-engine that produces that stream ahead of
+/// time. The sigma sequence is identical either way; "coupled" (lock-step) and "decoupled" differ only in HOW sigma
+/// reaches the rotator: an inline combinational tap off the in-step z-chain / y (coupled), or a registered read from
+/// sig_mem fed by the ahead-running z-engine (decoupled). So the rotator is written once; the z handling is the only
+/// thing that varies. Decoupling lets the sincos wrapper launch the residual-angle correction during the CORDIC.
+///
+/// PARALLEL only helps -- and is only legal -- with the half-rate (pipe) rotator: the z-recurrence is one narrow add,
+/// so its fast rate is one iteration/cycle, which laps a half-rate x/y but merely ties a full-rate one. So a full-rate
+/// rotator stays lock-step; the natural default is PARALLEL = (UNROLL100 < 100) that should not be changed except
+/// for testing.
+///
 /// Handshake: assert `start` for one cycle with x0/y0/z0 valid; `busy` is high while iterating; `done` pulses for one
 /// cycle with xn/yn/zn (and the registered sideband sb_out) valid. `start` is ignored while busy. Reset clears the FSM.
 
 `default_nettype none
 
 module _zkf_cordic #(
-    parameter integer N         = 14,  // iterations
-    parameter integer UNROLL100 = 100, // iters/cycle x100: 50=half-rate, 100/200/300/400=1/2/3/4 per cycle
-    parameter integer WX        = 32,  // signed x/y width
-    parameter integer WZ        = 32,  // signed angle width
-    parameter integer MODE      = 0,   // 0 = rotation, 1 = vectoring
-    parameter integer WSB       = 1    // sideband carried from start to done
+    parameter integer N           = 14,  // iterations
+    parameter integer UNROLL100   = 100, // iters/cycle x100: 50=half-rate, 100/200/300/400=1/2/3/4 per cycle
+    parameter integer PARALLEL    = (UNROLL100 < 100) ? 1 : 0,  // MODE=0: run the z-path ahead
+    parameter integer WX          = 32,  // signed x/y width
+    parameter integer WZ          = 32,  // signed angle width
+    parameter integer MODE        = 0,   // 0 = rotation, 1 = vectoring
+    parameter integer WSB         = 1    // sideband carried from start to done
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -45,7 +58,8 @@ module _zkf_cordic #(
     input  wire      [N*WZ-1:0] lut,      // L[i] (unsigned) at bits [i*WZ +: WZ]
     // verilator coverage_on
     output wire                 busy,
-    output wire                 done,
+    output wire                 done,        // pulses with xn/yn (and sb_out) valid
+    output wire                 z_done,      // MODE=0 decoupled: pulses with zn valid, ahead of `done` (else == done)
     output wire       [WSB-1:0] sb_out,
     output wire signed [WX-1:0] xn,
     output wire signed [WX-1:0] yn,
@@ -53,12 +67,16 @@ module _zkf_cordic #(
 );
     localparam integer U    = (UNROLL100 < 100) ? 1 : (UNROLL100 / 100);
     localparam integer PIPE = (UNROLL100 < 100) ? 1 : 0;
-    localparam integer WI   = $clog2(N + U + 1);  // iteration-index width (holds i_r + U and idx = i_r + u, no wrap)
+    localparam integer DECOUPLE = ((MODE == 0) && (PARALLEL != 0)) ? 1 : 0;
+    localparam integer WI   = $clog2(N + U + 1);  // index width (holds i_r + U / zi_r + 1, no wrap)
 
     // verilator coverage_off
     generate
         if ((UNROLL100 != 50) && ((UNROLL100 < 100) || ((UNROLL100 % 100) != 0))) begin : g_invalid_unroll100
             _zkf_invalid_unroll100 u_invalid();
+        end
+        if (DECOUPLE && (PIPE == 0)) begin : g_invalid_decouple
+            _zkf_decouple_needs_half_rate u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -68,15 +86,73 @@ module _zkf_cordic #(
     reg        [WI-1:0] i_r;                   // base iteration index for this cycle
     reg                 run_r, done_r;
     reg       [WSB-1:0] sb_r;
+    reg         [N-1:0] sig_mem; // sigma replay: written by the decoupled z-engine, read by the rotator.
+    wire                z_done_int;
 
     generate
+        // ============================================================================================================
+        // Decoupled z-engine (MODE=0, PARALLEL): runs the sigma recurrence at full rate -- one z = z -/+ L[i] add per
+        // cycle -- AHEAD of the half-rate rotator, buffering sigma into sig_mem and exposing the residual (z_r) +
+        // z_done early. Absent (and z handled inline by the rotator) otherwise.
+        // ============================================================================================================
+        if (DECOUPLE) begin : g_sigma
+            // z_r is the residual accumulator (zn = z_r); each cycle's sigma bit is written into sig_mem for the rotator
+            // to replay. sig_mem[0] = sign(z0) is preloaded at start so the rotator reads sigma_0 on its first iteration
+            // without a head-start. The z-index advances deterministically, so L[zi_r] is pre-fetched one cycle ahead
+            // into li_r -- lifting the wide lut[] index mux out of the WZ-wide add cone, leaving only the controlled add
+            // (and the MSB sign tap) on the recurrence's critical path.
+            // verilator coverage_off
+            reg        [WI-1:0]  zi_r;              // z-iteration index for this cycle
+            reg                  z_run_r, z_dn_r;
+            reg        [WZ-1:0]  li_r;              // pre-fetched L[zi_r]
+            wire                 zneg = z_r[WZ-1];  // true => sigma = -1
+            wire                 zsub = ~zneg;      // z subtracts L[i] when sigma = +1
+            wire signed [WZ-1:0] gnz  = z_r + ($signed({1'b0, li_r}) ^ {WZ{zsub}}) + {{(WZ-1){1'b0}}, zsub};
+            wire        [WI-1:0] zi_nxt = zi_r + 1'b1;
+            wire                 z_last = (zi_nxt >= N[WI-1:0]);
+            // verilator coverage_on
+            always @(posedge clk) begin
+                if (rst) begin
+                    z_run_r <= 1'b0;
+                    z_dn_r  <= 1'b0;
+                end else begin
+                    z_dn_r <= 1'b0;
+                    if (!z_run_r) begin
+                        if (start) begin
+                            z_r        <= z0;
+                            zi_r       <= {WI{1'b0}};
+                            sig_mem[0] <= z0[WZ-1];     // sigma_0 = sign(z0), read by the rotator at iteration 0
+                            li_r       <= lut[0 +: WZ]; // pre-fetch L[0]
+                            z_run_r    <= (N != 0);
+                            z_dn_r     <= (N == 0);
+                        end
+                    end else begin
+                        z_r           <= gnz;
+                        zi_r          <= zi_nxt;
+                        sig_mem[zi_r] <= zneg;                  // sigma_(zi_r) = sign(z_(zi_r))
+                        li_r          <= lut[zi_nxt*WZ +: WZ];  // pre-fetch next L (don't-care past N, then unused)
+                        if (z_last) begin
+                            z_run_r <= 1'b0;
+                            z_dn_r  <= 1'b1;
+                        end
+                    end
+                end
+            end
+            assign z_done_int = z_dn_r;
+        end
+
+        // ============================================================================================================
+        // Rotator: the x/y datapath, shared by every mode. Per lane the sigma sign comes from sig_mem (decoupled) or,
+        // in lock-step, the inline z-chain (rotation) / y (vectoring); the inline z-chain advances z_r in g_zadv. The
+        // x/y add/sub, the FSM, and the handshake below the sigma source are identical across modes.
+        // ============================================================================================================
         if (PIPE == 0) begin : g_fast
-            // U iterations per cycle. Combinational chain from the registered state, starting at index i_r.
-            // Iterations whose index reaches N pass through as-is (last cycle may be a partial group if N % U != 0).
+            // U iterations per cycle. Combinational chain from the registered state, starting at index i_r. Iterations
+            // whose index reaches N pass through unchanged (the last cycle may be a partial group if N % U != 0).
             // verilator coverage_off
             wire signed [WX-1:0] cx [0:U];
             wire signed [WX-1:0] cy [0:U];
-            wire signed [WZ-1:0] cz [0:U];
+            wire signed [WZ-1:0] cz [0:U];     // inline z-chain (the full-rate rotator is always lock-step)
             // verilator coverage_on
             assign cx[0] = x_r;
             assign cy[0] = y_r;
@@ -101,8 +177,8 @@ module _zkf_cordic #(
                 assign cz[u+1] = en ? nz : cz[u];
             end
 
-            // i_r is the iteration counter that advances unconditionally, so latency stays constant data-independent.
-            wire last = (i_r + U[WI-1:0]) >= N[WI-1:0];   // this cycle finishes the final group
+            // i_r advances unconditionally so latency stays constant data-independent.
+            wire last = (i_r + U[WI-1:0]) >= N[WI-1:0];
 
             always @(posedge clk) begin
                 if (rst) begin
@@ -114,8 +190,7 @@ module _zkf_cordic #(
                         if (start) begin
                             x_r <= x0; y_r <= y0; z_r <= z0; i_r <= {WI{1'b0}};
                             sb_r <= sb_in;
-                            // N == 0 (no iterations) completes immediately; otherwise iterate.
-                            run_r  <= (N != 0);
+                            run_r  <= (N != 0);             // N == 0 (no iterations) completes immediately
                             done_r <= (N == 0);
                         end
                     end else begin
@@ -128,28 +203,30 @@ module _zkf_cordic #(
                     end
                 end
             end
+            assign z_done_int = done_r;        // lock-step: zn lands coincident with done
         end else begin : g_pipe
-            // One iteration per 2 cycles for wide datapaths: phase 0 registers the shifted operands and the controls
-            // sampled at the current (x, y, z); phase 1 applies the add/sub. This splits the long shift -> wide-add
-            // cone across a register so the recurrence closes timing. The cost is 2*N cycles.
+            // One iteration per 2 cycles for wide datapaths: phase 0 registers the shifted operands and the sampled
+            // sigma sign; phase 1 applies the add/sub. Splitting the long shift -> wide-add cone across a register
+            // closes timing, at 2*N cycles.
             reg                 phase_r;           // 0 = shift/sample, 1 = add/advance
             reg signed [WX-1:0] xsh_r, ysh_r;      // x>>>i, y>>>i sampled in phase 0
-            reg        [WZ-1:0] li_r;
             reg                 neg_r;             // sigma sign sampled in phase 0 (true => sigma = -1)
             // verilator coverage_off
             wire [WI-1:0]        idx = i_r;
             wire signed [WX-1:0] xsh = x_r >>> idx;
             wire signed [WX-1:0] ysh = y_r >>> idx;
-            wire [WZ-1:0]        li  = lut[idx*WZ +: WZ];
-            wire                 neg = (MODE == 0) ? z_r[WZ-1] : ~y_r[WX-1];
+            wire                 neg;
             wire                 sub_x = ~neg_r;
             wire                 sub_y =  neg_r;
-            wire                 sub_z = ~neg_r;
             wire signed [WX-1:0] nx = x_r + (ysh_r ^ {WX{sub_x}}) + {{(WX-1){1'b0}}, sub_x};
             wire signed [WX-1:0] ny = y_r + (xsh_r ^ {WX{sub_y}}) + {{(WX-1){1'b0}}, sub_y};
-            wire signed [WZ-1:0] nz = z_r + ($signed({1'b0, li_r}) ^ {WZ{sub_z}}) + {{(WZ-1){1'b0}}, sub_z};
             wire last = (i_r + 1'b1) >= N[WI-1:0];
             // verilator coverage_on
+            if (DECOUPLE) begin : g_sig
+                assign neg = sig_mem[idx];                  // sigma replayed from the ahead-running z-engine
+            end else begin : g_sig
+                assign neg = (MODE == 0) ? z_r[WZ-1] : ~y_r[WX-1];
+            end
             always @(posedge clk) begin
                 if (rst) begin
                     run_r   <= 1'b0;
@@ -159,16 +236,16 @@ module _zkf_cordic #(
                     done_r <= 1'b0;
                     if (!run_r) begin
                         if (start) begin
-                            x_r <= x0; y_r <= y0; z_r <= z0; i_r <= {WI{1'b0}};
+                            x_r <= x0; y_r <= y0; i_r <= {WI{1'b0}};
                             sb_r <= sb_in; phase_r <= 1'b0;
                             run_r  <= (N != 0);
                             done_r <= (N == 0);
                         end
                     end else if (phase_r == 1'b0) begin
-                        xsh_r <= xsh; ysh_r <= ysh; li_r <= li; neg_r <= neg;
+                        xsh_r <= xsh; ysh_r <= ysh; neg_r <= neg;
                         phase_r <= 1'b1;
                     end else begin
-                        x_r <= nx; y_r <= ny; z_r <= nz;
+                        x_r <= nx; y_r <= ny;
                         i_r <= i_r + 1'b1;
                         phase_r <= 1'b0;
                         if (last) begin
@@ -178,11 +255,31 @@ module _zkf_cordic #(
                     end
                 end
             end
+
+            if (!DECOUPLE) begin : g_zadv                  // lock-step z-path: sample L (phase 0), add to z_r (phase 1)
+                reg        [WZ-1:0] li_r;
+                // verilator coverage_off
+                wire       [WZ-1:0] li    = lut[idx*WZ +: WZ];
+                wire                sub_z = ~neg_r;
+                wire signed [WZ-1:0] nz   = z_r + ($signed({1'b0, li_r}) ^ {WZ{sub_z}}) + {{(WZ-1){1'b0}}, sub_z};
+                // verilator coverage_on
+                always @(posedge clk) begin
+                    if (!run_r) begin
+                        if (start) z_r <= z0;
+                    end else if (phase_r == 1'b0) begin
+                        li_r <= li;
+                    end else begin
+                        z_r <= nz;
+                    end
+                end
+                assign z_done_int = done_r;
+            end
         end
     endgenerate
 
     assign busy   = run_r;
     assign done   = done_r;
+    assign z_done = z_done_int;
     assign xn     = x_r;
     assign yn     = y_r;
     assign zn     = z_r;

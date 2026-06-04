@@ -114,6 +114,7 @@ async def sincos_runtime_cases(dut) -> None:
     expected_latency = sincos_latency(
         context.wman,
         unroll100=context.unroll100,
+        parallel=context.parallel,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
         stage_product=context.stage_product,
@@ -156,7 +157,7 @@ async def sincos_runtime_cases(dut) -> None:
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
         assert guard == expected_latency, (                     # II is data-independent; verify the published model
             f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
-            f"(unroll100={context.unroll100} SPROD={context.stage_product} "
+            f"(unroll100={context.unroll100} parallel={context.parallel} SPROD={context.stage_product} "
             f"SN={context.stage_normalize} SPACK={context.stage_pack})"
         )
         got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}

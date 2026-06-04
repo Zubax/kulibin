@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from common import SYNTH_REG_ATTR
-from modules import MUL_ILOG2_CONST_K, ModuleSpec, register_stages
+from modules import MUL_ILOG2_CONST_K, ModuleSpec, effective_parallel, register_stages
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -1322,6 +1322,7 @@ module {spec.top} (
         .WMAN({spec.wman}),
         .WMULTIPLIER({spec.wmultiplier}),
         .UNROLL100({spec.unroll100}),
+        .PARALLEL({effective_parallel(spec)}),
         .STAGE_INPUT({spec.stage_input}),
         .STAGE_PRODUCT({spec.stage_product}),
         .STAGE_NORMALIZE({spec.stage_normalize}),

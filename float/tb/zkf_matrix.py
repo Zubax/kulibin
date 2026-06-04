@@ -288,14 +288,16 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
 
 
 def _trans(module, sim, tier, base, w, m, kind, count, *,
-           si=None, sp=None, sn=None, pa=None, so=None, un=None) -> Run:
+           si=None, sp=None, sn=None, pa=None, so=None, un=None, parallel=None) -> Run:
     # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
-    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT); sincos uses un (UNROLL100), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT,
-    # its shared _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK). The decode and wide stages are always-on.
+    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT); sincos uses un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so
+    # (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK).
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if un is not None:
         vlog.append(("UNROLL100", un)); suffix += f"_un{un}"
+    if parallel is not None:
+        vlog.append(("PARALLEL", parallel)); suffix += f"_par{parallel}"
     if si is not None:
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
     if sp is not None:
@@ -405,7 +407,17 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2))
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=3))
-    out.append(_trans("sincos", sim, "pr", "w5_m11_un50_prod", 5, 11, "random", 256, un=50, sp=2))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_un50_prod", 5, 11, "random", 256, un=50, parallel=0, sp=2))
+    # Decoupled z-path (PARALLEL): the engine runs the narrow z-recurrence at full rate ahead of the half-rate x/y
+    # rotator and issues PHI early -- bit-identical to lock-step but with the latency dropped by min(1+STAGE_PRODUCT,
+    # gap). PARALLEL is only legal/useful half-rate (it mirrors the synthesized M36 profile), so exercise un=50 with
+    # PARALLEL=1 across STAGE_PRODUCT and pin the lock-step half-rate fallback with explicit PARALLEL=0. The test
+    # asserts bit-exactness vs the unchanged model AND measured II == model, catching a decouple bug or a latency drift.
+    # (Full-rate + PARALLEL is rejected at elaboration -- a full-rate z-chain can't get ahead -- so it is not swept.)
+    out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=2))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=3))
+    out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=0, sp=3))
     # STAGE_NORMALIZE for log2 / sincos controls the normalizer's STAGE_SPLIT. Cover it on a fast small format
     # (it needs the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))

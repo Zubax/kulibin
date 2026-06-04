@@ -38,6 +38,7 @@ class TestContext:
     stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
     unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (mirrors the UNROLL100 vlogparam)
+    parallel: int = 0        # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees an in-range exponent)
 
@@ -58,6 +59,8 @@ class TestContext:
             knob_suffix += f" PA={self.stage_pack}"
         if self.stage_output == 0:
             knob_suffix += " SO=0"
+        if self.parallel:
+            knob_suffix += " PAR"
         if self.exp_is_biased:
             knob_suffix += f" EB={self.exp_is_biased}"
         if self.assume_no_overflow:
@@ -183,6 +186,14 @@ def _unroll100() -> int:
     return value
 
 
+def _parallel(unroll100: int) -> int:
+    # Mirror the RTL PARALLEL vlogparam; its default is (UNROLL100 < 100), so derive the same default here.
+    value = plusarg_int("ZKF_PARALLEL", 1 if unroll100 < 100 else 0)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_PARALLEL must be 0 or 1, got {value}")
+    return value
+
+
 def _exp_is_biased() -> int:
     value = plusarg_int("ZKF_EXP_IS_BIASED", 0)
     if value not in (0, 1):
@@ -226,6 +237,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
         unroll100=_unroll100(),
+        parallel=_parallel(_unroll100()),
         exp_is_biased=_exp_is_biased(),
         assume_no_overflow=_assume_no_overflow(),
     )

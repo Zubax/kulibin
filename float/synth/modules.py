@@ -43,6 +43,7 @@ class ModuleSpec:
     stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
+    parallel: int = -1       # zkf_sincos: run z ahead of x/y. -1 = auto (the RTL default, = UNROLL100 < 100); 0/1 force.
     wmultiplier: int = 0     # zkf_sincos: shared-multiply tile-width hint (0 = symmetric; >=8 derives the slice grid).
     synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
@@ -578,6 +579,8 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         unroll100=100,    # one CORDIC iteration per engine cycle (shortest combinational path).
+                          # PARALLEL auto-resolves to 0 here: a full-rate z-chain can't get ahead of a full-rate x/y, so
+                          # the engine stays lock-step (forcing it would need a 2-deep z-chain that misses 100 MHz).
         stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz.
         stage_normalize=2,  # both normshift barriers load-bearing (SN=1 reproducibly drops M18 to 99.5 MHz).
         stage_pack=1,     # rounder pack register; both it and the 2x2 product split are needed for 100 MHz.
@@ -586,14 +589,17 @@ MODULES = [
     # rotation array uses no DSPs; only the correction multiplies do).
     ModuleSpec(
         name="zkf_sincos_w8m36",
-        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 + STAGE_PRODUCT=3 (4x3 split) + "
-              "STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
+        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 + PARALLEL (auto: the decoupled "
+              "full-rate z-path runs ahead so the PHI correction overlaps the CORDIC, -4 cycles) + STAGE_PRODUCT=3 "
+              "(4x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
         top="zkf_sincos_w8m36_synth_top",
         kind="sincos",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         unroll100=50,     # half-rate 2-cycle engine: the wide (XW=64) shift+add recurrence misses 100 MHz single-cycle.
+                          # PARALLEL auto-resolves to 1: the full-rate z-path (1 iter/cycle) laps the half-rate x/y so
+                          # the PHI correction overlaps the CORDIC, -4 cycles, with no Fmax or DSP cost.
         stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz.
         wmultiplier=18,   # 18-bit tile hint -> the 66x41 product derives a 4x3 single-tile grid (12 DSP) instead of
                           #   the symmetric 3x3's 18; latency-neutral.
@@ -728,11 +734,17 @@ def div_qfrac(spec: ModuleSpec) -> int:
     return latency_div_qfrac(spec.wman)
 
 
+def effective_parallel(spec: ModuleSpec) -> int:
+    # Mirror the RTL PARALLEL default (= UNROLL100 < 100) when the spec leaves it on auto (-1).
+    return spec.parallel if spec.parallel >= 0 else (1 if spec.unroll100 < 100 else 0)
+
+
 def register_stages(spec: ModuleSpec) -> int:
     return module_latency(
         spec.kind,
         wman=spec.wman,
         unroll100=spec.unroll100,
+        parallel=effective_parallel(spec),
         stage_input=spec.stage_input,
         stage_product=spec.stage_product,
         stage_align=spec.stage_align,

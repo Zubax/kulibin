@@ -174,7 +174,7 @@ truncating Horner's LSB noise — which is the smallest split that keeps the rou
 truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
 
 The trigonometric modules (sincos, atan2) carry the same ≤1 ULP contract and are built on a shared CORDIC core instead
-of polynomials.
+of polynomials, with post-refinement to achieve the accuracy target trading a few DSP tiles for a lower cycle latency.
 
 <img src="zkf_transcendental_accuracy.svg">
 

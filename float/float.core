@@ -424,6 +424,14 @@ parameters:
     datatype: int
     default: 100
     paramtype: plusarg
+  PARALLEL:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_PARALLEL:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_INPUT:
     datatype: int
     default: 0
@@ -1306,6 +1314,7 @@ targets:
       - WEXP
       - WMAN
       - UNROLL100
+      - PARALLEL
       - STAGE_INPUT
       - STAGE_OUTPUT
       - STAGE_PRODUCT
@@ -1314,6 +1323,7 @@ targets:
       - ZKF_WEXP
       - ZKF_WMAN
       - ZKF_UNROLL100
+      - ZKF_PARALLEL
       - ZKF_STAGE_INPUT
       - ZKF_STAGE_OUTPUT
       - ZKF_STAGE_PRODUCT

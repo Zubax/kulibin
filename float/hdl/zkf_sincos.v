@@ -50,8 +50,13 @@
 `default_nettype none
 
 `define ZKF_SINCOS_K (((WMAN+1)/2) + 5)
+`define ZKF_SINCOS_XYCYC ((`ZKF_SINCOS_K * 100 + UNROLL100 - 1) / UNROLL100)
+`define ZKF_SINCOS_ZGAP  (`ZKF_SINCOS_XYCYC - `ZKF_SINCOS_K)
+`define ZKF_SINCOS_PMUL_L (1 + STAGE_PRODUCT)
+`define ZKF_SINCOS_SAVED \
+    ((PARALLEL == 0) ? 0 : ((`ZKF_SINCOS_ZGAP < `ZKF_SINCOS_PMUL_L) ? `ZKF_SINCOS_ZGAP : `ZKF_SINCOS_PMUL_L))
 `define ZKF_SINCOS_LATENCY \
-    (10 + (2 * STAGE_PRODUCT) + ((`ZKF_SINCOS_K * 100 + UNROLL100 - 1) / UNROLL100) \
+    (10 + (2 * STAGE_PRODUCT) + `ZKF_SINCOS_XYCYC - `ZKF_SINCOS_SAVED \
         + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_sincos #(
@@ -64,6 +69,7 @@ module zkf_sincos #(
     parameter STAGE_NORMALIZE = 0,
     parameter STAGE_PACK      = 0,
     parameter STAGE_OUTPUT    = 0,
+    parameter PARALLEL        = (UNROLL100 < 100) ? 1 : 0,  // Testing-only knob, DO NOT override.
     parameter LATENCY         = `ZKF_SINCOS_LATENCY  // II in cycles; must equal `ZKF_SINCOS_LATENCY, checked below
 ) (
     input  wire                 clk,
@@ -168,10 +174,10 @@ module zkf_sincos #(
     // Decode (combinational): the raw fields, the shift-amount subtract sh = exp - SH_BASE, and the two clamp bounds.
     // The bounds are PARALLEL comparisons of exp against constants (e_lo = exp < SH_BASE i.e. sh < 0; e_hi = exp >
     // SH_BASE+FF i.e. sh > FF), so the shift-amount mux below is NOT a second carry chain in series with the subtract.
-    wire [WEXP-1:0]       e0  = si_x[WFULL-2:WFRAC];
-    wire signed [WSH-1:0] sh0 = $signed({{(WSH-WEXP){1'b0}}, e0}) - SH_BASE_S;
-    wire                  e_lo = $signed({1'b0, e0}) <  SH_BASE_S;   // exp < SH_BASE  (sh < 0: tiny -> lshamt 0)
-    wire                  e_hi = $signed({1'b0, e0}) >  SH_HI_S;     // exp > SH_BASE+FF (sh > FF: clamp lshamt = FF)
+    wire [WEXP-1:0]       e0   = si_x[WFULL-2:WFRAC];
+    wire signed [WSH-1:0] sh0  = $signed({{(WSH-WEXP){1'b0}}, e0}) - SH_BASE_S;
+    wire                  e_lo = $signed({1'b0, e0}) < SH_BASE_S;   // exp < SH_BASE  (sh < 0: tiny -> lshamt 0)
+    wire                  e_hi = $signed({1'b0, e0}) > SH_HI_S;     // exp > SH_BASE+FF (sh > FF: clamp lshamt = FF)
     wire                  d_sign    = si_x[WFULL-1];
     wire [WEXP-1:0]       d_exp     = e0;
     wire [WFRAC-1:0]      d_frac    = si_x[WFRAC-1:0];
@@ -281,16 +287,17 @@ module zkf_sincos #(
     // ============================================================================================================
     // Folded CORDIC engine (rotation mode) selected per WMAN. start = eng_start; carries the sideband to done.
     // ============================================================================================================
-    wire               cd_done;
+    wire               cd_done, cd_zdone;
     wire [WSB-1:0]     cd_sb;
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     wire [CWB-1:0]     const2pi;
     `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_cordic_m``W #(.MODE(0), .UNROLL100(UNROLL100), .WSB(WSB)) u_cordic ( \
+        _zkf_cordic_m``W #(.MODE(0), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WSB(WSB)) u_cordic ( \
             .clk(clk), .rst(rst), .start(eng_start), .sb_in(sb_red), \
             .x0({WX{1'b0}}), .y0({WX{1'b0}}), .z0(z0), \
-            .busy(), .done(cd_done), .sb_out(cd_sb), .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(const2pi));
+            .busy(), .done(cd_done), .z_done(cd_zdone), .sb_out(cd_sb), \
+            .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(const2pi));
     generate
         if (1'b0) begin : g_none
         `ZKF_SINCOS_CORE(11)
@@ -368,35 +375,37 @@ module zkf_sincos #(
     reg signed [WP-1:0]  tprod_r;        // PHI product const2pi*z_K registered; phi = tprod_r >> (ZF+PHIDROP)
     reg signed [WP-1:0]  corr_s_r;       // S product (x_K*phi) registered; C product is consumed straight into b2_cos
     reg [WMAG-1:0]       bypass_mag_r;   // const2pi*operand, computed during the CORDIC (small-angle bypass magnitude)
+    reg                  phi_seen;       // this transaction's PHI product (tprod_r) has returned -- skip the P_PHI wait
 
     // verilator coverage_off
     wire signed [WCP-1:0] cphi_op   = $signed(cd_zn[WCP-1:0]);          // narrowed CORDIC residual z_K (corr. angle)
     wire signed [WPHI-1:0] phi      = tprod_r >>> (ZF + PHIDROP);       // ~2*pi*z_K, narrowed
     wire signed [WXC-1:0]  xc       = e_xn >>> XKDROP;
     wire signed [WXC-1:0]  yc       = e_yn >>> XKDROP;
-    // Shared-multiply operand select. a = const2pi for the const products (BYP during the CORDIC, PHI at cd_done);
+    // Shared-multiply operand select. a = const2pi for the const products (BYP during the CORDIC, PHI at cd_zdone);
     // x_K / y_K for the S / C corrections. b = bypass operand (BYP), narrowed residual z_K (PHI), or phi (S/C).
     wire                  issue_c   = (mphase == P_SC) && (sc_iss == 2'd1);
     wire signed [WA-1:0]  mul_a_sel = (mphase != P_SC) ? $signed({{(WA-CWB){1'b0}}, const2pi})
                                     : issue_c          ? $signed({{(WA-WXC){yc[WXC-1]}}, yc})
                                     :                    $signed({{(WA-WXC){xc[WXC-1]}}, xc});
-    // In P_IDLE the multiply issues BYP at eng_start (b = bypass operand) and PHI at cd_done (b = the residual z_K read
-    // straight off the engine output cd_zn -- these two events are on distinct cycles); S/C present phi in P_SC.
+    // In P_IDLE the multiply issues BYP at eng_start (b = bypass operand) and PHI at cd_zdone (b = the residual z_K
+    // read straight off the engine output cd_zn -- these two events are on distinct cycles); S/C present phi in P_SC.
+    // cd_zdone leads cd_done in the decoupled engine (==cd_done in lock-step), so PHI multiply overlaps CORDIC tail.
     wire signed [WB-1:0]  mul_b_sel = (mphase != P_IDLE) ? $signed({{(WB-WPHI){phi[WPHI-1]}}, phi})
-                                    : cd_done            ? $signed({{(WB-WCP){cphi_op[WCP-1]}}, cphi_op})
+                                    : cd_zdone           ? $signed({{(WB-WCP){cphi_op[WCP-1]}}, cphi_op})
                                     :                      $signed({{(WB-WOP){1'b0}}, operand});
     wire [1:0]            mul_sb_in = (mphase != P_IDLE) ? (issue_c ? C_TAG : S_TAG)
-                                    : cd_done            ? PHI_TAG : BYP_TAG;
+                                    : cd_zdone           ? PHI_TAG : BYP_TAG;
     wire signed [WP-1:0]   pmul_p;             // exact product of the current phase's operands (shared multiply)
     // verilator coverage_on
 
     // One multiplier time-shared over the products. Up to two products are in flight at once (BYP overlaps the CORDIC;
     // S/C are pipelined two-deep); the 2-bit sideband tag (sb_in -> sb_out) carried in step with each product routes
-    // its result. BYP and PHI are issued combinationally (at eng_start and cd_done, both in P_IDLE, off the engine
+    // its result. BYP and PHI are issued combinationally (at eng_start and cd_zdone, both in P_IDLE, off the engine
     // outputs); S and C are issued by the FSM in P_SC.
     wire       mul_valid;
     wire [1:0] mul_sb_out;
-    wire       mul_in_valid = ((mphase == P_IDLE) && (eng_start | cd_done)) | ((mphase == P_SC) && (sc_iss < 2'd2));
+    wire       mul_in_valid = ((mphase == P_IDLE) && (eng_start | cd_zdone)) | ((mphase == P_SC) && (sc_iss < 2'd2));
     _zkf_pmul #(
         .WA(WA), .WB(WB), .A_SIGNED(1), .B_SIGNED(1), .WSB(2), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
     ) u_pmul (
@@ -414,8 +423,14 @@ module zkf_sincos #(
             mphase    <= P_IDLE[2:0];
             sc_iss    <= 2'd0;
             b2_valid  <= 1'b0;
+            phi_seen  <= 1'b0;
         end else begin
             b2_valid  <= 1'b0;
+            // Track whether this transaction's PHI product has returned. Armed at accept (far ahead of the CORDIC) and
+            // set when PHI_TAG comes back -- which is DURING the CORDIC when decoupled (cd_zdone leads cd_done), so by
+            // the time cd_done arrives phi is already in tprod_r and the back-end skips the P_PHI wait.
+            if (accept) phi_seen <= 1'b0;
+            else if (mul_valid && (mul_sb_out == PHI_TAG)) phi_seen <= 1'b1;
             if (mul_valid) begin
                 case (mul_sb_out)
                     BYP_TAG: bypass_mag_r <= pmul_p;   // sign-extend the non-negative WP-bit product to WMAG (WMAG>WP)
@@ -425,9 +440,14 @@ module zkf_sincos #(
                 endcase
             end
             case (mphase)
-                P_IDLE[2:0]: if (cd_done) begin                  // PHI issued combinationally this cycle (off cd_zn)
+                P_IDLE[2:0]: if (cd_done) begin                  // x_K/y_K valid now; PHI was issued earlier (cd_zdone)
                     e_xn <= cd_xn; e_yn <= cd_yn; e_sb <= cd_sb;
-                    mphase    <= P_PHI[2:0];
+                    if (phi_seen) begin                          // decoupled: phi already in tprod_r -> straight to S/C
+                        mphase <= P_SC[2:0];
+                        sc_iss <= 2'd0;
+                    end else begin                               // lock-step: PHI issued this cycle, wait for it
+                        mphase <= P_PHI[2:0];
+                    end
                 end
                 P_PHI[2:0]: if (mul_valid && (mul_sb_out == PHI_TAG)) begin   // phi captured above; begin S/C
                     mphase <= P_SC[2:0];
@@ -591,5 +611,9 @@ module zkf_sincos #(
 endmodule
 
 `undef ZKF_SINCOS_LATENCY
+`undef ZKF_SINCOS_SAVED
+`undef ZKF_SINCOS_PMUL_L
+`undef ZKF_SINCOS_ZGAP
+`undef ZKF_SINCOS_XYCYC
 `undef ZKF_SINCOS_K
 `default_nettype wire
