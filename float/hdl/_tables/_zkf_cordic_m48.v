@@ -25,7 +25,9 @@ module _zkf_cordic_m48 #(
     output wire signed [ 81:0] xn,
     output wire signed [ 81:0] yn,
     output wire signed [ 82:0] zn,
-    output wire        [ 82:0] const2pi    // round(2*pi * 2**XF), CWB = XF + 3 bits
+    output wire        [ 82:0] const2pi,   // round(2*pi * 2**XF), CWB = XF + 3 bits (sin/cos small angle)
+    output wire        [ 77:0] inv_tau,    // round(2**XF / (2*pi)), XF-2 bits (atan2 turns scaling)
+    output wire        [ 81:0] kinv        // round(2**XF / gain), inverse CORDIC-gain (atan2 magnitude)
 );
     localparam integer N    = 29;   // iterations (folded over the cycles selected by UNROLL100)
     localparam integer WX   = 82;
@@ -33,9 +35,11 @@ module _zkf_cordic_m48 #(
     localparam integer XF   = 80;   // x/y fractional scale
     localparam integer ZF   = 80;   // angle (turns) fractional scale == WT + 2 + GUARD_ZF
     localparam integer CWB  = 83;
-    localparam signed [WX-1:0] KINV = 82'sd734123752169000916868811;   // round(1/gain * 2**XF)
+    localparam signed [WX-1:0] KINV = 82'sd734123752169000916868811;   // round(1/gain * 2**XF) (== 2**XF/gain)
 
     assign const2pi = 83'd7595904947272677161575987;
+    assign inv_tau  = 78'd192406520023089232379658;
+    assign kinv     = KINV[WX-1:0];
 
     // arctan(2^-i)/(2*pi) in turns, scale 2**-ZF, packed L[0] in the low WZ bits.
     wire [N*WZ-1:0] LUT = {
