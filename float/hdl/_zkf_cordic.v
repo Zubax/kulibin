@@ -89,6 +89,31 @@ module _zkf_cordic #(
     reg         [N-1:0] sig_mem; // sigma replay: written by the decoupled z-engine, read by the rotator.
     wire                z_done_int;
 
+    // Unpack the flat L[] bus into an indexable array. Reading lut[idx*WZ +: WZ] with a runtime idx makes the synthesis
+    // tool materialize the idx*WZ bit-offset multiply (when WZ is not a power of two, a DSP/soft multiplier ahead of the
+    // angle mux -- the Diamond/LSE critical path on the wide vectoring engine, where it lands a multiplier + a huge
+    // fanout net on the per-iteration L read). Slicing the bus at the COMPILE-TIME offsets i*WZ into lut_a[] and reading
+    // lut_a[idx] instead leaves a plain N:1 word mux with no index arithmetic. Bit-identical to the flat-slice reads.
+    // The array carries zero sentinel entries past index N-1: the fast rotator reads lut_a[i_r + u] for u in 0..U-1,
+    // where en=0 makes any read past N-1 a don't-care/unused. i_r advances by U per active cycle, so after the final
+    // group it can idle at ceil(N/U)*U (<= N+U-1 when N is not a multiple of U); the widest read is then i_r + (U-1) <=
+    // N + 2U - 2. The decoupled prefetch reads lut_a[zi_nxt] up to N. Sizing to N + 2U - 1 keeps EVERY read (including
+    // the post-run idle reads for U > 1) in bounds with a one-entry margin, without an index clamp on the LUT read.
+    // (For U == 1 this is N + 1, i.e. the single original sentinel plus the prefetch slot -- unchanged behaviour.)
+    localparam integer LUT_HI = N + 2*U - 1;
+    // verilator coverage_off
+    wire [WZ-1:0] lut_a [0:LUT_HI];
+    // verilator coverage_on
+    genvar gl;
+    generate
+        for (gl = 0; gl < N; gl = gl + 1) begin : g_lut_unpack
+            assign lut_a[gl] = lut[gl*WZ +: WZ];   // constant (elaboration-time) offset -- no runtime multiply
+        end
+        for (gl = N; gl <= LUT_HI; gl = gl + 1) begin : g_lut_sentinel
+            assign lut_a[gl] = {WZ{1'b0}};         // don't-care sentinels for terminal (en=0 / prefetch) indices
+        end
+    endgenerate
+
     generate
         // ============================================================================================================
         // Decoupled z-engine (MODE=0, PARALLEL): runs the sigma recurrence at full rate -- one z = z -/+ L[i] add per
@@ -122,7 +147,7 @@ module _zkf_cordic #(
                             z_r        <= z0;
                             zi_r       <= {WI{1'b0}};
                             sig_mem[0] <= z0[WZ-1];     // sigma_0 = sign(z0), read by the rotator at iteration 0
-                            li_r       <= lut[0 +: WZ]; // pre-fetch L[0]
+                            li_r       <= lut_a[0];     // pre-fetch L[0]
                             z_run_r    <= (N != 0);
                             z_dn_r     <= (N == 0);
                         end
@@ -130,7 +155,7 @@ module _zkf_cordic #(
                         z_r           <= gnz;
                         zi_r          <= zi_nxt;
                         sig_mem[zi_r] <= zneg;                  // sigma_(zi_r) = sign(z_(zi_r))
-                        li_r          <= lut[zi_nxt*WZ +: WZ];  // pre-fetch next L (don't-care past N, then unused)
+                        li_r          <= lut_a[zi_nxt];         // pre-fetch next L (don't-care past N, then unused)
                         if (z_last) begin
                             z_run_r <= 1'b0;
                             z_dn_r  <= 1'b1;
@@ -164,7 +189,7 @@ module _zkf_cordic #(
                 wire                 en    = (idx < N[WI-1:0]);
                 wire signed [WX-1:0] ysh   = cy[u] >>> idx;
                 wire signed [WX-1:0] xsh   = cx[u] >>> idx;
-                wire [WZ-1:0]        li    = lut[idx*WZ +: WZ];
+                wire [WZ-1:0]        li    = lut_a[idx];
                 wire                 neg   = (MODE == 0) ? cz[u][WZ-1] : ~cy[u][WX-1];  // true => sigma = -1
                 wire                 sub_x = ~neg;      // x subtracts ysh when sigma = +1
                 wire                 sub_y =  neg;      // y subtracts xsh when sigma = -1
@@ -259,7 +284,7 @@ module _zkf_cordic #(
             if (!DECOUPLE) begin : g_zadv                  // lock-step z-path: sample L (phase 0), add to z_r (phase 1)
                 reg        [WZ-1:0] li_r;
                 // verilator coverage_off
-                wire       [WZ-1:0] li    = lut[idx*WZ +: WZ];
+                wire       [WZ-1:0] li    = lut_a[idx];
                 wire                sub_z = ~neg_r;
                 wire signed [WZ-1:0] nz   = z_r + ($signed({1'b0, li_r}) ^ {WZ{sub_z}}) + {{(WZ-1){1'b0}}, sub_z};
                 // verilator coverage_on
