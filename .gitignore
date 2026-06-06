@@ -41,3 +41,4 @@ hdr_log
 *.vcd
 *.history
 *.lock
+.claude/worktrees
