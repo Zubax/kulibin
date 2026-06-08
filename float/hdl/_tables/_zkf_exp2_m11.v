@@ -53,7 +53,7 @@ module _zkf_exp2_m11 #(parameter integer WMAN = 11, parameter integer D = 2, par
     end
     wire [K-1:0]  idx = f[FF-1 -: K];
     wire [RW-1:0] w   = f[RW-1:0];
-    reg [(D+1)*CW-1:0] r_co1, r_co2;
+    reg  [(D+1)*CW-1:0] r_co1, r_co2;
     reg        [RW-1:0] r_w1, r_w2;
     reg                 r_rv1, r_rv2;
     reg      [HSBW-1:0] r_rsb1, r_rsb2;

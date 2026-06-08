@@ -7,17 +7,31 @@
 ///   log2(+0)       = -inf, pole=1
 ///   log2(x<0)      = -inf, domain_error=1
 ///
-/// Algorithm:
+/// Algorithm (symmetric argument reduction; mirrors tb/zkf_model.py::log2_reference bit-for-bit):
 ///
-///  1. With x = m * 2^e (m = 1.frac in [1,2), e = exp-BIAS), log2(x) = e + log2(m).
+///  1. With x = m * 2^e (m = 1.frac in [1,2), e = exp-BIAS), log2(x) = e + log2(m). Re-center the mantissa into the
+///     symmetric interval: if m >= sqrt(2) (significand sig >= THR = round(sqrt(2)*2^WFRAC)), halve m and increment e,
+///     so the reduced mantissa m' in [sqrt(1/2), sqrt(2)) and log2(m') in [-1/2, 1/2). The reduced fraction f = m'-1 is
+///     exact (Sterbenz). This removes the catastrophic x->1 cancellation of the old m in [1,2) reduction (where e=-1
+///     and log2(m)->1 nearly cancel): now x->1 maps to e=0, f->0 -- the direct, cancellation-free path.
 ///
-///  2. The pipelined per-WMAN table+polynomial core selected by the generate-if evaluates log2(m) = t*P(t)
-///     (t = stored fraction) as a fixed-point fraction in [0,1), factoring out the exact t for full relative
-///     accuracy near m == 1.
+///  2. Two exact integer quantities are formed from the stored fraction (no irrational subtraction; the index
+///     arithmetic is identical model<->RTL), at scale 2^-(WFRAC+1):
+///       v = f + 1/2 in [0.207, 0.914)  -- UNSIGNED index coordinate (top K bits select the segment); WFRAC+1 = WMAN
+///                                         bits. m < sqrt(2): v = 2^WFRAC + 2*frac;  m >= sqrt(2): v = frac.
+///       f = v - 2^WFRAC                -- SIGNED combine operand (= the reduced fraction at scale 2^-(WFRAC+1)).
+///                                         m < sqrt(2): f = 2*frac (>= 0);  m >= sqrt(2): f = frac - 2^WFRAC (< 0).
 ///
-///  3. The signed fixed-point sum R = e + log2(m) is renormalized and rounded by _zkf_fixed_to_float, which owns the
-///     _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input register,
-///     and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path is needed.
+///  3. The pipelined per-WMAN table+polynomial core (selected by the generate-if) evaluates the smooth kernel
+///     C(f) = log2(1+f)/f via the segmented truncating Horner (indexed by v) and returns the SIGNED product
+///     log2(m') = f*C(f) as a fixed-point value at scale 2^-F2 (F2 = WFRAC+1+CF).
+///
+///  4. The signed fixed-point sum R = (e << F2) + log2(m') is renormalized and rounded by _zkf_fixed_to_float, which
+///     owns the _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input
+///     register, and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path.
+///
+/// The re-center (THR compare, v/f construction, e increment) is combinational and folds into the existing decode cone
+/// ahead of the evaluator's first (ROM-read) register, so the operator latency is unchanged from the old reduction.
 ///
 /// STAGE_PRODUCT selects product computation staging; see _zkf_pmul for details.
 /// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
@@ -70,12 +84,13 @@ module zkf_log2 #(
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
-    // CF/F2: MUST match the generator's GUARD_CF (float/zkf_transcendental.py). F2 = WFRAC + CF.
+    // CF: MUST match the generator's GUARD_CF (float/zkf_transcendental.py). The symmetric reduction puts the reduced
+    // fraction f at scale 2^-(WFRAC+1), so the combine scale gains one bit over the old reduction: F2 = WFRAC + 1 + CF.
     localparam CF     = WMAN + 12;
-    localparam F2     = WFRAC + CF;             // fractional bits of log2(1+t) and of the R accumulator
+    localparam F2     = WFRAC + 1 + CF;         // fractional bits of log2(m') and of the R accumulator
     localparam WNORM  = WEXP + F2 + 1;          // magnitude width fed to the normalizer
-    localparam WR     = WNORM + 1;              // signed R = e + log2(m) width
-    localparam WE     = WEXP + 1;               // signed e = exp - BIAS
+    localparam WR     = WNORM + 1;              // signed R = (e << F2) + log2(m') width
+    localparam WE     = WEXP + 1;               // signed e = exp - BIAS (+1 on re-center)
     // Signed unbiased result exponent in [-F2, WEXP-1]; also kept >= WEXP+2 because _zkf_pack requires its
     // exponent field to be at least WEXP+1 bits wide for its internal bias arithmetic.
     localparam WEU_RAW = $clog2(F2 + 1) + 2;
@@ -84,39 +99,105 @@ module zkf_log2 #(
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;
 
-    // -- Optional input register stage (latch x ahead of the decode/evaluator cone).
-    wire             in_valid_q;
-    wire [WFULL-1:0] x_q;
-    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
-        .clk(clk), .rst(rst), .in_valid(in_valid), .in(x), .out_valid(in_valid_q), .out(x_q)
-    );
+    // Re-center threshold THR = round(sqrt(2) * 2^WFRAC): re-center iff the WMAN-bit significand sig >= THR (m >= sqrt2).
+    // Computed at elaboration by an exact integer sqrt (the same value as the model's _trans_sqrt2_threshold and the
+    // generator's log2_sqrt2_threshold): round(sqrt(S)) for S = 2^(2*WFRAC+1) is (floor(sqrt(4*S)) + 1) / 2, and
+    // 4*S = 2^(2*WFRAC+3). The streaming digit-by-digit isqrt below is a fixed-bound constant function (no while loop)
+    // so it elaborates portably; WMAN <= 53 keeps 2*WFRAC+3 <= 107 < 128.
+    // verilator coverage_off
+    function automatic [127:0] _zkf_isqrt128;
+        input [127:0] n_in;
+        reg [127:0] n, rem, root;
+        integer i;
+        begin
+            n    = n_in;
+            rem  = 0;
+            root = 0;
+            for (i = 0; i < 64; i = i + 1) begin
+                root = root << 1;
+                rem  = (rem << 2) | ((n >> 126) & 128'd3);   // stream the next two bits from the MSB
+                n    = n << 2;
+                if (rem > (root << 1)) begin                 // rem > 2*root  <=>  rem >= 2*root + 1
+                    rem  = rem - ((root << 1) | 128'd1);
+                    root = root + 1;
+                end
+            end
+            _zkf_isqrt128 = root;
+        end
+    endfunction
+    // verilator coverage_on
+    localparam [WFRAC:0] THR = (_zkf_isqrt128(128'd1 << (2 * WFRAC + 3)) + 128'd1) >> 1;
 
-    // -- Decode and classify.
-    wire             sign_in = x_q[WFULL-1];
-    wire [WEXP-1:0]  exp_in  = x_q[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] frac_in = x_q[WFRAC-1:0];
+    // -- Decode, classify, and re-center -- all combinational from the PRE-register input x, so the optional
+    // STAGE_INPUT register below latches the finished {v, f, e, flags} payload rather than raw x. This keeps the
+    // re-center cone (the THR compare + the v/f selects, the only logic added by the symmetric reduction) on the
+    // input -> register side, isolated from the register -> ROM-read path that addresses the table core's BRAM; on
+    // the wide configs (which run STAGE_INPUT=1) that isolation is what holds timing. The register count is unchanged,
+    // so the latency is identical whether the re-center sits before or after this stage.
+    wire             sign_in = x[WFULL-1];
+    wire [WEXP-1:0]  exp_in  = x[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] frac_in = x[WFRAC-1:0];
     wire             is_zero = ~|exp_in;
     wire             is_inf  =  &exp_in;
     // Special results are all +/-inf: +inf for +inf input; -inf for +0 (pole), negative finite, or -inf (domain).
-    wire             is_special_in   = is_inf | is_zero | sign_in;
-    wire             special_sign_in = is_zero | sign_in;          // 0 -> +inf, 1 -> -inf
-    wire             pole_in         = is_zero;
-    wire             de_in           = sign_in & ~is_zero;
+    wire             is_special_pre   = is_inf | is_zero | sign_in;
+    wire             special_sign_pre = is_zero | sign_in;          // 0 -> +inf, 1 -> -inf
+    wire             pole_pre         = is_zero;
+    wire             de_pre           = sign_in & ~is_zero;
+
+    // Symmetric re-center. sig = {hidden 1, frac} is the WMAN-bit significand; re-center when m >= sqrt(2). v is the
+    // unsigned index coordinate (WMAN bits) and f the signed combine operand (WMAN = WFRAC+1 bits), both formed exactly
+    // from frac (no irrational subtraction), matching the model. v and f are carry-free concatenations: the +2^WFRAC
+    // only sets bit WFRAC, which never collides with the low bits of 2*frac in the branch that selects them (m < sqrt(2)
+    // keeps frac < 2^(WFRAC-1)). The two's-complement identity {1'b1, frac} (= sig) read as signed is exactly
+    // frac - 2^WFRAC, the re-center branch's f.
+    wire [WFRAC:0]   sig_in    = {1'b1, frac_in};                  // WMAN-bit significand, m = sig / 2^WFRAC
+    wire             recenter  = sig_in >= THR;                    // m >= sqrt(2)
+    wire [WMAN-1:0]  v_pre     = recenter ? {1'b0, frac_in}                  // v = frac
+                                          : {1'b1, frac_in[WFRAC-2:0], 1'b0};  // v = 2^WFRAC + 2*frac (no carry)
     // verilator coverage_off
-    wire signed [WE-1:0] e_in = $signed({1'b0, exp_in}) - $signed(BIAS[WE-1:0]);
+    wire signed [WMAN-1:0] f_pre = recenter ? $signed({1'b1, frac_in})   // f = frac - 2^WFRAC (< 0)
+                                            : $signed({frac_in, 1'b0});   // f = 2*frac          (>= 0)
+    // e = (exp - BIAS) + (re-center ? 1 : 0); the +1 lands in the sideband alongside f, so the combine sees e + log2(m').
+    wire signed [WE-1:0] e_pre = ($signed({1'b0, exp_in}) - $signed(BIAS[WE-1:0]))
+                                 + $signed({{(WE-1){1'b0}}, recenter});
     // verilator coverage_on
 
-    // -- Pipelined evaluator: log2(m) = t*P(t). e and the special-case flags ride the sideband, aligned to l_fix.
+    // -- Optional input register stage: latch the decoded {v, f, e, flags} payload ahead of the table core. Pipe width
+    // packs the index coordinate, the signed reduced argument, the signed exponent, and the four special-case flags.
+    localparam DECW = WMAN + WMAN + WE + 4;
+    wire            in_valid_q;
+    // verilator coverage_off
+    wire [DECW-1:0] dec_q;
+    // verilator coverage_on
+    zkf_pipe #(.W(DECW), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid),
+        .in({v_pre, f_pre, e_pre, is_special_pre, special_sign_pre, pole_pre, de_pre}),
+        .out_valid(in_valid_q), .out(dec_q)
+    );
+    wire        [WMAN-1:0] v_in            = dec_q[DECW-1 -: WMAN];
+    // verilator coverage_off
+    wire signed [WMAN-1:0] f_in            = $signed(dec_q[DECW-1-WMAN -: WMAN]);
+    wire signed [WE-1:0]   e_in            = $signed(dec_q[4 +: WE]);
+    // verilator coverage_on
+    wire                   is_special_in   = dec_q[3];
+    wire                   special_sign_in = dec_q[2];
+    wire                   pole_in         = dec_q[1];
+    wire                   de_in           = dec_q[0];
+
+    // -- Pipelined evaluator: log2(m') = f*C(f). e and the special-case flags ride the sideband, aligned to l_fix.
     wire [SBW-1:0] sb_in_l = {e_in, is_special_in, special_sign_in, pole_in, de_in};
     wire           ev_valid;
     wire [SBW-1:0] sb_out_l;
-    wire [F2-1:0]  l_fix;
+    // verilator coverage_off
+    wire signed [F2:0] l_fix;   // SIGNED log2(m') = f*C(f) at scale 2^-F2 (F2+1 bits); negative when m >= sqrt(2)
+    // verilator coverage_on
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
     // A WMAN without a pre-generated table names a missing module and fails loudly.
     `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_eval ( \
-            .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .frac(frac_in), \
+            .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .v(v_in), .f(f_in), \
             .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
     generate
         if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
@@ -174,17 +255,19 @@ module zkf_log2 #(
     wire                 e_pole    = sb_out_l[1];
     wire                 e_de      = sb_out_l[0];
 
-    // -- R = e + log2(m), as a signed fixed-point value; take its magnitude for normalization.
+    // -- R = (e << F2) + log2(m'), as a signed fixed-point value; take its magnitude for normalization. log2(m') is the
+    // signed l_fix (F2+1 bits), sign-extended into the accumulator alongside the shifted exponent.
     // verilator coverage_off
-    wire signed [WR-1:0] e_ext  = {{(WR-WE){e_o[WE-1]}}, e_o};
-    wire signed [WR-1:0] r_val  = (e_ext <<< F2) + $signed({{(WR-F2){1'b0}}, l_fix});
-    wire                 r_sign = r_val[WR-1];
+    wire signed [WR-1:0] e_ext   = {{(WR-WE){e_o[WE-1]}}, e_o};
+    wire signed [WR-1:0] l_ext   = {{(WR-(F2+1)){l_fix[F2]}}, l_fix};
+    wire signed [WR-1:0] r_val   = (e_ext <<< F2) + l_ext;
+    wire                 r_sign  = r_val[WR-1];
     wire        [WR-1:0] r_abs  = r_sign ? (~r_val + {{(WR-1){1'b0}}, 1'b1}) : r_val;
     wire     [WNORM-1:0] mag    = r_abs[WNORM-1:0];
     // verilator coverage_on
 
     // Resolve the final sign at the P1 input: when the evaluator flagged a special result (+/-inf), the resolved
-    // sign is the special-case sign carried in the sideband; otherwise it is the sign of R = e + log2(m).
+    // sign is the special-case sign carried in the sideband; otherwise it is the sign of R = e + log2(m').
     wire resolved_sign = e_special ? e_ssign : r_sign;
 
     // -- Stage P1: register the magnitude, the resolved sign, and the special-case sideband ahead of the
@@ -209,7 +292,7 @@ module zkf_log2 #(
 
     // -- Normalize, combine, and pack via the shared back-end. The helper owns the _zkf_normshift instance
     // (STAGE_SPLIT = 1 + STAGE_NORMALIZE), the GRS extraction, exp_unbiased = (WNORM-1-F2) - shamt, the optional P2
-    // pack-input register (STAGE_PACK_INPUT=1 since zkf_log2 needs the extra cycle for fmax closure), and the
+    // pack-input register (STAGE_PACK forwarded to _zkf_pack.STAGE_INPUT; the synth configs set it for fmax closure), and the
     // _zkf_pack output. The pole / domain_error flags ride the WSB=2 sideband and emerge in lockstep with y.
     wire [1:0] sb_out_flags;
     localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = WNORM - 1 - F2;

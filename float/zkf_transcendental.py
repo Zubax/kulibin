@@ -7,8 +7,12 @@ Both operators reduce to evaluating a smooth helper function on the unit interva
   * exp2 evaluates ``H(s) = 2**s`` for ``s in [0,1)`` (the fractional part of the input); the result is the
     significand ``2**f in [1,2)``.
 
-  * log2 evaluates ``P(t) = log2(1+t)/t`` for ``t in [0,1)`` (the input's stored fraction); ``log2(m) = t * P(t)``.
-    Factoring out the exact ``t`` keeps full relative accuracy near ``m == 1`` without a doubled-width table.
+  * log2 uses the standard SYMMETRIC argument reduction: after ``x = m * 2**e`` (m in [1,2)), re-center so the
+    reduced mantissa ``m' in [sqrt(1/2), sqrt(2))`` and ``log2(m') in [-1/2, 1/2)`` (``m >= sqrt(2)`` halves m and
+    increments e). The signed reduced fraction ``f = m' - 1 in [sqrt(1/2)-1, sqrt(2)-1] = [-0.293, 0.414]`` is exact
+    (Sterbenz). The kernel is the smooth ``C(f) = log2(1+f)/f`` (~1.4427 at f=0) and ``log2(m') = f * C(f)``. The
+    symmetric reduction removes the catastrophic cancellation of the old ``m in [1,2)`` reduction at x -> 1 (where
+    e = -1 and log2(m) -> 1 nearly cancel): now x -> 1 maps to e = 0, f -> 0, the direct cancellation-free path.
 
 The helper interval is split into ``2**K`` equal segments indexed by the top ``K`` argument bits; within a segment a
 degree-``D`` polynomial in the segment-local coordinate ``wn in [0,1)`` is evaluated by a truncating fixed-point Horner
@@ -69,12 +73,12 @@ ACC_MARGIN = 3  # extra accumulator bits above the measured maximum, guarding ag
 
 # Minimum supported WMAN. degree() peels K_CAP segment-index bits off the reduced argument and needs >=1 bit left for
 # the in-segment coordinate, so the argument must be >= K_CAP + 1 bits wide. exp2's argument is the FF = WMAN + GUARD
-# bit reduced fraction (always wide enough); log2's is the stored fraction WFRAC = WMAN - 1, which needs WMAN - 1 >=
-# K_CAP + 1, i.e. WMAN >= K_CAP + 2 = 11 -- exactly binary16's significand precision (10 stored + 1 hidden). At and
-# above it both functions keep the full K_CAP segments and share one degree formula; below it log2's narrower fraction
-# can no longer fill K_CAP segments and would force a higher per-segment degree (the old per-function divergence).
-# The public hdl/zkf_<func>.v modules enumerate this closed-form range; a WMAN in it without a pre-generated table
-# fails elaboration loudly (the named _zkf_<func>_m<WMAN> module is undefined), and WMAN outside it hits a sentinel.
+# bit reduced fraction (always wide enough); log2's symmetric-reduction index coordinate v is WFRAC + 1 = WMAN bits
+# wide (see choose_spec), which needs WMAN >= K_CAP + 1 -- looser than exp2. The binding constraint is thus WMAN >=
+# K_CAP + 2 = 11 (exp2's FF must clear it too, and 11 is exactly binary16's significand precision, 10 stored + 1
+# hidden). At and above it both functions keep the full K_CAP segments and share one degree formula. The public
+# hdl/zkf_<func>.v modules enumerate this closed-form range; a WMAN in it without a pre-generated table fails
+# elaboration loudly (the named _zkf_<func>_m<WMAN> module is undefined), and WMAN outside it hits a sentinel.
 WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
 
 # WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
@@ -93,6 +97,26 @@ def ff_bits(wman: int) -> int:
 
 def cf_bits(wman: int) -> int:
     return wman + GUARD
+
+
+# log2 symmetric-reduction geometry (see the module docstring and choose_spec). After x = m*2**e with m in [1,2),
+# re-center to m' in [sqrt(1/2), sqrt(2)) so log2(m') in [-1/2, 1/2). The reduced fraction f = m' - 1 lies in
+# [sqrt(1/2)-1, sqrt(2)-1]. The table is INDEXED by the unsigned quantity v = f + 1/2 (an exact power-of-two shift),
+# which lands in [sqrt(1/2)-1/2, sqrt(2)-1/2) = [0.2071, 0.9142) -- strictly inside [0,1) -- so the existing top-K-bits
+# segment indexing of the unit interval is reused unchanged. Per segment we fit C(f) = C(v - 1/2). The RTL builds v as
+# a (WFRAC+1)-bit fixed-point fraction directly from the stored fraction (no irrational subtraction; the index
+# arithmetic is exact and identical model<->RTL): m < sqrt(2) gives v = 2**WFRAC + 2*frac, m >= sqrt(2) gives v = frac.
+# The signed combine operand is F = v - 2**WFRAC (= f at scale 2**-(WFRAC+1)): m < sqrt(2) -> F = 2*frac (>= 0),
+# m >= sqrt(2) -> F = frac - 2**WFRAC (< 0).
+LOG2_V_OFFSET = mp.mpf(1) / 2   # v = f + LOG2_V_OFFSET maps the signed reduced fraction f into [0,1) for indexing
+
+
+def log2_sqrt2_threshold(wfrac: int) -> int:
+    """Integer significand threshold THR for the re-center test m >= sqrt(2), i.e. sig >= THR with sig the WMAN-bit
+    significand (m = sig / 2**WFRAC). Round-to-nearest; the exact value is internal -- both reduced branches stay
+    within the fitted f range [sqrt(1/2)-1, sqrt(2)-1] for any sane rounding, so this only picks where the split lands.
+    Mirror this constant in the phase-2 RTL re-center stage."""
+    return int(mp.nint(mp.sqrt(2) * (1 << wfrac)))
 
 
 def degree(wman: int) -> int:
@@ -136,20 +160,28 @@ class Spec:
 # Coefficient fitting (high precision via mpmath)
 # --------------------------------------------------------------------------------------------------
 def helper_true(func: str, arg):
-    """Exact helper value at unit-interval argument ``arg`` (mpf), high precision."""
+    """Exact helper value (mpf), high precision. exp2: H(s)=2**s on the unit-interval argument s. log2: the kernel
+    C(f)=log2(1+f)/f evaluated at the SIGNED reduced fraction ``arg`` = f in [sqrt(1/2)-1, sqrt(2)-1], with the
+    removable singularity C(0)=1/ln2. (The caller maps the unsigned index coordinate v in [0,1) to f = v - 1/2.)"""
     if func == "exp2":
         return mp.power(2, arg)
-    # log2: P(t) = log2(1+t)/t, with the removable singularity P(0) = 1/ln2.
+    # log2: C(f) = log2(1+f)/f, with the removable singularity C(0) = 1/ln2.
     if arg == 0:
         return 1 / mp.log(2)
     return mp.log(1 + arg) / (mp.log(2) * arg)
+
+
+def helper_arg(func: str, v):
+    """Map the unsigned unit-interval coordinate ``v`` (the table index coordinate, in [0,1)) to the helper's actual
+    argument. exp2 evaluates at v directly; log2 evaluates the signed kernel at f = v - 1/2 (see LOG2_V_OFFSET)."""
+    return v if func == "exp2" else v - LOG2_V_OFFSET
 
 
 def segment_coeffs(func: str, k: int, d: int, cf: int, idx: int) -> list[int]:
     """Near-minimax degree-d coefficients (low degree first, scaled by 2**cf, rounded) for one segment."""
     base = mp.mpf(idx) / (1 << k)
     width = mp.mpf(1) / (1 << k)
-    cheb = mp.chebyfit(lambda wn: helper_true(func, base + width * wn), [mp.mpf(0), mp.mpf(1)], d + 1)
+    cheb = mp.chebyfit(lambda wn: helper_true(func, helper_arg(func, base + width * wn)), [mp.mpf(0), mp.mpf(1)], d + 1)
     scale = mp.mpf(1 << cf)
     return [int(mp.nint(c * scale)) for c in reversed(cheb)]  # chebyfit is highest-degree first
 
@@ -189,7 +221,7 @@ def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
             acc = c + ((acc * w) >> rw)
             max_acc = max(max_acc, abs(acc))
         approx = mp.mpf(acc) / scale
-        true = helper_true(func, mp.mpf(a) / (1 << width))
+        true = helper_true(func, helper_arg(func, mp.mpf(a) / (1 << width)))
         max_rel = max(max_rel, abs(approx / true - 1))
     return max_rel, max_acc
 
@@ -202,7 +234,10 @@ def choose_spec(func: str, wman: int) -> Spec:
     For WMAN >= 11 both functions keep the full K_CAP segment-index bits, so K is searched over 1..K_CAP.
     """
     cf = cf_bits(wman)
-    width = ff_bits(wman) if func == "exp2" else (wman - 1)  # reduced-argument width feeding the table
+    # Reduced-argument (table index coordinate) width. exp2: FF = WMAN + GUARD. log2: the symmetric reduction's
+    # unsigned index coordinate v = f + 1/2 is a (WFRAC + 1)-bit fixed-point fraction (WFRAC = WMAN - 1, plus the one
+    # bit introduced by the m >= sqrt(2) halving) -- so WMAN bits, one wider than the old m in [1,2) reduction.
+    width = ff_bits(wman) if func == "exp2" else wman
     d = degree(wman)
     target = mp.mpf(2) ** (-(wman + ERR_GUARD))  # relative helper-error budget
 
@@ -213,6 +248,14 @@ def choose_spec(func: str, wman: int) -> Spec:
             maxabs = max(abs(c) for seg in coeffs for c in seg)
             cw = maxabs.bit_length() + 2                          # +1 sign, +1 margin
             accw = max(max_acc, maxabs).bit_length() + 1 + ACC_MARGIN
+            if func == "log2":
+                # log2's signed final multiply trims the Horner result to ACCM = CF+2 bits (_zkf_log2_final_mul.v),
+                # which is lossless only because C(f) = log2(1+f)/f < 2 over the reduced range so acc < 2**(CF+1).
+                # Assert the bound at generation time: a future kernel/range change that broke it would otherwise
+                # silently truncate the product (caught only end-to-end), so fail here instead.
+                assert max_acc < (1 << (cf + 2)), (
+                    f"log2 WMAN={wman}: max Horner acc {max_acc} >= 2**ACCM (2**{cf + 2}); "
+                    f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table/_zkf_log2_final_mul")
             return Spec(func, wman, k, d, cf, width - k, cw, accw, coeffs)
     raise RuntimeError(f"degree {d} needs K>K_CAP={K_CAP} for {func} WMAN={wman}: raise K_CAP")
 
@@ -278,7 +321,7 @@ def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
     ECP5; r_co2 is a fabric register isolating that delay from the first Horner multiply. w/sideband/valid ride along.
     """
     w("""
-        reg [(D+1)*CW-1:0] r_co1, r_co2;
+        reg  [(D+1)*CW-1:0] r_co1, r_co2;
         reg        [RW-1:0] r_w1, r_w2;
         reg                 r_rv1, r_rv2;
         reg      [HSBW-1:0] r_rsb1, r_rsb2;
@@ -317,7 +360,8 @@ def _emit_table(s: Spec) -> str:
           "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner); valid and sb_in are delayed to match.")
     else:
         w(f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
-          "/// Evaluates log2(1+t) = t*P(t) as a fixed-point fraction (scale 2**-F2); P(t)=log2(1+t)/t via the table.",
+          "/// Symmetric reduction: indexes the kernel C(f)=log2(1+f)/f by the unsigned coordinate v (WFRAC+1 bits) and",
+          "/// returns the SIGNED log2(m') = f*C(f) = F*C(f) at scale 2**-F2, F2 = WFRAC+1+CF (f<0 when m>=sqrt(2)).",
           "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + _zkf_log2_final_mul; valid/sb_in match.")
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
@@ -347,14 +391,15 @@ def _emit_table(s: Spec) -> str:
         """)
     else:
         w("""
-            input  wire                 clk,
-            input  wire                 rst,
-            input  wire                 in_valid,
-            input  wire       [WSB-1:0] sb_in,
-            input  wire      [WMAN-2:0] frac,         // stored fraction t (WFRAC = WMAN-1 bits), in [0,1)
-            output wire                 out_valid,
-            output wire       [WSB-1:0] sb_out,
-            output wire [2*WMAN+12-2:0] l_fix         // log2(1+t) at scale 2**-F2, F2 = WFRAC + CF, in [0,1)
+            input  wire                   clk,
+            input  wire                   rst,
+            input  wire                   in_valid,
+            input  wire         [WSB-1:0] sb_in,
+            input  wire        [WMAN-1:0] v,          // index coordinate v = f + 2**WFRAC (WFRAC+1 = WMAN bits)
+            input  wire signed [WMAN-1:0] f,          // signed reduced argument F = v - 2**WFRAC, scale 2**-(WFRAC+1)
+            output wire                   out_valid,
+            output wire         [WSB-1:0] sb_out,
+            output wire signed [2*WMAN+12:0] l_fix    // SIGNED log2(m') = f*C(f) at scale 2**-F2, F2 = WFRAC+1+CF
         """)
     w.pop()
     w(");")
@@ -372,7 +417,10 @@ def _emit_table(s: Spec) -> str:
     else:
         w("localparam integer WFRAC = WMAN - 1;",
           "localparam integer CF    = WMAN + 12;",
-          "localparam integer F2    = WFRAC + CF;")
+          "localparam integer F2    = WFRAC + 1 + CF;   // f is at scale 2**-(WFRAC+1): one bit wider than WFRAC+CF",
+          "localparam integer WF    = WMAN;             // signed reduced-argument width = WFRAC + 1",
+          "localparam integer ACCM  = CF + 2;           // C(f) < 2 -> acc < 2**(CF+1); trim the Horner guard bits so")
+        w( "                                            // the final multiply's acc operand fits a smaller DSP grid")
     w(f"localparam integer K    = {s.k};")
     if s.func == "exp2":
         w(f"localparam integer CF   = {s.cf};")
@@ -383,7 +431,7 @@ def _emit_table(s: Spec) -> str:
     if s.func == "exp2":
         w("localparam integer HSBW = WSB;")
     else:
-        w("localparam integer HSBW = WSB + WFRAC;  // carry t alongside the sideband to the final multiply")
+        w("localparam integer HSBW = WSB + WF;  // carry the signed reduced argument f to the final multiply")
     w("")
     _rom_rows(w, s)
     if s.func == "exp2":
@@ -400,16 +448,22 @@ def _emit_table(s: Spec) -> str:
             assign sb_out      = esb;
         """)
     else:
-        w("wire [K-1:0]  idx = frac[WFRAC-1 -: K];")
-        w("wire [RW-1:0] w   = frac[RW-1:0];")
-        _rom_read_pipeline(w, "{sb_in, frac}")
-        # l = t * P = frac * acc (acc > 0), scale 2^-F2 in [0,1). The split-aware multiply lives in
-        # _zkf_log2_final_mul and follows the same linear STAGE_PRODUCT depth contract as the Horner.
+        # The unsigned coordinate v (WFRAC+1 = WMAN bits) selects the segment by its top K bits and feeds the in-segment
+        # Horner argument w by its low RW bits; idx and w mirror the model's `v >> rw` / `v & mask(rw)` exactly. The
+        # SIGNED reduced argument f rides the sideband to the final multiply (it differs from v by the constant 2**WFRAC).
+        w("wire [K-1:0]  idx = v[WMAN-1 -: K];")
+        w("wire [RW-1:0] w   = v[RW-1:0];")
+        _rom_read_pipeline(w, "{sb_in, f}")
+        # log2(m') = f * C(f) = f * acc, SIGNED (f < 0 when m >= sqrt(2); acc = C(f) > 0), at scale 2^-F2. acc is trimmed
+        # to ACCM = CF+2 bits (its high guard bits are structurally zero since C(f) < 2) so the signed multiply maps to a
+        # smaller DSP grid / shallower reduction. The split-aware multiply follows the Horner's STAGE_PRODUCT contract.
         w("""
-            wire [WFRAC-1:0] frac_p = esb[WFRAC-1:0];
-            wire [WSB-1:0]   sb_p   = esb[HSBW-1 -: WSB];
-            _zkf_log2_final_mul #(.WFRAC(WFRAC), .WACC(ACCW), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_tp (
-                .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .frac(frac_p), .acc(acc),
+            wire signed [WF-1:0] f_p   = $signed(esb[WF-1:0]);
+            wire        [WSB-1:0] sb_p = esb[HSBW-1 -: WSB];
+            _zkf_log2_final_mul #(
+                .WF(WF), .WACC(ACCM), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+            ) u_tp (
+                .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .f(f_p), .acc(acc[ACCM-1:0]),
                 .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
         """)
     w("// verilator coverage_on")
@@ -493,7 +547,9 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
     import numpy as np
 
     print("end-to-end correct-rounding check (model vs mpmath):")
-    cases = [(5, 11), (6, 16), (8, 24), (8, 36), (8, 48)]  # binary16 (5/11) exhaustive; wider formats random (D=2..6)
+    # Every supported WMAN (5/11 & 6/16 run exhaustive; wider formats random). Previously only 5 of 9 were listed,
+    # leaving m18/27/32/53 unchecked -- now all of SUPPORTED_WMAN are covered.
+    cases = [(5, 11), (6, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
             continue
@@ -515,6 +571,33 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
             status = "OK " if worst <= 1 else "BAD"
             print(f"  {status} {func} {wexp}/{wman:<3} max_ulp={worst} mismatches={ne}/{len(inputs)} ({tag})")
             assert worst <= 1, f"{func} {wexp}/{wman}: max ULP {worst} > 1 (faithful-rounding contract violated)"
+
+    # --- log2 near-x=1 regression guard (the catastrophic-cancellation class the symmetric reduction fixed) ---
+    # As x -> 1, log2(x) -> 0 with an arbitrarily fine ULP; the old m in [1,2) reduction formed e + log2(m) and
+    # cancelled, losing the tiny result (worst was ~1.9e12 ULP at m53, ~14M at the shipped m36 -- a real defect in
+    # shipped configs). Random sampling can NEVER hit these vanishing-measure inputs (it missed the bug for years), so
+    # this EXHAUSTIVELY sweeps the extreme fractions of the two binades straddling x=1 for EVERY supported WMAN, every
+    # run -- a permanent guard that fails loudly if the reduction/kernel regresses near 1. ZKF_NEAR1_SAMPLES tunes depth
+    # (default 2^16 covers far past the hardest, x = 1 +/- 1 ULP, where any such regression manifests most).
+    near1 = int(os.environ.get("ZKF_NEAR1_SAMPLES", str(1 << 16)))
+    print(f"log2 near-x=1 regression guard (symmetric-reduction cancellation; top/bottom {near1} fracs each side):")
+    for wman in SUPPORTED_WMAN:
+        fmt = ZkfFormat(8, wman)
+        span = min(near1, 1 << fmt.wfrac)
+        fmax = (1 << fmt.wfrac) - 1
+        inputs = [((fmt.bias - 1) << fmt.wfrac) | f for f in range(fmax - span + 1, fmax + 1)]  # x -> 1 from below
+        inputs += [(fmt.bias << fmt.wfrac) | f for f in range(span)]                             # x -> 1 from above
+        worst = ne = 0
+        for b in inputs:
+            got, want = log2_reference(fmt, b), log2_true(fmt, b)
+            gb = got[0] if isinstance(got, tuple) else got
+            wb = want[0] if isinstance(want, tuple) else want
+            u = _ulp_diff(fmt, gb, wb)
+            worst = max(worst, u)
+            ne += u > 0
+        status = "OK " if worst <= 1 else "BAD"
+        print(f"  {status} log2 near-1 m{wman:<3} max_ulp={worst} mismatches={ne}/{len(inputs)} (span {span})")
+        assert worst <= 1, f"log2 m{wman} near-x=1: max ULP {worst} > 1 (symmetric-reduction cancellation regression)"
 
 
 def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
