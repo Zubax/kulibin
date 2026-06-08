@@ -55,10 +55,23 @@ FUNC = "sincos"
 # the pipeline is K ~ WMAN/2 stages instead of ~1.5*WMAN -- the LUT/FF win, traded for the two correction multiplies.
 # (The correction only fixes the ANGLE residual; the iteration array's own truncation still limits the small sines the
 # CORDIC must place, so the datapath keeps ~1.5*WMAN fractional bits and the small-angle linear bypass below TSA stays.)
-GUARD_XY = 8     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
-# Iterations before the linear termination: K = (WMAN+1)//2 + GUARD_ITER. GUARD_ITER pushes the residual a couple bits
-# below the 2**-(WMAN/2) the linear step needs (and drives theta' up to pi/4 down to it), covering iteration rounding.
-GUARD_ITER = 5
+GUARD_XY = 6     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
+# NOTE on GUARD_XY: this is the SHARED engine x/y guard, consumed by BOTH operators (it sizes the table's baked WX and
+# KINV, and -- equal atm -- atan2's divider F = 2*ceil(XF/2) and the INV_TAU scale). sincos is faithful down to
+# GUARD_XY=3, but atan2's theta is XF-bound (its residual-divide angle precision lives at scale 2**-XF, and the linear
+# divide-termination's cubic residual is dominated by it), and at WMAN=11 it needs GUARD_XY>=6 to stay <= 1 ULP -- more
+# iterations do NOT help, only XF does. 6 is the smallest value that keeps atan2 (theta AND mag) faithful across every
+# supported WMAN while sincos keeps ample margin, so the engine table stays fully SHARED (no per-operator XF split). The
+# --check gate is authoritative here; do not lower it below 6 without re-running --check for all WMAN.
+# Iterations before the linear termination: N = (WMAN+1)//2 + GUARD_ITER_*. The guard pushes the residual a couple bits
+# below the precision the linear termination needs (and drives the reduced angle down to it), covering iteration rounding.
+# The guard is kept PER OPERATOR even though both currently floor at +1 (so the angle LUT + gain/KINV are identical and
+# the per-WMAN _zkf_cordic_m table stays fully shared, one KINV/LUT). They are independent because the two terminations
+# leave residuals of different order: sincos's linear final rotation drops a QUADRATIC term (~z^2/2), atan2's residual
+# DIVIDE drops a CUBIC term (~r^3/3). Both happen to need +1; keeping them separate lets them diverge later without
+# silently coupling the two operators' depths.
+GUARD_ITER_SINCOS = 1
+GUARD_ITER_ATAN2  = 1
 # Angle accumulator integer headroom above the ZF fractional bits (z stays within +-(1/4 turn) through the rotation).
 GUARD_Z = 3
 # Angle fractional precision past the coordinate's own (WT+2) turns bits: the rotation sums K rounded LUT entries, each
@@ -76,7 +89,7 @@ SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
 
 def guard_ff(wman: int) -> int:
     # Reduced-fraction guard placing the small-angle handoff e_b = -(GUARD_FF+2) where the linear small-angle path
-    # holds <= 1 ULP (binding term: |1 - cos(2*pi*2**e_b)| ~= (2*pi*2**e_b)**2/2 <= 2**-WMAN -> GUARD_FF >= WMAN//2 + 2).
+    # holds <= 1 ULP (binding term: |1 - cos(2*pi*2**e_b)| ~= (2*pi*2**e_b)**2/2 <= 2**-WMAN -> GUARD_FF >= WMAN//2+2).
     # Floored at 12 so the common small formats keep a modest reduced fraction. Mirrored in hdl/zkf_sincos.v.
     return max(12, wman // 2 + 2)
 
@@ -91,9 +104,26 @@ def wt_bits(wman: int) -> int:
     return ff_bits(wman) - 2
 
 
+def n_sincos(wman: int) -> int:
+    """N for zkf_sincos: rotation iterations before the linear final rotation (see the GUARD_ITER_* comment)."""
+    return (wman + 1) // 2 + GUARD_ITER_SINCOS
+
+
+def n_atan2(wman: int) -> int:
+    """N for zkf_atan2: vectoring iterations before the residual divide (see the GUARD_ITER_* comment)."""
+    return (wman + 1) // 2 + GUARD_ITER_ATAN2
+
+
 def n_iters(wman: int) -> int:
-    """K: rotation iterations before the linear termination (see the GUARD_ITER comment)."""
-    return (wman + 1) // 2 + GUARD_ITER
+    """Shared CORDIC depth baked into the per-WMAN _zkf_cordic_m table (the LUT length, KINV, and gain). The table is
+    shared between the two operators, so this REQUIRES the per-operator depths to agree; they do now (both guards are
+    +1). Should they ever diverge, the table can no longer be shared and the emission must split per operator."""
+    ns, na = n_sincos(wman), n_atan2(wman)
+    if ns != na:
+        raise ValueError(
+            f"per-operator CORDIC depths diverge at WMAN={wman}: n_sincos={ns} n_atan2={na}; the shared "
+            f"_zkf_cordic_m table can no longer carry one LUT/KINV -- split the table per operator before emitting")
+    return ns
 
 
 def tsa_bits(wman: int) -> int:
@@ -110,18 +140,28 @@ def cordic_module(wman: int) -> str:
 @dataclass
 class Spec:
     wman: int
-    n: int                 # CORDIC iterations
-    xf: int                # x/y fractional bits (scale 2**-xf)
+    n: int                 # shared CORDIC iterations baked into the table (==n_sincos==n_atan2 while table shared)
+    xf: int                # x/y fractional bits baked into the table (scale 2**-xf); == max operator XF (table width)
     xw: int                # x/y signed width (1 sign + 1 integer + xf)
     wt: int                # quadrant-local coordinate width (FF - 2); angle in turns is t'/4 at scale 2**-(WT+2)
     zf: int                # angle accumulator fractional bits (scale 2**-zf) = WT + 2 + GUARD_ZF (finer than WT+2)
     zw: int                # angle signed width
     kinv: int              # round(1/gain * 2**xf), gain = prod sqrt(1+2**-2i)
+    n_sincos: int          # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS (quadratic-residual termination)
+    n_atan2: int           # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2 (cubic-residual termination)
+    xf_atan2: int          # zkf_atan2 x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
     tsa: int = 0           # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
     lut: list = field(default_factory=list)  # L[i] = round(atan(2**-i)/(2*pi) * 2**zf), i = 0..n-1
     c2: int = 0            # small-angle 2*pi constant scale (== xf)
-    const2pi: int = 0      # round(2*pi * 2**c2), the high-precision small-angle constant
-    inv_tau: int = 0       # round(2**xf / (2*pi)): reciprocal-tau for the atan2 residual/bypass turns scaling
+    # The multiplier constants are EMITTED PRE-NARROWED at width WMAN+5, each carrying its own native fixed-point scale
+    # 2**-S (S = the scale at which the round-narrowed top WMAN+5 bits represent the constant). Every dependent shift /
+    # exp-offset derives directly from that scale, so the datapath needs no DROP correction tokens.
+    const2pi: int = 0      # round(2*pi * 2**CONST2PI_S), narrowed to WMAN+5 bits (sincos small-angle / linear-rotation)
+    const2pi_s: int = 0    # native scale of the narrowed const2pi == WMAN+2
+    inv_tau: int = 0       # round(2**INVTAU_S / (2*pi)), narrowed to WMAN+5 bits (atan2 residual/bypass turns scaling)
+    invtau_s: int = 0      # native scale of the narrowed inv_tau == WMAN+7
+    kinv_mag: int = 0      # round(1/gain * 2**KINV_S), narrowed to WMAN+5 bits (atan2 magnitude descale)
+    kinv_s: int = 0        # native scale of the narrowed kinv_mag == WMAN+5
 
 
 def cordic_gain(n: int):
@@ -136,16 +176,27 @@ def choose_spec(wman: int) -> Spec:
     LUT is in turns and the inverse gain folds into the x seed; --check validates the resulting faithfulness."""
     if not (WMAN_MIN <= wman <= WMAN_MAX):
         raise ValueError(f"Bad {wman=}")
-    n = n_iters(wman)
-    xf = ceil(3 * wman / 2) + GUARD_XY
+    n = n_iters(wman)                          # shared depth (asserts n_sincos == n_atan2)
+    xf = ceil(3 * wman / 2) + GUARD_XY         # shared engine XF
     zf = wt_bits(wman) + 2 + GUARD_ZF
     xw = xf + 2
     zw = zf + GUARD_Z
-    kinv = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** xf)))
+    kinv = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** xf)))   # full-precision inverse gain (the sincos seed)
     lut = [int(mp.nint(mp.atan(mp.mpf(2) ** (-i)) / (2 * mp.pi) * (mp.mpf(2) ** zf))) for i in range(n)]
-    const2pi = int(mp.nint(2 * mp.pi * (mp.mpf(2) ** xf)))
-    inv_tau = int(mp.nint((mp.mpf(1) / (2 * mp.pi)) * (mp.mpf(2) ** xf)))
-    return Spec(wman, n, xf, xw, wt_bits(wman), zf, zw, kinv, 1 << tsa_bits(wman), lut, xf, const2pi, inv_tau)
+    # Each multiplier constant is round-narrowed to its top WMAN+5 bits and emitted at its native scale 2**-S directly
+    # (round(value * 2**S), round-to-nearest). The native scales come out to clean WMAN-relative values, and because
+    # the constant already carries its scale, the consuming shifts/exp-offsets are plain "product-scale minus
+    # target-scale" with no DROP correction (the former "+DROP" was exactly XF - S).
+    const2pi_s = wman + 2                                            # narrowed 2*pi scale (was XF; XF - DROP == WMAN+2)
+    invtau_s = wman + 7                                             # narrowed 1/(2*pi) scale (XF - DROP_IT   == WMAN+7)
+    kinv_s = wman + 5                                               # narrowed 1/gain scale (XF - DROP_K      == WMAN+5)
+    const2pi = int(mp.nint(2 * mp.pi * (mp.mpf(2) ** const2pi_s)))   # narrowed 2*pi, WMAN+5 bits
+    inv_tau = int(mp.nint((mp.mpf(1) / (2 * mp.pi)) * (mp.mpf(2) ** invtau_s)))  # narrowed 1/(2*pi), WMAN+5 bits
+    kinv_mag = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** kinv_s)))        # narrowed 1/gain, WMAN+5 bits
+    return Spec(wman, n, xf, xw, wt_bits(wman), zf, zw, kinv,
+                n_sincos(wman), n_atan2(wman), xf,
+                1 << tsa_bits(wman), lut, xf,
+                const2pi, const2pi_s, inv_tau, invtau_s, kinv_mag, kinv_s)
 
 
 def generate_all() -> dict[int, Spec]:
@@ -192,13 +243,16 @@ def _emit_consts(s: Spec) -> str:
     and engine -- only the mode differs.
     """
     mod = cordic_module(s.wman)
-    cwb = s.const2pi.bit_length()                        # == XF + 3
-    itwb = s.inv_tau.bit_length()                        # == XF - 2 (1/(2*pi) < 1/4)
+    cwb = s.const2pi.bit_length()                        # narrowed 2*pi width == WMAN+5 (scale 2**-CONST2PI_S)
+    itwb = s.inv_tau.bit_length()                        # narrowed 1/(2*pi) width == WMAN+5 (scale 2**-INVTAU_S)
+    kmb = s.kinv_mag.bit_length()                        # narrowed 1/gain width == WMAN+5 (scale 2**-KINV_S)
     w = _Writer()
     w("/// GENERATED by zkf_trig.py -- DO NOT EDIT.")
     w(f"/// Per-WMAN CORDIC constants (WMAN={s.wman}): arctan(2^-i)/2pi LUT in turns, inverse-gain seed, widths.")
     w("/// Binds the generic engine _zkf_cordic; MODE selects rotation (sin/cos) vs vectoring (atan2). Also exposes the")
-    w("/// 2*pi constant for the sin/cos small-angle path (a constant output; atan2 leaves it unconnected).")
+    w("/// pre-narrowed multiplier constants (each at its own native fixed-point scale): the 2*pi constant for the")
+    w("/// sin/cos small-angle/linear-rotation path, and 1/(2*pi) + 1/gain for the atan2 turns-scaling and magnitude")
+    w("/// descale. Unused outputs are simply left unconnected per mode.")
     w("")
     w("`default_nettype none")
     w("")
@@ -226,9 +280,10 @@ def _emit_consts(s: Spec) -> str:
         output wire signed [{s.xw - 1:3}:0] xn,
         output wire signed [{s.xw - 1:3}:0] yn,
         output wire signed [{s.zw - 1:3}:0] zn,
-        output wire        [{cwb - 1:3}:0] const2pi,   // round(2*pi * 2**XF), CWB = XF + 3 bits (sin/cos small angle)
-        output wire        [{itwb - 1:3}:0] inv_tau,    // round(2**XF / (2*pi)), XF-2 bits (atan2 turns scaling)
-        output wire        [{s.xw - 1:3}:0] kinv        // round(2**XF / gain), inverse CORDIC-gain (atan2 magnitude)
+        output wire        [{cwb - 1:3}:0] const2pi,   // round(2*pi * 2**CONST2PI_S), WMAN+5 bits (sin/cos small angle)
+        output wire        [{itwb - 1:3}:0] inv_tau,    // round(2**INVTAU_S / (2*pi)), WMAN+5 bits (atan2 turns scale)
+        output wire        [{kmb - 1:3}:0] kinv_mag,   // round(2**KINV_S / gain), WMAN+5 bits (atan2 magnitude descale)
+        output wire        [{s.xw - 1:3}:0] kinv        // round(2**XF / gain), full inverse CORDIC-gain (sin/cos seed)
     """)
     w.pop()
     w(");")
@@ -238,11 +293,17 @@ def _emit_consts(s: Spec) -> str:
     w(f"localparam integer WZ   = {s.zw};")
     w(f"localparam integer XF   = {s.xf};   // x/y fractional scale")
     w(f"localparam integer ZF   = {s.zf};   // angle (turns) fractional scale == WT + 2 + GUARD_ZF")
-    w(f"localparam integer CWB  = {cwb};")
-    w(f"localparam signed [WX-1:0] KINV = {s.xw}'sd{s.kinv};   // round(1/gain * 2**XF) (== 2**XF/gain)")
+    w(f"localparam integer CWB  = {cwb};   // narrowed const2pi width (== WMAN+5)")
+    # Native fixed-point scales of the pre-narrowed multiplier constants. Each consumer derives its shift / exp-offset
+    # from these directly: the constant's top WMAN+5 bits at scale 2**-S ARE the value to the kept precision.
+    w(f"localparam integer CONST2PI_S = {s.const2pi_s};   // scale of const2pi (== WMAN+2)")
+    w(f"localparam integer INVTAU_S   = {s.invtau_s};   // scale of inv_tau  (== WMAN+7)")
+    w(f"localparam integer KINV_S     = {s.kinv_s};   // scale of kinv_mag (== WMAN+5)")
+    w(f"localparam signed [WX-1:0] KINV = {s.xw}'sd{s.kinv};   // round(1/gain * 2**XF), the sin/cos seed")
     w("")
     w(f"assign const2pi = {cwb}'d{s.const2pi};")
     w(f"assign inv_tau  = {itwb}'d{s.inv_tau};")
+    w(f"assign kinv_mag = {kmb}'d{s.kinv_mag};")
     w("assign kinv     = KINV[WX-1:0];")
     w("")
     w("// arctan(2^-i)/(2*pi) in turns, scale 2**-ZF, packed L[0] in the low WZ bits.")
@@ -287,7 +348,8 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
         w(f"{wman}: dict(")
         w.push()
         w(f"n={s.n}, xf={s.xf}, xw={s.xw}, wt={s.wt}, zf={s.zf}, zw={s.zw}, kinv={s.kinv}, tsa={s.tsa}, "
-          f"c2={s.c2}, const2pi={s.const2pi}, inv_tau={s.inv_tau},")
+          f"c2={s.c2}, const2pi={s.const2pi}, const2pi_s={s.const2pi_s}, inv_tau={s.inv_tau}, invtau_s={s.invtau_s},")
+        w(f"kinv_mag={s.kinv_mag}, kinv_s={s.kinv_s}, n_sincos={s.n_sincos}, n_atan2={s.n_atan2}, xf_atan2={s.xf_atan2},")
         w(f"lut={s.lut!r},")
         w.pop()
         w("),")
@@ -295,7 +357,8 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
     w("}")
     w("")
     w(f"GUARD_XY = {GUARD_XY}")
-    w(f"GUARD_ITER = {GUARD_ITER}")
+    w(f"GUARD_ITER_SINCOS = {GUARD_ITER_SINCOS}")
+    w(f"GUARD_ITER_ATAN2 = {GUARD_ITER_ATAN2}")
     w(f"GUARD_DIV = {GUARD_DIV}")
     w("# FF (reduced-fraction width) = WMAN + max(12, WMAN//2 + 2); WT = FF - 2; ZF = WT + 2.")
     w("")

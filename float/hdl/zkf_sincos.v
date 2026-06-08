@@ -49,7 +49,7 @@
 
 `default_nettype none
 
-`define ZKF_SINCOS_K (((WMAN+1)/2) + 5)
+`define ZKF_SINCOS_K (((WMAN+1)/2) + 1)
 `define ZKF_SINCOS_XYCYC ((`ZKF_SINCOS_K * 100 + UNROLL100 - 1) / UNROLL100)
 `define ZKF_SINCOS_ZGAP  (`ZKF_SINCOS_XYCYC - `ZKF_SINCOS_K)
 `define ZKF_SINCOS_PMUL_L (1 + STAGE_PRODUCT)
@@ -63,7 +63,7 @@ module zkf_sincos #(
     parameter WEXP            = 6,      // exponent field width
     parameter WMAN            = 18,     // significand precision including the hidden bit
     parameter WMULTIPLIER     = 0,
-    parameter UNROLL100       = 100,
+    parameter UNROLL100       = 100,    // choose maximum value that closes timings
     parameter STAGE_INPUT     = 0,
     parameter STAGE_PRODUCT   = 0,
     parameter STAGE_NORMALIZE = 0,
@@ -104,9 +104,8 @@ module zkf_sincos #(
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
-    // The CORDIC geometry MUST match zkf_trig.py (guard_ff, n_iters, GUARD_XY/ZF/Z, tsa_bits) and _zkf_cordic_m.
     localparam integer GUARD_FF   = (12 > (WMAN / 2 + 2)) ? 12 : (WMAN / 2 + 2);
-    localparam integer GUARD_XY   = 8;
+    localparam integer GUARD_XY   = 6;
     localparam integer GUARD_ZF   = 6;
     localparam integer GUARD_Z    = 3;
     localparam integer FF   = WMAN + GUARD_FF;          // reduced-fraction width: frac(x) at scale 2**-FF
@@ -114,25 +113,40 @@ module zkf_sincos #(
     localparam integer K    = `ZKF_SINCOS_K;               // CORDIC iterations
     localparam integer XF   = ((3 * WMAN + 1) / 2) + GUARD_XY;  // x/y fractional scale
     localparam integer WX   = XF + 2;                   // signed x/y width
+    // Native scale of the pre-narrowed const2pi from the per-WMAN _zkf_cordic_m table (MUST match its CONST2PI_S): the
+    // table rounds 2*pi to WMAN+5 bits and emits it at scale 2**-CONST2PI_S, so const2pi == round(2*pi * 2**CONST2PI_S).
+    localparam integer CONST2PI_S = WMAN + 2;
     // Two wide-datapath register stages are always present: an octant-fold register splits the WT-wide octant-fold
     // negate feeding the engine seed, and a merge-B3 register splits the WMAG-wide quadrant/octant magnitude muxing.
     // Both are latency-only (the back-end is event-driven off the engine `done`).
     localparam integer ZG   = GUARD_ZF;                 // angle fractional bits past the coordinate's WT+2
     localparam integer ZF   = WT + 2 + GUARD_ZF;        // angle accumulator fractional scale
     localparam integer WZ   = ZF + GUARD_Z;             // signed angle width
-    localparam integer CWB  = XF + 3;                   // 2*pi constant width (round(2*pi*2**XF) has XF+3 bits)
+    // The shared correction multiply takes the per-WMAN const2pi on `a` for BOTH the PHI product (const2pi*z_K) and
+    // the BYP/small-angle product (const2pi*operand). const2pi arrives PRE-NARROWED from the table at its native scale:
+    // its top WMAN+5 bits (round-to-nearest) at scale 2**-CONST2PI_S (CONST2PI_S = XF - the bits dropped in narrowing).
+    // That already-narrowed WMAN+5-bit operand is what the grid sees, so the shared DSP column count is the narrowed
+    // one, and every consumer derives its shift / exp-offset from CONST2PI_S directly --
+    // product-scale minus target-scale. Both the magnitude container and the two _zkf_fixed_to_float back-ends are
+    // sized on this narrowed CWB, so they shrink with it. Mirrors tb/zkf_model.py::sincos_reference.
+    localparam integer CWB  = WMAN + 5;                 // narrowed 2*pi width (== the table's const2pi port width)
     localparam integer TSA_BITS = (WT + 2) - ((WMAN + 1) / 2) - 3;  // small-angle handoff: t' < 2**TSA_BITS
     localparam integer WMAG = CWB + WT + 1;             // uniform magnitude width (small-angle full product is widest)
-    localparam integer EONE = WMAG - 1 - XF;            // exp_offset reading a 2**-XF-scaled magnitude back as itself
+    // The CORDIC corrections and the exact +1 live at scale 2**-XF; the bypass/tiny/TSA magnitudes are const2pi
+    // products at scale 2**-CONST2PI_S. Each path reads its magnitude back with the matching exp_offset
+    // (field-width minus scale).
+    localparam integer EONE_XF = WMAG - 1 - XF;          // exp_offset reading a 2**-XF-scaled magnitude back as itself
+    localparam integer EONE_S  = WMAG - 1 - CONST2PI_S;  // exp_offset reading a 2**-CONST2PI_S-scaled magnitude
     localparam integer WOP  = (WMAN > (TSA_BITS + 1)) ? WMAN : (TSA_BITS + 1);  // small-angle operand width
     // Correction-multiply operand widths (mirror tb/zkf_model.py): phi keeps WPHI top bits of (const2pi*z_K)>>zf,
     // x_K/y_K keep WXC top bits -- so each correction multiply is small (~18 bits).
     localparam integer PHI_NAT      = XF - K + 2;
     localparam integer WPHI         = (WMAN + 6 < PHI_NAT) ? (WMAN + 6) : ((PHI_NAT > 2) ? PHI_NAT : 2);
-    localparam integer PHIDROP      = (PHI_NAT - WPHI > 0) ? (PHI_NAT - WPHI) : 0;
+    localparam integer PHI_TRUNC    = (PHI_NAT - WPHI > 0) ? (PHI_NAT - WPHI) : 0;
+    localparam integer PHI_S        = XF - PHI_TRUNC;     // scale of the narrowed phi (phi == ~2*pi*z_K at 2**-PHI_S)
     localparam integer WXC          = WMAN + 6;
-    localparam integer XKDROP       = WX - WXC;
-    localparam integer CORR_SHIFT   = XF - XKDROP - PHIDROP;
+    localparam integer XK_TRUNC     = WX - WXC;
+    localparam integer CORR_SHIFT   = XF - XK_TRUNC - PHI_TRUNC;
 
     localparam integer BIAS     = (1 << (WEXP - 1)) - 1;
     localparam integer SH_BASE  = BIAS - GUARD_FF - 1;
@@ -147,7 +161,7 @@ module zkf_sincos #(
     localparam integer WLSH               = $clog2(FF + 1);
     localparam integer WSH                = $clog2((1 << (WEXP - 1)) + GUARD_FF + 2) + 2;
     localparam signed [WSH-1:0] SH_BASE_S = SH_BASE[WSH-1:0];
-    localparam signed [WSH:0]   SH_HI_S   = SH_BASE + FF;   // SH_BASE + FF, the upper clamp bound, as a signed constant
+    localparam signed [WSH:0]   SH_HI_S   = SH_BASE + FF;   // SH_BASE + FF, the upper clamp bound, as signed constant
 
     // ============================================================================================================
     // Front-end: accept a transaction, decode + reduce |x| mod 1, octant-fold, and start the folded CORDIC engine.
@@ -359,13 +373,15 @@ module zkf_sincos #(
     //         during the CORDIC (the multiply is otherwise idle then) and latched; the wide operand need not ride the
     //         engine sideband. The pipelined multiply keeps it in flight independently of the later products.
     //   PHI : tprod = const2pi * z_K -- the residual-angle product; issued at cd_done (z_K only then exists).
-    //   S,C : corr_s = x_K * phi, corr_c = y_K * phi,  phi = tprod >> (ZF+PHIDROP) narrowed     (~2*pi*z_K)
+    //   S,C : corr_s = x_K * phi, corr_c = y_K * phi,  phi = tprod >> ((CONST2PI_S+ZF)-PHI_S) narrowed (~2*pi*z_K)
     // PHI is serial (S and C both need phi), but S and C are mutually independent and are issued back-to-back into the
     // pipelined multiply (II=1), overlapping in the pipe; the tag routes each result. The last product (C) folds
     // straight into sin = y_K + corr_s / cos = x_K - corr_c the cycle it returns; the octant-local magnitudes then go
     // to the merge.
     // WCP sizes the multiply's B operand to hold both the narrowed residual z_K and the bypass operand (WOP wide).
     localparam integer WCP = ((WOP > (ZF - K)) ? WOP : (ZF - K)) + 2;   // residual / bypass-operand width on B
+    // a holds the pre-narrowed const2pi (CWB == WMAN+5 bits) for the const products and the sign-extended x_K/y_K (WXC
+    // bits) for the corrections. CWB == WXC-1, so WA collapses to WXC (one fewer DSP column than a full-precision 2*pi).
     localparam integer WA  = ((CWB + 1) > WXC) ? (CWB + 1) : WXC;       // shared-multiply operand a
     localparam integer WB  = (WCP > WPHI) ? WCP : WPHI;                 // shared-multiply operand b
     localparam integer WP  = WA + WB;                                   // shared-multiply product
@@ -376,18 +392,21 @@ module zkf_sincos #(
     reg [1:0]            sc_iss;                // S/C issue step: 0 -> issue S, 1 -> issue C, 2 -> done issuing
     reg signed [WX-1:0]  e_xn, e_yn;
     reg [WSB-1:0]        e_sb;
-    reg signed [WP-1:0]  tprod_r;        // PHI product const2pi*z_K registered; phi = tprod_r >> (ZF+PHIDROP)
+    reg signed [WP-1:0]  tprod_r;        // PHI product const2pi*z_K; phi = tprod_r >> ((CONST2PI_S+ZF)-PHI_S)
     reg signed [WP-1:0]  corr_s_r;       // S product (x_K*phi) registered; C product is consumed straight into b2_cos
     reg [WMAG-1:0]       bypass_mag_r;   // const2pi*operand, computed during the CORDIC (small-angle bypass magnitude)
     reg                  phi_seen;       // this transaction's PHI product (tprod_r) has returned -- skip the P_PHI wait
 
     // verilator coverage_off
     wire signed [WCP-1:0] cphi_op   = $signed(cd_zn[WCP-1:0]);          // narrowed CORDIC residual z_K (corr. angle)
-    wire signed [WPHI-1:0] phi      = tprod_r >>> (ZF + PHIDROP);       // ~2*pi*z_K, narrowed
-    wire signed [WXC-1:0]  xc       = e_xn >>> XKDROP;
-    wire signed [WXC-1:0]  yc       = e_yn >>> XKDROP;
-    // Shared-multiply operand select. a = const2pi for the const products (BYP during the CORDIC, PHI at cd_zdone);
-    // x_K / y_K for the S / C corrections. b = bypass operand (BYP), narrowed residual z_K (PHI), or phi (S/C).
+    // The PHI product const2pi*z_K is at scale 2**-(CONST2PI_S+ZF); narrow phi to its top WPHI bits at scale 2**-PHI_S by
+    // a single right-shift (CONST2PI_S+ZF) - PHI_S. const2pi is already the narrowed WMAN+5-bit operand, so this is a
+    // plain product-scale-minus-target-scale shift -- no correction token.
+    wire signed [WPHI-1:0] phi      = tprod_r >>> ((CONST2PI_S + ZF) - PHI_S);  // ~2*pi*z_K narrowed to scale 2**-PHI_S
+    wire signed [WXC-1:0]  xc       = e_xn >>> XK_TRUNC;
+    wire signed [WXC-1:0]  yc       = e_yn >>> XK_TRUNC;
+    // Shared-multiply operand select. a = the (pre-narrowed) const2pi for the const products (BYP during the CORDIC, PHI
+    // at cd_zdone); x_K / y_K for the S / C corrections. b = bypass operand (BYP), narrowed residual z_K (PHI), or phi.
     wire                  issue_c   = (mphase == P_SC) && (sc_iss == 2'd1);
     wire signed [WA-1:0]  mul_a_sel = (mphase != P_SC) ? $signed({{(WA-CWB){1'b0}}, const2pi})
                                     : issue_c          ? $signed({{(WA-WXC){yc[WXC-1]}}, yc})
@@ -485,22 +504,25 @@ module zkf_sincos #(
     wire                 inf_o   = b2_sb[1];
     wire                 sign_o  = b2_sb[0];
 
-    localparam signed [WEU-1:0] EONE_S       = EONE;
-    localparam signed [WEU-1:0] EONE_M_WFRAC = EONE - WFRAC;
-    localparam signed [WEU-1:0] EONE_M_ZFT   = EONE - (WT + 2);
+    // Each magnitude is read back with the exp_offset matching ITS native scale: the corr/one path (b2_sin/b2_cos and
+    // the exact +1) lives at scale 2**-XF -> EONE_XF; the bypass/tiny/TSA magnitude is the const2pi product at scale
+    // 2**-CONST2PI_S -> EONE_S, then minus the angle's own scale. No correction token: const2pi is already narrowed.
+    localparam signed [WEU-1:0] EONE_XF_S    = EONE_XF;            // O(1) cos / +1 / corr path (scale 2**-XF)
+    localparam signed [WEU-1:0] EONE_S_WFRAC = EONE_S - WFRAC;     // tiny bypass: const2pi*|sig| at 2**-CONST2PI_S
+    localparam signed [WEU-1:0] EONE_S_ZFT   = EONE_S - (WT + 2);  // TSA bypass: const2pi*t' at 2**-CONST2PI_S
     // verilator coverage_off
     wire signed [WEU-1:0] e_ext = $signed({{(WEU-WE){e_o[WE-1]}}, e_o});
     wire [WMAG-1:0] sin_tp_mag = sa_o ? (tzero_o ? {WMAG{1'b0}} : b2_sa)        : {{(WMAG-XF-1){1'b0}}, b2_sin[XF:0]};
     wire [WMAG-1:0] cos_tp_mag = sa_o ? {{(WMAG-XF-1){1'b0}}, 1'b1, {XF{1'b0}}} : {{(WMAG-XF-1){1'b0}}, b2_cos[XF:0]};
-    wire signed [WEU-1:0] sin_tp_exp = (!sa_o | tzero_o) ? EONE_S
-                                     : tiny_o            ? (e_ext + EONE_M_WFRAC)
-                                     :                     EONE_M_ZFT;
+    wire signed [WEU-1:0] sin_tp_exp = (!sa_o | tzero_o) ? EONE_XF_S
+                                     : tiny_o            ? (e_ext + EONE_S_WFRAC)
+                                     :                     EONE_S_ZFT;
     // verilator coverage_on
 
     wire [WMAG-1:0]       sin_loc_mag = oct_o ? cos_tp_mag : sin_tp_mag;
-    wire signed [WEU-1:0] sin_loc_exp = oct_o ? EONE_S     : sin_tp_exp;
+    wire signed [WEU-1:0] sin_loc_exp = oct_o ? EONE_XF_S  : sin_tp_exp;
     wire [WMAG-1:0]       cos_loc_mag = oct_o ? sin_tp_mag : cos_tp_mag;
-    wire signed [WEU-1:0] cos_loc_exp = oct_o ? sin_tp_exp : EONE_S;
+    wire signed [WEU-1:0] cos_loc_exp = oct_o ? sin_tp_exp : EONE_XF_S;
     wire [WMAG-1:0]       sin_mag = quad_o[0] ? cos_loc_mag : sin_loc_mag;
     wire signed [WEU-1:0] sin_exp = quad_o[0] ? cos_loc_exp : sin_loc_exp;
     wire [WMAG-1:0]       cos_mag = quad_o[0] ? sin_loc_mag : cos_loc_mag;
