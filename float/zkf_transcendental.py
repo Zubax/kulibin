@@ -29,6 +29,7 @@ exponent/integer part is handled outside the table by the renormalize/pack stage
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass, field
 from math import ceil
 from pathlib import Path
@@ -79,6 +80,11 @@ WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
 # WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
 # FPGA-friendly significand sizes and the standard IEEE 754 ones. New ones can be added easily.
 SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
+
+# Random faithful-rounding samples per (format, operator) drawn in the --check for non-exhaustive formats. The RNG is
+# UNSEEDED (true randomness) so every run explores fresh inputs and repeated runs accumulate coverage; any miss prints
+# the offending input. The default is deliberately thorough -- override with ZKF_CHECK_SAMPLES=<n> for a quicker run.
+RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 
 def ff_bits(wman: int) -> int:
@@ -493,9 +499,9 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
             continue
         fmt = ZkfFormat(wexp, wman)
         n = 1 << fmt.wfull
-        exhaustive = n <= (1 << 16)
+        exhaustive = n <= (1 << 22)
         inputs = list(range(n)) if exhaustive else \
-            [int(x) for x in np.random.default_rng(0xC0FFEE).integers(0, n, 20000)]
+            [int(x) for x in np.random.default_rng().integers(0, n, RANDOM_CHECK_SAMPLES)]
         for func, ref, true in (("exp2", exp2_reference, exp2_true), ("log2", log2_reference, log2_true)):
             worst = ne = 0
             for b in inputs:

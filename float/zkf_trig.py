@@ -33,6 +33,7 @@ verifies both outputs and the quadrant against an ``mpmath`` ground truth (faith
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass, field
 from math import ceil, log2
 from pathlib import Path
@@ -85,6 +86,12 @@ GUARD_DIV = 8
 
 WMAN_MIN, WMAN_MAX = 11, 53
 SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
+
+# Random faithful-rounding samples per (format, operator) drawn in --check for non-exhaustive formats. The RNG is
+# UNSEEDED (true randomness) so every run explores fresh inputs and repeated runs accumulate coverage; any miss prints
+# the offending input bits for reproduction. The default is deliberately thorough -- override with the environment
+# variable ZKF_CHECK_SAMPLES=<n> for a quicker run.
+RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 
 def guard_ff(wman: int) -> int:
@@ -433,7 +440,7 @@ def _check(all_specs: dict[int, Spec]) -> None:
 def _stratified_inputs(fmt) -> list[int]:
     import numpy as np
     from zkf_model import pack_bits
-    rng = np.random.default_rng(0x5C05)
+    rng = np.random.default_rng()                              # unseeded: true randomness, fresh inputs each run
 
     def rand_bits() -> int:
         v = 0
@@ -441,7 +448,7 @@ def _stratified_inputs(fmt) -> list[int]:
             v = (v << 32) | int(rng.integers(0, 1 << 32))
         return v & ((1 << fmt.wfull) - 1)
 
-    out = [rand_bits() for _ in range(100_000)]
+    out = [rand_bits() for _ in range(RANDOM_CHECK_SAMPLES)]
     quarter_fracs = [0, 1, fmt.frac_mask, (1 << (fmt.wfrac - 1)) | 1]
     for exp in range(1, fmt.exp_inf):
         for sign in (0, 1):
@@ -473,7 +480,7 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     import numpy as np
     from zkf_model import normal
 
-    rng = np.random.default_rng(0xA7A2)
+    rng = np.random.default_rng()                              # unseeded: true randomness, fresh pairs each run
 
     def rand_bits() -> int:
         v = 0
@@ -487,7 +494,7 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     anchors = [normal(fmt, s, fmt.bias, fr) for s in (0, 1) for fr in (0, fmt.frac_mask)]
 
     pairs: set[tuple[int, int]] = set()
-    for _ in range(40_000):
+    for _ in range(RANDOM_CHECK_SAMPLES):
         pairs.add((rand_bits(), rand_bits()))
     swept = list(specials)
     for s in (0, 1):
