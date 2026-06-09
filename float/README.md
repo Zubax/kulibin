@@ -152,6 +152,10 @@ The subnormal round-to-nearest behavior is illustrated below, compared against t
 below the min normal. The timing/area cost of both approaches is approximately equivalent while the rounding method
 halves the worst-case error.
 
+ZKF only has a single canonical zero representation -- the positive zero. However, it is not an error to pass a
+negative zero as an operand; the sign bit of a zero operand is simply ignored. This relaxation enables simplification
+of certain basic operators.
+
 <img src="zkf_underflow_rounding.svg">
 
 ### Accuracy of the transcendental functions

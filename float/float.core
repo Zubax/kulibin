@@ -251,6 +251,27 @@ filesets:
       - hdl/zkf_sincos.v
     file_type: verilogSource
 
+  rtl_atan2:
+    files:
+      - hdl/_zkf_pack.v
+      - hdl/zkf_pipe.v
+      - hdl/_zkf_normshift.v
+      - hdl/_zkf_fixed_to_float.v
+      - hdl/_zkf_cordic.v
+      - hdl/_tables/_zkf_cordic_m11.v
+      - hdl/_tables/_zkf_cordic_m16.v
+      - hdl/_tables/_zkf_cordic_m18.v
+      - hdl/_tables/_zkf_cordic_m24.v
+      - hdl/_tables/_zkf_cordic_m27.v
+      - hdl/_tables/_zkf_cordic_m32.v
+      - hdl/_tables/_zkf_cordic_m36.v
+      - hdl/_tables/_zkf_cordic_m48.v
+      - hdl/_tables/_zkf_cordic_m53.v
+      - hdl/_zkf_div_core.v
+      - hdl/_zkf_pmul.v
+      - hdl/zkf_atan2.v
+    file_type: verilogSource
+
   pmul_unit:
     files:
       - hdl/_zkf_pmul.v
@@ -275,6 +296,8 @@ filesets:
       - tb/zkf_operands.py:
           file_type: user
       - tb/zkf_trig_tables.py:
+          file_type: user
+      - tb/zkf_trans_tables.py:
           file_type: user
       - tb/zkf_results.py:
           file_type: user
@@ -319,6 +342,8 @@ filesets:
       - tb/test_log2.py:
           file_type: user
       - tb/test_sincos.py:
+          file_type: user
+      - tb/test_atan2.py:
           file_type: user
       - tb/test_properties.py:
           file_type: user
@@ -549,7 +574,7 @@ targets:
       tool: icarus
       cocotb_module: test_pack
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_pack_params
       - WEXP
       - WMAN
@@ -582,6 +607,7 @@ targets:
         - -Wno-WIDTHTRUNC
         - -Wno-DECLFILENAME
         - -Wno-UNOPTFLAT
+        - -DSIMULATION=1
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
@@ -595,7 +621,7 @@ targets:
       tool: icarus
       cocotb_module: test_mul
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params_sp
       - WEXP
       - WMAN
@@ -630,6 +656,7 @@ targets:
         - -Wno-WIDTHTRUNC
         - -Wno-DECLFILENAME
         - -Wno-UNOPTFLAT
+        - -DSIMULATION=1
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
@@ -643,7 +670,7 @@ targets:
       tool: icarus
       cocotb_module: test_add
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params_sad
       - WEXP
       - WMAN
@@ -683,7 +710,7 @@ targets:
       tool: icarus
       cocotb_module: test_fma
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_fma_params
       - WEXP
       - WMAN
@@ -727,7 +754,7 @@ targets:
       tool: icarus
       cocotb_module: test_div
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params_si
       - WEXP
       - WMAN
@@ -761,7 +788,7 @@ targets:
       tool: icarus
       cocotb_module: test_addsub
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params_sad
 
   sim_addsub_verilator:
@@ -781,7 +808,7 @@ targets:
       tool: icarus
       cocotb_module: test_properties
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params_sp
 
   sim_properties_add_icarus:
@@ -792,7 +819,7 @@ targets:
       tool: icarus
       cocotb_module: test_properties
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params_sad
 
   sim_properties_addsub_icarus:
@@ -803,7 +830,7 @@ targets:
       tool: icarus
       cocotb_module: test_properties
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params_sad
 
   sim_abs_icarus:
@@ -814,7 +841,7 @@ targets:
       tool: icarus
       cocotb_module: test_abs
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params
       - WEXP
       - WMAN
@@ -842,7 +869,7 @@ targets:
       tool: icarus
       cocotb_module: test_neg
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params
 
   sim_neg_verilator:
@@ -862,7 +889,7 @@ targets:
       tool: icarus
       cocotb_module: test_is_finite
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params
 
   sim_is_finite_verilator:
@@ -882,7 +909,7 @@ targets:
       tool: icarus
       cocotb_module: test_saturate
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params
 
   sim_saturate_verilator:
@@ -902,7 +929,7 @@ targets:
       tool: icarus
       cocotb_module: test_cmp
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params_si_only
       - WEXP
       - WMAN
@@ -932,7 +959,7 @@ targets:
       tool: icarus
       cocotb_module: test_sort
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: *float_binary_params_si_only
 
   sim_sort_verilator:
@@ -952,7 +979,7 @@ targets:
       tool: icarus
       cocotb_module: test_pipe
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &pipe_params
       - W
       - N
@@ -977,6 +1004,7 @@ targets:
         - -Wno-WIDTHTRUNC
         - -Wno-DECLFILENAME
         - -Wno-UNOPTFLAT
+        - -DSIMULATION=1
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
@@ -990,7 +1018,7 @@ targets:
       tool: icarus
       cocotb_module: test_normshift
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &normshift_params
       - W
       - STAGE_SPLIT
@@ -1015,6 +1043,7 @@ targets:
         - -Wno-WIDTHTRUNC
         - -Wno-DECLFILENAME
         - -Wno-UNOPTFLAT
+        - -DSIMULATION=1
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
@@ -1028,7 +1057,7 @@ targets:
       tool: icarus
       cocotb_module: test_rshift
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &rshift_params
       - W
       - STAGE_SPLIT
@@ -1053,6 +1082,7 @@ targets:
         - -Wno-WIDTHTRUNC
         - -Wno-DECLFILENAME
         - -Wno-UNOPTFLAT
+        - -DSIMULATION=1
         - --coverage-line
         - --coverage-toggle
       run_options: [+verilator+coverage+file+coverage.dat]
@@ -1066,7 +1096,7 @@ targets:
       tool: icarus
       cocotb_module: test_mul_ilog2_const
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_binary_params_sd
       - WEXP
       - WMAN
@@ -1098,7 +1128,7 @@ targets:
       tool: icarus
       cocotb_module: test_from_int
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_cast_params_so
       - WEXP
       - WMAN
@@ -1136,7 +1166,7 @@ targets:
       tool: icarus
       cocotb_module: test_to_int
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_cast_params
       - WEXP
       - WMAN
@@ -1168,7 +1198,7 @@ targets:
       tool: icarus
       cocotb_module: test_resize
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_resize_params
       - WEXP_IN
       - WMAN_IN
@@ -1204,7 +1234,7 @@ targets:
       tool: icarus
       cocotb_module: test_round
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_round_params
       - WEXP
       - WMAN
@@ -1240,7 +1270,7 @@ targets:
       tool: icarus
       cocotb_module: test_exp2
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_trans_params
       - WEXP
       - WMAN
@@ -1278,7 +1308,7 @@ targets:
       tool: icarus
       cocotb_module: test_log2
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_log2_params
       - WEXP
       - WMAN
@@ -1319,7 +1349,7 @@ targets:
     flow_options:
       tool: icarus
       timescale: 1ns/1ps
-      iverilog_options: [-g2012, -Wno-timescale]
+      iverilog_options: [-g2012, -Wno-timescale, -DSIMULATION=1]
 
   sim_sincos_icarus:
     filesets: [rtl_sincos, tb_cocotb]
@@ -1329,7 +1359,7 @@ targets:
       tool: icarus
       cocotb_module: test_sincos
       timescale: 1ns/1ps
-      iverilog_options: [-Wall, -Wno-timescale]
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
     parameters: &float_sincos_params
       - WEXP
       - WMAN
@@ -1364,3 +1394,45 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_sincos
     parameters: *float_sincos_params
+
+  sim_atan2_icarus:
+    filesets: [rtl_atan2, tb_cocotb]
+    toplevel: zkf_atan2
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_atan2
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
+    parameters: &float_atan2_params
+      - WEXP
+      - WMAN
+      - UNROLL100
+      - STAGE_INPUT
+      - STAGE_OUTPUT
+      - STAGE_PRODUCT
+      - WMULTIPLIER
+      - STAGE_NORMALIZE
+      - STAGE_PACK
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_UNROLL100
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_OUTPUT
+      - ZKF_STAGE_PRODUCT
+      - ZKF_WMULTIPLIER
+      - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_PACK
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+
+  sim_atan2_verilator:
+    filesets: [rtl_atan2, tb_cocotb]
+    toplevel: zkf_atan2
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_atan2
+    parameters: *float_atan2_params

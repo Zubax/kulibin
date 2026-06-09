@@ -456,6 +456,30 @@ def _stratified_inputs(fmt) -> list[int]:
                 out.append(pack_bits(fmt, sign, exp, int(rng.integers(0, 1 << fmt.wfrac))))
             for fr in quarter_fracs:
                 out.append(pack_bits(fmt, sign, exp, fr))
+
+    # --- near-zero-result regression guard (the log2-class hardening; deterministic, swept every run) ---
+    # sin -> 0 as z -> 0, 1/2; cos -> 0 as z -> 1/4, 3/4 (turns). As a result -> 0 its ULP -> 0, and uniform-random z
+    # never lands within ~2**-wman of these turns for wide formats, so random sampling cannot gate faithful rounding
+    # there. Densely sweep the tiny-angle binades and the +/-K*ULP neighborhoods of every result-zero / octant turn so a
+    # future GUARD_FF/GUARD_XY/etc. reduction that regresses near-zero rounding is caught deterministically. (sincos is
+    # verified clean today -- it renormalizes through the packer -- so this is hardening, not a fix.)
+    import math
+    K, nf = 96, 1 << fmt.wfrac
+    for exp in range(1, min(7, fmt.exp_inf)):                    # z -> 0: tiny angles, dense low/high fracs, both signs
+        for sign in (0, 1):
+            for fr in set(list(range(min(K, nf))) + list(range(max(0, nf - K), nf))):
+                out.append(pack_bits(fmt, sign, exp, fr))
+    for T in (0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0):  # result-zero (1/4,1/2,3/4,1) + octant (1/8,3/8,...) turns
+        eT = math.floor(math.log2(T))
+        for e in (eT - 1, eT):
+            biased = e + fmt.bias
+            if not (1 <= biased < fmt.exp_inf):
+                continue
+            f0 = round((T - 2.0 ** e) / (2.0 ** (e - fmt.wfrac)))    # frac of z = T within binade e
+            for f in range(f0 - K, f0 + K + 1):
+                if 0 <= f < nf:
+                    for sign in (0, 1):
+                        out.append(pack_bits(fmt, sign, biased, f))
     return out
 
 
@@ -510,6 +534,37 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
             base = normal(fmt, s, e, 0)
             pairs.add((base, base))                          # |y| == |x| (octant edge)
             pairs.add((base, base ^ sgn))
+
+    # --- near-axis / bypass-seam regression guard (the log2-class hardening; deterministic, swept every run) ---
+    # theta -> 0 as y -> 0 with x > 0 (the +x axis); the small-ratio bypass divide must faithfully round the smallest
+    # thetas, and uniform-random pairs never hit that corner for wide formats. Densely sweep the smallest |y| (smallest
+    # exps, dense fracs, both signs) against several large x, and straddle the small-ratio bypass cutoff (the
+    # residual<->bypass seam), so a regression of the tiny-theta bypass/divide rounding is caught. (atan2 is verified
+    # clean today -- theta renormalizes through the packer -- so this is hardening, not a fix.)
+    import zkf_trig_tables as TBL
+    nf = 1 << fmt.wfrac
+    yfr = sorted(set(list(range(96)) + list(range(max(0, nf - 48), nf)) + [nf // 2]))
+    # smallest-NONZERO theta band: theta ~ 2**(ey-xe)/(2pi), so it reaches the smallest representable nonzero turn
+    # (and the underflow-to-0 seam) at xe - ey ~ bias. Sweep that shift window densely -- this is the true log2-analog
+    # danger zone (results tiny-but-nonzero, ULP -> 0), NOT xe-ey huge where theta trivially underflows to 0.
+    for ey in (1, 2, 3):
+        for sy in (0, 1):
+            for yf in yfr:
+                y = normal(fmt, sy, ey, yf)
+                for dsh in range(fmt.bias - 6, fmt.bias + 3):    # xe-ey across smallest-nonzero theta .. underflow seam
+                    xe = ey + dsh
+                    if 1 <= xe < fmt.exp_inf:
+                        for xf in (0, nf // 2, nf - 1):
+                            pairs.add((y, normal(fmt, 0, xe, xf)))
+    ts = TBL.SPECS[fmt.wman]["zf"] - fmt.wman - TBL.GUARD_DIV    # straddle the small-ratio bypass cutoff
+    for off in (-1, 0, 1, 2):
+        for ey in (1, max(1, fmt.bias // 2), max(1, fmt.bias - 3)):
+            xe = ey + ts + off
+            if 1 <= xe < fmt.exp_inf:
+                for sy in (0, 1):
+                    for yf in yfr:
+                        for xf in (0, nf // 2, nf - 1):
+                            pairs.add((normal(fmt, sy, ey, yf), normal(fmt, 0, xe, xf)))
     return list(pairs)
 
 

@@ -91,6 +91,17 @@ TRANS_EXT = [
     (6, 16, "random", 512), (8, 27, "random", 512), (8, 32, "random", 512),  # mid-range supported WMAN
     (14, 11, "random", 2000),  # wide exponent field (exhaustive infeasible at WMAN>=11), random sweep instead
 ]
+
+# zkf_atan2 is two-input, so joint-exhaustive (2**(2*wfull)) is infeasible even at the minimum WMAN -- every format
+# uses directed (the full special/axis/diagonal pair table) + random pairs. Covers the two synthesized formats (6/18,
+# 8/36) plus the wide-exponent guard.
+TRANS_ATAN2 = [
+    ("w6_m18_random", 6, 18, "random", 1536),
+    ("w8_m24_random", 8, 24, "random", 1024),
+    ("w8_m36_random", 8, 36, "random", 768),
+    ("w11_m53_random", 11, 53, "random", 384),
+    ("w20_m11_random", 20, 11, "random", 2000),
+]
 # pipe:     (config, width, stages, count)
 PIPE = [("w8_n0", 8, 0, 64), ("w8_n4", 8, 4, 96), ("w24_n2", 24, 2, 96)]
 # from_int/to_int: (config, wexp, wman, wint, kind, count)
@@ -296,8 +307,8 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
 def _trans(module, sim, tier, base, w, m, kind, count, *,
            si=None, sp=None, sn=None, pa=None, so=None, un=None, parallel=None, wm=None) -> Run:
     # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
-    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); sincos uses un
-    # (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared
+    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); sincos and atan2 use
+    # un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared
     # _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK), wm (WMULTIPLIER).
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
@@ -448,6 +459,38 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
+    # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random across formats, then the shared knob sweeps
+    # (UNROLL100 throughput; STAGE_INPUT/OUTPUT/NORMALIZE/PACK staging). Each row asserts bit-exactness vs the model and
+    # measured II == atan2_latency. Directed alone exercises every special/axis/diagonal/bypass-boundary pair.
+    for cfg, w, m, k, c in TRANS_ATAN2:
+        out.append(_trans("atan2", sim, "pr", cfg, w, m, k, c))
+    # Tiny WEXP (2, 3): random covers the generic path (the narrow exponent-difference width) AND the directed special
+    # pairs (the axis/diagonal turn constants that underflow the normal range at small BIAS).
+    out.append(_trans("atan2", sim, "pr", "w2_m11_random", 2, 11, "random", 512))
+    out.append(_trans("atan2", sim, "pr", "w3_m11_random", 3, 11, "random", 512))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_directed", 6, 18, "directed", 0))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=50))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=200))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=400))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, so=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1, so=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_norm", 5, 11, "random", 256, sn=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_norm", 5, 11, "random", 256, sn=2))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_pack", 5, 11, "random", 256, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_full", 5, 11, "random", 256, si=1, sn=2, pa=1, so=1))
+    # STAGE_PRODUCT / WMULTIPLIER: the shared _zkf_pmul (magnitude x_K*KINV and the residual/bypass Q*INV_TAU). Each
+    # adds STAGE_PRODUCT cycles; bit-transparent. Exercise the native (sp=1) and the 2x2 (sp=2) tile-grid splits, plus
+    # the synthesised 6/18 operating point (half-rate engine + the staged DSP-tile-grid product + back-end stages).
+    out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2, wm=16))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256,
+                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))
+    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=4, WMULTIPLIER=18, STAGE_NORMALIZE=2,
+    # STAGE_PACK=1, STAGE_OUTPUT=1 -- 115 cycles, 12 DSP) tested directly so its correctness + data-independent latency
+    # are checked, not just inferred from the knob sweeps.
+    out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256,
+                      un=50, sp=4, wm=18, sn=2, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -561,6 +604,17 @@ def _deep_correctness(out: list) -> None:
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=4, wm=18, sn=2, pa=1, so=1))
+    # zkf_atan2 deep: a baseline per format, the UNROLL100 throughput sweep + full staging on the cheap 5/11 format,
+    # and the exact synthesized 8/36 operating point (half-rate engine + staged back-ends). Each asserts II == model.
+    for cfg, w, m, k, c in TRANS_ATAN2:
+        out.append(_trans("atan2", s, "deep", f"atan2_{cfg}", w, m, k, c))
+    for un in (50, 100, 200, 400):
+        out.append(_trans("atan2", s, "deep", "atan2_w5m11_un", 5, 11, "random", 512, un=un))
+    out.append(_trans("atan2", s, "deep", "atan2_w5m11_stage", 5, 11, "random", 512, si=1, so=1, sn=2, pa=1))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512,
+                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))        # the synthesised 6/18 operating point
+    out.append(_trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512,
+                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))  # the synthesised 8/36 operating point
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
     # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
@@ -647,6 +701,13 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
+    # zkf_atan2 coverage: random + the directed pair table at the cheap 5/11 format reach the small-ratio bypass, the
+    # residual divide, and every special/axis/diagonal pair; un=200 and sn/pa toggle the throughput and back-end staging.
+    # (Joint-exhaustive is infeasible for a two-input op even at the minimum WMAN, so coverage is random + directed.)
+    out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 4000))
+    out.append(_trans("atan2", s, "deep", "atan2_w5m11_directed", 5, 11, "directed", 0))
+    out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, un=200))
+    out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, sn=1, pa=1))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
     # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the
@@ -750,6 +811,9 @@ _FAST = [
 def _fast(out: list) -> None:
     for name, module, vlog in _FAST:
         out.append(_run(module, "icarus", "fast", name, vlog, kind="exhaustive", count=0))
+    # zkf_atan2 is two-input, so joint-exhaustive is infeasible; the smoke uses the directed special/axis/diagonal pairs.
+    out.append(_run("atan2", "icarus", "fast", "atan2",
+                    [("WEXP", 5), ("WMAN", 11), ("UNROLL100", 50)], kind="directed", count=0))
 
 
 def build_matrix() -> list:

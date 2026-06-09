@@ -522,8 +522,9 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2",
-        label="zkf_log2 (log2(x), table+polynomial; STAGE_INPUT=1 shields the decode/evaluator cone + STAGE_NORMALIZE=2 "
-              "splits the close-cancellation normshift + STAGE_PACK=1 keep both wide pre-pack cones below the 100 MHz gate)",
+        label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_INPUT=1 shields the decode/re-center/evaluator "
+              "cone + STAGE_NORMALIZE=2 splits the near-zero-result (x->1) normalize-shift + STAGE_PACK=1 keep both wide "
+              "pre-pack cones below the 100 MHz gate)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
@@ -553,7 +554,7 @@ MODULES = [
     # Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives a 4x3 (signed)
     # / 2x3 (unsigned final mul) grid whose slices fit one tile each, so every multiply maps to DSP on both Yosys and
     # Diamond/LSE; latency is unchanged. exp2 closes at STAGE_PRODUCT=3 (single-stage GA-way column sum); log2's larger
-    # design (the extra final t*P multiply + the wide normshift back-end) places its Horner reduction worse, so its
+    # design (the extra final F*C(f) multiply + the wide normshift back-end) places its Horner reduction worse, so its
     # single-stage GA=4 column sum is the Diamond/LSE limiter (~77 MHz, insensitive to retiming and PAR effort). log2
     # therefore uses STAGE_PRODUCT=4, which keeps the same DSP grid but splits that final column sum into a registered
     # pairwise reduction (105+ MHz). These need <=48 MULT18X18D, so they target the LFE5U-45F (72 DSP) via synth_device.
@@ -609,7 +610,8 @@ MODULES = [
         unroll100=100,    # one CORDIC iteration per engine cycle (shortest combinational path).
                           # PARALLEL auto-resolves to 0 here: a full-rate z-chain can't get ahead of a full-rate x/y, so
                           # the engine stays lock-step (forcing it would need a 2-deep z-chain that misses 100 MHz).
-        stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz.
+        stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz. (Post-narrowing
+                          #   SP=1 native multiply was tried: Yosys 87 MHz -- the unregistered DSP cascade limits; reverted.)
         stage_normalize=2,  # both normshift barriers load-bearing (SN=1 reproducibly drops M18 to 99.5 MHz).
         stage_pack=1,     # rounder pack register; both it and the 2x2 product split are needed for 100 MHz.
     ),
@@ -628,11 +630,62 @@ MODULES = [
         unroll100=50,     # half-rate 2-cycle engine: the wide (XW=64) shift+add recurrence misses 100 MHz single-cycle.
                           # PARALLEL auto-resolves to 1: the full-rate z-path (1 iter/cycle) laps the half-rate x/y so
                           # the PHI correction overlaps the CORDIC, -4 cycles, with no Fmax or DSP cost.
-        stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz.
+        stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz. (Post-
+                          #   narrowing SP=2 flat 3x3 sum tried: Diamond 56 / Yosys 93 MHz -- the flat sum limits; reverted.)
         wmultiplier=18,   # 18-bit tile hint -> the 66x41 product derives a 4x3 single-tile grid (12 DSP) instead of
                           #   the symmetric 3x3's 18; latency-neutral.
         stage_normalize=2,
         stage_pack=1,
+        emit_schematic=False,
+    ),
+    # zkf_atan2 (two-input vectoring CORDIC): atan2(y, x) in turns + hypot(y, x). One folded engine + a folded radix-4
+    # divider (the _zkf_div_core primitives) + the shared _zkf_pmul + one shared _zkf_fixed_to_float back-end
+    # (time-multiplexed over the magnitude then theta). WEXP=6, WMAN=18 on LFE5U-25F (the same default device as
+    # zkf_sincos).
+    ModuleSpec(
+        name="zkf_atan2",
+        label="zkf_atan2 (atan2(y, x) in turns + hypot(y, x), iterative vectoring CORDIC; one datapath reused over "
+              "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide, II = latency; UNROLL100=50 "
+              "half-rate + shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + "
+              "STAGE_PACK + STAGE_OUTPUT)",
+        top="zkf_atan2_synth_top",
+        kind="atan2",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        unroll100=50,     # half-rate 2-cycle engine: the full-rate vectoring shift+add+angle-LUT recurrence is the
+                          #   limiter on BOTH flows (Yosys ~100, Diamond/LSE ~75 -- 26 logic levels), insensitive to PAR;
+                          #   g_pipe splits the shift-sample from the add, clearing the cone. 2 cycles/iteration.
+        stage_product=2,  # narrowed _zkf_pmul: now a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is trivial
+                          #   and the row/column-sum split of SP=3 is no longer needed. Limiter is the radix-4 divider
+                          #   (Yosys) / fixed-to-float normshift (Diamond), not the product.
+        wmultiplier=18,   # 18-bit DSP-tile grid (MULT18X18D) for the magnitude / correction products.
+        stage_normalize=2,  # split the fixed-to-float close-cancellation normshift (the Diamond/LSE back-end limiter).
+        stage_pack=1,     # rounder pack register in each fixed-to-float back-end (load-bearing: pack->output cone).
+        stage_output=0,   # LATENCY (-1): the wide back-end datapath is mildly over-pipelined here, so dropping the
+                          #   packer output register relieves routing congestion (Yosys 112.6 MHz, Diamond >100).
+    ),
+    # WEXP=8, WMAN=36: the wider datapath enables the optional stages needed to close 100 MHz on all flows.
+    ModuleSpec(
+        name="zkf_atan2_w8m36",
+        label="zkf_atan2 (WEXP=8, WMAN=36, vectoring CORDIC; UNROLL100=50 (half-rate) + stock 1-phase folded radix-4 "
+              "divider (ceil(XF/2) steps + a one-cycle 3*den setup) + shared "
+              "_zkf_pmul (STAGE_PRODUCT=3, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 4x3 grid, 12 DSP) + "
+              "STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT; the same default LFE5U-25F as zkf_sincos_w8m36)",
+        top="zkf_atan2_w8m36_synth_top",
+        kind="atan2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        unroll100=50,     # half-rate 2-cycle engine for the wide (XW=64) shift+add recurrence.
+        stage_input=0,    # LATENCY EXPERIMENT (si 1->0, -1 cyc): Yosys-screened 112.7 MHz; confirming on Diamond.
+        stage_product=3,  # narrowed _zkf_pmul: 4x3 grid (KINV/INV_TAU->WMAN+5, WMAG 124->103). The 4-row column sum now
+                          #   fits in the registered row-sum + single column-sum (SP=3); the extra pairwise split of SP=4
+                          #   was for the old 4x4 wide grid and is no longer needed. Limiter is divider / normshift.
+        wmultiplier=18,   # 18-bit DSP-tile grid -> the 64x64 / ~45x60 products fit the default device (no 45k crutch).
+        stage_normalize=2,
+        stage_pack=1,
+        stage_output=1,
         emit_schematic=False,
     ),
 ]
@@ -755,6 +808,25 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_cordic.v",
             *cores,
             hdl / "zkf_sincos.v",
+        ]
+    if spec.kind == "atan2":
+        # Two-input vectoring CORDIC: the shared engine (_zkf_cordic) bound per WMAN, one shared _zkf_fixed_to_float
+        # back-end (time-multiplexed over magnitude then theta), the folded radix-4 divider (the _zkf_div_core
+        # primitives), and the shared _zkf_pmul (magnitude + correction products). Include both the default-WMAN (18)
+        # core and this spec's WMAN, deduped, so Yosys's hierarchy -check is satisfied for the generic.
+        def core(wman: int) -> Path:
+            return hdl / "_tables" / f"_zkf_cordic_m{wman}.v"
+        cores = [core(w) for w in sorted({18, spec.wman})]  # 18 = the default WMAN of zkf_atan2
+        return [
+            hdl / "_zkf_pack.v",
+            hdl / "zkf_pipe.v",
+            hdl / "_zkf_normshift.v",
+            hdl / "_zkf_fixed_to_float.v",
+            hdl / "_zkf_cordic.v",
+            hdl / "_zkf_div_core.v",
+            hdl / "_zkf_pmul.v",
+            *cores,
+            hdl / "zkf_atan2.v",
         ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 

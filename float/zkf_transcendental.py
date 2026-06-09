@@ -599,6 +599,46 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
         print(f"  {status} log2 near-1 m{wman:<3} max_ulp={worst} mismatches={ne}/{len(inputs)} (span {span})")
         assert worst <= 1, f"log2 m{wman} near-x=1: max ULP {worst} > 1 (symmetric-reduction cancellation regression)"
 
+    # --- exp2 boundary regression guard (binade crossings + the 1.0 seam + saturation) ---
+    # exp2 is structurally immune to the log2 cancellation (2^x never -> 0 at finite x, and it renormalizes through the
+    # packer), but its rounding-sensitive seams are the power-of-two/binade crossing at every integer x, the 1.0 seam
+    # (x -> 0), and the over/underflow edge -- and the random check undersamples those just like it did log2's near-1.
+    # So deterministically sweep a dense band straddling every representable integer x, the tiny-x binades (both signs),
+    # and the saturation edge, for EVERY supported WMAN every run. Verified clean today (a hardening guard, not a fix).
+    eb = int(os.environ.get("ZKF_EXP2_BAND", "48"))
+    print(f"exp2 boundary regression guard (integer/binade crossings + 1.0 seam + saturation; band {eb}):")
+    for wman in SUPPORTED_WMAN:
+        fmt = ZkfFormat(8, wman)
+        wfull_mask = (1 << fmt.wfull) - 1
+        nf = 1 << fmt.wfrac
+        ins = set()
+        for e in range(1, min(5, fmt.exp_inf)):                  # x -> 0: the 1.0 seam, dense low/high fracs, both signs
+            for s in (0, 1):
+                for fr in set(list(range(eb)) + list(range(max(0, nf - eb), nf))):
+                    ins.add((s << fmt.sign_shift) | (e << fmt.wfrac) | fr)
+        for N in range(-(1 << (fmt.wexp - 1)) + 1, 1 << (fmt.wexp - 1)):   # band straddling every integer x
+            if N == 0:
+                base = 0
+            else:
+                a = abs(N); ee = a.bit_length() - 1
+                if ee > fmt.wfrac:
+                    continue
+                base = ((1 if N < 0 else 0) << fmt.sign_shift) | ((fmt.bias + ee) << fmt.wfrac) \
+                       | (((a - (1 << ee)) << (fmt.wfrac - ee)) & (nf - 1))
+            for dk in range(-eb, eb + 1):
+                ins.add((base + dk) & wfull_mask)
+        worst = ne = 0
+        for b in ins:
+            got, want = exp2_reference(fmt, b), exp2_true(fmt, b)
+            gb = got[0] if isinstance(got, tuple) else got
+            wb = want[0] if isinstance(want, tuple) else want
+            u = _ulp_diff(fmt, gb, wb)
+            worst = max(worst, u)
+            ne += u > 0
+        status = "OK " if worst <= 1 else "BAD"
+        print(f"  {status} exp2 boundary m{wman:<3} max_ulp={worst} mismatches={ne}/{len(ins)}")
+        assert worst <= 1, f"exp2 m{wman} boundary: max ULP {worst} > 1 (binade/seam rounding regression)"
+
 
 def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
     """Magnitude of the difference between two ZKF encodings in ULPs along the ordered number line."""

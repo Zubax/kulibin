@@ -199,7 +199,7 @@ def sincos_latency(
         raise ValueError(f"stage_product must be 0..4, got {stage_product}")
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
-    k = TRIG_SPECS[wman]["n"]
+    k = TRIG_SPECS[wman]["n_sincos"]                       # sincos iteration count (== table n today)
     iter_cycles = (k * 100 + unroll100 - 1) // unroll100
     saved = 0
     if parallel:
@@ -210,6 +210,46 @@ def sincos_latency(
         10 + 2 * _count(stage_product) + iter_cycles - saved
         + _count(stage_input) + _count(stage_output)
         + _count(stage_normalize) + _count(stage_pack)
+    )
+
+
+def atan2_latency(
+    wman: int,
+    *,
+    unroll100: int = 100,
+    stage_input: int = 0,
+    stage_product: int = 0,
+    stage_normalize: int = 0,
+    stage_pack: int = 0,
+    stage_output: int = 0,
+    **_ignored: int,
+) -> int:
+    # Iterative vectoring-CORDIC initiation interval = latency, measured accept -> out_valid. The cocotb testbench
+    # asserts the RTL matches this exactly, and the RTL LATENCY parameter (zkf_atan2.v) is the same closed form.
+    # Constant 8 = the front-end pipeline (D0 half-compare register + D order/align register + F2 seed register -- the
+    # |x|-vs-|y| compare and the seed barrel-shift are split across these) + the B1 divide-setup register + the
+    # QT-product base register (the shared _zkf_pmul's own first stage) + the two post-divide registers (P2 captures the
+    # correction operands, B2 does the single unmap add + packer-input assembly -- split so the wide signed unmap add
+    # does not chain behind the multiplier) + the output stage. The magnitude product shares the same _zkf_pmul but is
+    # issued DURING the divide, so it never adds latency.
+    # Then: rotation cycles = ceil(N*100/UNROLL100) (UNROLL100 as in sincos); STEPS = ceil(XF/2) folded radix-4 divider
+    # cycles (data-independent: the same divide runs for the bypass and the residual, F = 2*STEPS >= XF quotient bits);
+    # STAGE_PRODUCT extra cycles in the shared _zkf_pmul (on the post-divide QT product, the only one on the critical
+    # path); the optional STAGE_INPUT register (+1); plus STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT forwarded to the
+    # two _zkf_fixed_to_float back-ends. Mirrors `ZKF_ATAN2_LATENCY exactly.
+    if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
+        raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
+    spec = TRIG_SPECS[wman]
+    n, xf = spec["n_atan2"], spec["xf_atan2"]             # atan2's own iteration count and x/y (divider) width
+    iter_cycles = (n * 100 + unroll100 - 1) // unroll100
+    steps = (xf + 1) // 2                                  # folded radix-4 divider: 2 quotient bits per cycle
+    # The folded radix-4 divider runs one digit per cycle (stock _zkf_div_radix4_step) for STEPS cycles, plus a one-cycle
+    # setup that forms 3*den off the registered divisor. Mirrors `ZKF_ATAN2_DIVCYC = STEPS + 1.
+    div_cycles = steps + 1
+    return (
+        8 + iter_cycles + div_cycles + _count(stage_product)
+        + _count(stage_input) + _count(stage_normalize)
+        + _count(stage_pack) + _count(stage_output)
     )
 
 
@@ -304,5 +344,15 @@ def module_latency(
             stage_product=stage_product,
             stage_normalize=stage_normalize,
             stage_pack=stage_pack,
+        )
+    if kind == "atan2":
+        return atan2_latency(
+            wman,
+            unroll100=unroll100,
+            stage_input=stage_input,
+            stage_product=stage_product,
+            stage_normalize=stage_normalize,
+            stage_pack=stage_pack,
+            stage_output=stage_output,
         )
     raise ValueError(f"unsupported module kind: {kind}")
