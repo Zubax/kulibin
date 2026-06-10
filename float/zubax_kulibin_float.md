@@ -604,7 +604,12 @@ module zkf_sqrt #(parameter WEXP = 6, parameter WMAN = 18) (
 /// log2(+0)       = -inf, pole=1
 /// log2(x<0)      = -inf, domain_error=1
 module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18,
-                  parameter STAGE_PRODUCT = 0, parameter STAGE_OUTPUT = 0) (
+                  parameter STAGE_INPUT = 0, parameter STAGE_DECODE = 0, parameter STAGE_PRODUCT = 0,
+                  parameter STAGE_PRODUCT_FINAL = STAGE_PRODUCT,
+                  parameter WMULTIPLIER = 0,
+                  parameter STAGE_NORMALIZE = 0, parameter STAGE_NORMALIZE_OUTPUT = 0, parameter STAGE_PACK = 0,
+                  parameter STAGE_OUTPUT = 0,
+                  parameter LATENCY = /* see hdl/zkf_log2.v */) (
     input wire clk,
     input wire rst,
 
@@ -623,7 +628,9 @@ module zkf_log2 #(parameter WEXP = 6, parameter WMAN = 18,
 /// tiny finite results use the zero/MIN_NORMAL boundary rule
 /// overflow             = +inf
 module zkf_exp2 #(parameter WEXP = 6, parameter WMAN = 18,
-                  parameter STAGE_PRODUCT = 0, parameter STAGE_OUTPUT = 0) (
+                  parameter STAGE_INPUT = 0, parameter STAGE_REDUCE = 0,
+                  parameter STAGE_PRODUCT = 0, parameter WMULTIPLIER = 0,
+                  parameter STAGE_PACK = 0, parameter STAGE_OUTPUT = 0) (
     input wire clk,
     input wire rst,
 

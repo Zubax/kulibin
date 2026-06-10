@@ -67,9 +67,9 @@ grade:
     make synth-float-yosys-spartan7
 
 It writes `build/float_synth_yosys_spartan7/index.html`. On first use it builds and caches the nextpnr-xilinx chip
-database (pick another part with `SPARTAN7_DEVICE`). This flow is optional and non-fatal: it skips cleanly when
-nextpnr-xilinx / bbasm / the prjxray database are unavailable, and a synthesis or timing failure never fails the build.
-It is therefore excluded from the per-PR gate and runs only on the deep-verification path.
+database for the fixed default part. This flow is optional and non-fatal: it skips cleanly when nextpnr-xilinx / bbasm /
+the prjxray database are unavailable, and a synthesis or timing failure never fails the build. It is therefore excluded
+from the per-PR gate and runs only on the deep-verification path.
 
 <!-- hierarchy-start -->
 ## Module dependency graph

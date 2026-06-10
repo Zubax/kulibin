@@ -31,13 +31,17 @@
 /// where one barrier still leaves the top two levels in the same combinational stage (a substantial f_max gain at wide
 /// WMAN in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
 /// NL4 >= 3 so the two barriers do not coincide.
+///
+/// STAGE_OUTPUT=1: register the fully aligned y/count/zero outputs after the cascade (+1 cycle). This is useful when
+/// the consumer needs a clean boundary after normalization without changing the internal split geometry.
 
 `default_nettype none
 
 module _zkf_normshift #(
     parameter W           = 16,
     parameter WSHAMT      = $clog2(W),
-    parameter STAGE_SPLIT = 0
+    parameter STAGE_SPLIT = 0,
+    parameter STAGE_OUTPUT = 0
 ) (
     input  wire              clk,    // unused when STAGE_SPLIT == 0
     input  wire      [W-1:0] x,
@@ -60,6 +64,9 @@ module _zkf_normshift #(
         end
         if ((STAGE_SPLIT == 2) && (NL4 < 3)) begin : g_invalid_stage_split2_too_narrow
             _zkf_invalid_stage_split2_needs_wider_w u_invalid();
+        end
+        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
+            _zkf_invalid_stage_output u_invalid();
         end
     endgenerate
     // verilator coverage_on
@@ -135,7 +142,7 @@ module _zkf_normshift #(
         end
     endgenerate
 
-    assign y = data[NL4];
+    wire [W-1:0] y_aligned = data[NL4];
 
     // Count assembly. The digit for level K (= NL4-1-k) is computed at iteration s = k from data[s]; it has crossed
     // every barrier whose position is <= s. The aligned count must wait for the slowest digit, so digit k is delayed
@@ -144,6 +151,7 @@ module _zkf_normshift #(
     genvar k;
     generate
         for (k = 0; k < NL4; k = k + 1) begin : g_count
+            localparam integer S = NL4 - 1 - k;  // data level whose zero-detect produced this digit
             // First arm narrowed from `(SS != 0) && ...` to `(SS == 1) && ...` so the SS=1 elaboration is bit-for-bit
             // unchanged; SS=2 arms appended after. SS=2's top digit (k = NL4-1) needs two cycles of delay and lands in
             // g_count_delay2; SS=2's mid digits share the original g_count_delay label.
@@ -169,28 +177,50 @@ module _zkf_normshift #(
     endgenerate
 
     wire zero_pre = ~|x;
+    wire zero_aligned;
     generate
         if (STAGE_SPLIT == 1) begin : g_zero_delay
             reg zero_r;
             always @(posedge clk) zero_r <= zero_pre;
-            assign zero = zero_r;
+            assign zero_aligned = zero_r;
         end else if (STAGE_SPLIT == 2) begin : g_zero_delay2
             reg zero_r1, zero_r2;
             always @(posedge clk) begin
                 zero_r1 <= zero_pre;
                 zero_r2 <= zero_r1;
             end
-            assign zero = zero_r2;
+            assign zero_aligned = zero_r2;
         end else begin : g_zero_pass
-            assign zero = zero_pre;
+            assign zero_aligned = zero_pre;
+        end
+    endgenerate
+
+    wire [WSHAMT-1:0] count_aligned;
+    generate
+        if (WSHAMT > CNTW) begin : g_pad
+            assign count_aligned = {{(WSHAMT-CNTW){1'b0}}, cnt};
+        end else begin : g_no_pad
+            assign count_aligned = cnt[WSHAMT-1:0];
         end
     endgenerate
 
     generate
-        if (WSHAMT > CNTW) begin : g_pad
-            assign count = {{(WSHAMT-CNTW){1'b0}}, cnt};
-        end else begin : g_no_pad
-            assign count = cnt[WSHAMT-1:0];
+        if (STAGE_OUTPUT) begin : g_output_reg
+            reg              zero_r;
+            reg [WSHAMT-1:0] count_r;
+            reg      [W-1:0] y_r;
+            always @(posedge clk) begin
+                zero_r  <= zero_aligned;
+                count_r <= count_aligned;
+                y_r     <= y_aligned;
+            end
+            assign zero  = zero_r;
+            assign count = count_r;
+            assign y     = y_r;
+        end else begin : g_output_pass
+            assign zero  = zero_aligned;
+            assign count = count_aligned;
+            assign y     = y_aligned;
         end
     endgenerate
 endmodule

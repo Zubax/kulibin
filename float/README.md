@@ -68,6 +68,10 @@ Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so 
 The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
 
+Generated lookup table ROMs are plain initialized Verilog arrays. They expose `ZKF_ATTRIBUTE_ROM_PRE` and
+`ZKF_ATTRIBUTE_ROM_POST` as optional hooks around the ROM declaration for tool-specific attributes.
+They may require overriding to enable correct ROM inference depending on the target chip/flow.
+
 ### Catalogue
 
 Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depending on the selected `STAGE_`s;
@@ -183,6 +187,11 @@ The trigonometric modules (sincos, atan2) carry the same ≤1 ULP contract and a
 of polynomials, with post-refinement to achieve the accuracy target trading a few DSP tiles for a lower cycle latency.
 
 <img src="zkf_transcendental_accuracy.svg">
+
+**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by the
+transcendental/trigonometric operators are correctly mapped to ROM. If you see unreasonable fabric usage and bad
+timings, check your synthesis settings first, and if necessary override `ZKF_ATTRIBUTE_ROM_PRE` and
+`ZKF_ATTRIBUTE_ROM_POST`.
 
 ## Sizing the exponent and the significand (WEXP/WMAN)
 
