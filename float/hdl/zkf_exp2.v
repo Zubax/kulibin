@@ -18,7 +18,8 @@
 ///  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
 ///
 /// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
-/// ROM read is registered, so no single stage carries both a wide carry chain and a multiply.
+/// ROM read is followed by a mandatory fabric register, so no single stage carries both a wide carry chain and a
+/// multiply.
 ///
 /// STAGE_PRODUCT selects product computation staging; see _zkf_pmul.
 /// WMULTIPLIER optionally hints the native DSP tile argument width; see _zkf_pmul.
@@ -27,15 +28,17 @@
 
 `default_nettype none
 
-`define ZKF_EXP2_DEGREE (((WMAN+16)/9)-1)
-`define ZKF_EXP2_LATENCY (STAGE_INPUT + 5 + `ZKF_EXP2_DEGREE*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT)
+`define ZKF_EXP2_DEGREE (((WMAN+18)/11)-1)
+`define ZKF_EXP2_LATENCY \
+    (STAGE_INPUT + STAGE_REDUCE + 4 + `ZKF_EXP2_DEGREE*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_exp2 #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
-    parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
-    parameter STAGE_PRODUCT = 0,    // see _zkf_pmul
     parameter WMULTIPLIER   = 0,    // see _zkf_pmul
+    parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage
+    parameter STAGE_REDUCE  = 0,    // 0: direct fixed->ROM input; 1: register reduced i/f/flags, +1 stage
+    parameter STAGE_PRODUCT = 0,    // see _zkf_pmul
     parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
     parameter STAGE_OUTPUT  = 0,    // 0: combinational outputs;  1: registered outputs, +1 stage
     parameter LATENCY       = `ZKF_EXP2_LATENCY   // must equal the register-stage count; checked below
@@ -61,6 +64,9 @@ module zkf_exp2 #(
         end
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_REDUCE != 0) && (STAGE_REDUCE != 1)) begin : g_invalid_stage_reduce
+            _zkf_invalid_stage_reduce u_invalid();
         end
         if (LATENCY != `ZKF_EXP2_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
@@ -93,7 +99,7 @@ module zkf_exp2 #(
     // verilator coverage_on
     // Lost-sticky reduction path: rb_lost_sticky asserts only when the float->fixed reduction drops nonzero low bits,
     // which needs a wide exponent (e well below -WMAN). The small exhaustive coverage formats (WEXP<=3) never reach it;
-    // the wide-WEXP exp2 configs in the correctness suite (w5/w14/w20_m11) verify it. Suppress this bit -- and the
+    // the wide-WEXP exp2 configs in the correctness suite verify it. Suppress this bit -- and the
     // r0_lost / sb_in_e / sb_out_e / e_lost it rides on -- from the toggle gate; they all carry the same one bit.
     // verilator coverage_off
     wire             rb_lost_sticky;
@@ -137,31 +143,63 @@ module zkf_exp2 #(
     wire                     force_inf_in  = rb_oor & ~rb_sign; // +inf / positive overflow
     wire                     force_zero_in = rb_oor &  rb_sign; // -inf / negative underflow
 
-    // -- Stage r0 register: the reduction result feeding the pipelined evaluator. Mirrors today's r0 layout.
-    reg                  r0_valid;
-    reg signed [WEU-1:0] r0_i;
-    reg        [FF-1:0]  r0_f;
-    reg                  r0_force_inf;
-    reg                  r0_force_zero;
-    reg                  r0_is_zero;
-    // verilator coverage_off
-    reg                  r0_lost;   // lost-sticky pipeline; see rb_lost_sticky above
-    // verilator coverage_on
-    always @(posedge clk) begin
-        if (rst) r0_valid <= 1'b0;
-        else     r0_valid <= rb_valid;
-        r0_i          <= i_clamped;
-        r0_f          <= f_bits;
-        r0_force_inf  <= force_inf_in;
-        r0_force_zero <= force_zero_in;
-        r0_is_zero    <= rb_is_zero;
-        r0_lost       <= rb_lost_sticky;
-    end
+    wire                     eval_in_valid;
+    wire signed [WEU-1:0]    eval_i;
+    wire [FF-1:0]            eval_f;
+    wire                     eval_force_inf;
+    wire                     eval_force_zero;
+    wire                     eval_is_zero;
+    wire                     eval_lost_sticky;
+
+    generate
+        if (STAGE_REDUCE != 0) begin : g_reduce_stage
+            reg                    r0_valid;
+            reg signed [WEU-1:0]   r0_i;
+            reg [FF-1:0]           r0_f;
+            reg                    r0_force_inf;
+            reg                    r0_force_zero;
+            reg                    r0_is_zero;
+            reg                    r0_lost_sticky;
+
+            always @(posedge clk) begin
+                if (rst) begin
+                    r0_valid <= 1'b0;
+                end else begin
+                    r0_valid <= rb_valid;
+                end
+
+                r0_i           <= i_clamped;
+                r0_f           <= f_bits;
+                r0_force_inf   <= force_inf_in;
+                r0_force_zero  <= force_zero_in;
+                r0_is_zero     <= rb_is_zero;
+                r0_lost_sticky <= rb_lost_sticky;
+            end
+
+            assign eval_in_valid    = r0_valid;
+            assign eval_i           = r0_i;
+            assign eval_f           = r0_f;
+            assign eval_force_inf   = r0_force_inf;
+            assign eval_force_zero  = r0_force_zero;
+            assign eval_is_zero     = r0_is_zero;
+            assign eval_lost_sticky = r0_lost_sticky;
+        end else begin : g_reduce_direct
+            assign eval_in_valid    = rb_valid;
+            assign eval_i           = i_clamped;
+            assign eval_f           = f_bits;
+            assign eval_force_inf   = force_inf_in;
+            assign eval_force_zero  = force_zero_in;
+            assign eval_is_zero     = rb_is_zero;
+            assign eval_lost_sticky = rb_lost_sticky;
+        end
+    endgenerate
 
     // -- Pipelined evaluator: 2**f significand + GRS. The sideband {i, force_inf, force_zero, is_zero, lost} is delayed
-    // to land with the significand, so this module need not know the evaluator's internal depth (1+D cycles).
+    // inside the generated evaluator by a plain pipe, aligned to the evaluator output.
     // verilator coverage_off
-    wire [SBW-1:0]  sb_in_e = {r0_i, r0_force_inf, r0_force_zero, r0_is_zero, r0_lost};  // bit 0 = lost (see above)
+    wire [SBW-1:0]  sb_in_e = {
+        eval_i, eval_force_inf, eval_force_zero, eval_is_zero, eval_lost_sticky
+    };
     // verilator coverage_on
     wire            ev_valid;
     // verilator coverage_off
@@ -174,14 +212,25 @@ module zkf_exp2 #(
     // The table+polynomial core is pre-generated per WMAN by zkf_transcendental.py as _zkf_exp2_m<WMAN>. We pass the
     // closed-form degree D below; the core asserts it equals the degree its ROM was fitted for (mirrors the LATENCY
     // parameter), so the Horner depth / latency cannot drift.
-    // A WMAN without a pre-generated table names a missing module and fails loudly.
-    `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_exp2_m``W #(.D(`ZKF_EXP2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_eval ( \
-            .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_e), .f(r0_f), \
+    // A WMAN without a pre-generated table fails elaboration through the unsupported-table sentinel.
+    `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin \
+        _zkf_exp2_m``W #( \
+            .D(`ZKF_EXP2_DEGREE), .WSB(SBW), \
+            .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT) \
+        ) u_eval ( \
+            .clk(clk), .rst(rst), .in_valid(eval_in_valid), .sb_in(sb_in_e), .f(eval_f), \
             .out_valid(ev_valid), .sb_out(sb_out_e), .significand(eval_sig), \
             .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));
+    // verilog_lint: waive-start generate-label  (macro-expanded selector blocks are intentionally unlabeled)
     generate
-        if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
+        if (1'b0) begin  // seed: the macro opens with "end else if", so every table line is uniform
+        `ZKF_EXP2_TABLE(4)
+        `ZKF_EXP2_TABLE(5)
+        `ZKF_EXP2_TABLE(6)
+        `ZKF_EXP2_TABLE(7)
+        `ZKF_EXP2_TABLE(8)
+        `ZKF_EXP2_TABLE(9)
+        `ZKF_EXP2_TABLE(10)
         `ZKF_EXP2_TABLE(11)
         `ZKF_EXP2_TABLE(12)
         `ZKF_EXP2_TABLE(13)
@@ -225,11 +274,12 @@ module zkf_exp2 #(
         `ZKF_EXP2_TABLE(51)
         `ZKF_EXP2_TABLE(52)
         `ZKF_EXP2_TABLE(53)
-        end else begin : g_unsupported
+        end else begin
             _zkf_invalid_unsupported_table_wman u_invalid();
         end
     endgenerate
     `undef ZKF_EXP2_TABLE
+    // verilog_lint: waive-stop generate-label
     wire signed [WEU-1:0] e_i        = sb_out_e[SBW-1 -: WEU];
     wire                  e_finf     = sb_out_e[3];
     wire                  e_fzero    = sb_out_e[2];

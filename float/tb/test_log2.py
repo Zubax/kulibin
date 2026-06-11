@@ -53,6 +53,25 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             if 1 <= exp <= fmt.exp_max_finite:
                 out.append((f"pow2_{k}", normal(fmt, 0, exp, 0)))
                 out.append((f"neg_pow2_{k}", normal(fmt, 1, exp, 0)))   # negative -> domain error
+        # Top finite exponent/fraction combinations exercise the reduced WNORM upper range: the re-center branch may
+        # carry e to 2^(WEXP-1), but log2(m') is then negative, so the finite result stays just below that bound.
+        for frac in sorted({0, 1, fmt.frac_mask >> 1, fmt.frac_mask - 1, fmt.frac_mask}):
+            out.append((f"max_exp_frac_{frac}", normal(fmt, 0, fmt.exp_max_finite, frac)))
+        # Inputs x=2^k yield exact integer outputs y=k. When |k| is a power of two, y itself has a power-of-two
+        # significand; the neighbors exercise rounder/normalizer behavior around those output exponent boundaries.
+        for p in range(fmt.wexp):
+            k = 1 << p
+            for delta in (-1, 0, 1):
+                kp = k + delta
+                if kp >= 0:
+                    exp = fmt.bias + kp
+                    if 1 <= exp <= fmt.exp_max_finite:
+                        out.append((f"result_pos_pow2_{k}_{delta}", normal(fmt, 0, exp, 0)))
+                kn = k + delta
+                if kn >= 0:
+                    exp = fmt.bias - kn
+                    if 1 <= exp <= fmt.exp_max_finite:
+                        out.append((f"result_neg_pow2_{k}_{delta}", normal(fmt, 0, exp, 0)))
         # Near 1.0 (small results, the log2 cancellation regime).
         out.append(("just_above_one", normal(fmt, 0, fmt.bias, 1)))
         out.append(("just_below_one", normal(fmt, 0, fmt.bias - 1, fmt.frac_mask)))
@@ -97,8 +116,11 @@ async def log2_runtime_cases(dut) -> None:
     register_stages = log2_latency(
         context.wman,
         stage_input=context.stage_input,
+        stage_decode=context.stage_decode,
         stage_product=context.stage_product,
+        stage_product_final=context.stage_product_final,
         stage_normalize=context.stage_normalize,
+        stage_normalize_output=context.stage_normalize_output,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
     )

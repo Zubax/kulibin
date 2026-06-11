@@ -430,7 +430,7 @@ module zkf_sincos #(
     wire [1:0] mul_sb_out;
     wire       mul_in_valid = ((mphase == P_IDLE) && (eng_start | cd_zdone)) | ((mphase == P_SC) && (sc_iss < 2'd2));
     _zkf_pmul #(
-        .WA(WA), .WB(WB), .A_SIGNED(1), .B_SIGNED(1), .WSB(2), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+        .WA(WA), .WB(WB), .A_SIGNED(1), .B_SIGNED(1), .WSB(2), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(mul_in_valid), .sb_in(mul_sb_in),
         .a(mul_a_sel), .b(mul_b_sel),

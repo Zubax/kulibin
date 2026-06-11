@@ -24,11 +24,9 @@ filesets:
       - hdl/zkf_mul_ilog2_const.v
       - hdl/zkf_fma.v
       - hdl/_zkf_horner.v
-      - hdl/_zkf_log2_final_mul.v
       - hdl/_zkf_pmul.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_fixed_to_float.v
-      - hdl/_tables/_zkf_exp2_m11.v
       - hdl/_tables/_zkf_exp2_m16.v
       - hdl/_tables/_zkf_exp2_m18.v
       - hdl/_tables/_zkf_exp2_m24.v
@@ -37,7 +35,6 @@ filesets:
       - hdl/_tables/_zkf_exp2_m36.v
       - hdl/_tables/_zkf_exp2_m48.v
       - hdl/_tables/_zkf_exp2_m53.v
-      - hdl/_tables/_zkf_log2_m11.v
       - hdl/_tables/_zkf_log2_m16.v
       - hdl/_tables/_zkf_log2_m18.v
       - hdl/_tables/_zkf_log2_m24.v
@@ -198,7 +195,6 @@ filesets:
       - hdl/_zkf_rshift_sticky.v
       - hdl/_zkf_to_fixpoint.v
       - hdl/_zkf_horner.v
-      - hdl/_tables/_zkf_exp2_m11.v
       - hdl/_tables/_zkf_exp2_m16.v
       - hdl/_tables/_zkf_exp2_m18.v
       - hdl/_tables/_zkf_exp2_m24.v
@@ -218,8 +214,6 @@ filesets:
       - hdl/_zkf_normshift.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_horner.v
-      - hdl/_zkf_log2_final_mul.v
-      - hdl/_tables/_zkf_log2_m11.v
       - hdl/_tables/_zkf_log2_m16.v
       - hdl/_tables/_zkf_log2_m18.v
       - hdl/_tables/_zkf_log2_m24.v
@@ -469,11 +463,27 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_REDUCE:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_REDUCE:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_PRODUCT:
     datatype: int
     default: 0
     paramtype: vlogparam
   ZKF_STAGE_PRODUCT:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  STAGE_PRODUCT_FINAL:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_PRODUCT_FINAL:
     datatype: int
     default: 0
     paramtype: plusarg
@@ -517,6 +527,14 @@ parameters:
     datatype: int
     default: 0
     paramtype: plusarg
+  STAGE_NORMALIZE_OUTPUT:
+    datatype: int
+    default: 0
+    paramtype: vlogparam
+  ZKF_STAGE_NORMALIZE_OUTPUT:
+    datatype: int
+    default: 0
+    paramtype: plusarg
   STAGE_PACK:
     datatype: int
     default: 0
@@ -534,6 +552,10 @@ parameters:
     default: 8
     paramtype: plusarg
   ZKF_NS_SPLIT:
+    datatype: int
+    default: 0
+    paramtype: plusarg
+  ZKF_NS_OUTPUT:
     datatype: int
     default: 0
     paramtype: plusarg
@@ -1022,8 +1044,10 @@ targets:
     parameters: &normshift_params
       - W
       - STAGE_SPLIT
+      - STAGE_OUTPUT
       - ZKF_NS_W
       - ZKF_NS_SPLIT
+      - ZKF_NS_OUTPUT
       - ZKF_KIND
       - ZKF_COUNT
       - ZKF_SEED
@@ -1275,6 +1299,7 @@ targets:
       - WEXP
       - WMAN
       - STAGE_INPUT
+      - STAGE_REDUCE
       - STAGE_PRODUCT
       - WMULTIPLIER
       - STAGE_PACK
@@ -1286,6 +1311,7 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_REDUCE
       - ZKF_STAGE_PRODUCT
       - ZKF_WMULTIPLIER
       - ZKF_STAGE_PACK
@@ -1313,9 +1339,12 @@ targets:
       - WEXP
       - WMAN
       - STAGE_INPUT
+      - STAGE_DECODE
       - STAGE_PRODUCT
+      - STAGE_PRODUCT_FINAL
       - WMULTIPLIER
       - STAGE_NORMALIZE
+      - STAGE_NORMALIZE_OUTPUT
       - STAGE_PACK
       - STAGE_OUTPUT
       - ZKF_WEXP
@@ -1325,9 +1354,12 @@ targets:
       - ZKF_SEED
       - ZKF_CONFIG
       - ZKF_STAGE_INPUT
+      - ZKF_STAGE_DECODE
       - ZKF_STAGE_PRODUCT
+      - ZKF_STAGE_PRODUCT_FINAL
       - ZKF_WMULTIPLIER
       - ZKF_STAGE_NORMALIZE
+      - ZKF_STAGE_NORMALIZE_OUTPUT
       - ZKF_STAGE_PACK
       - ZKF_STAGE_OUTPUT
 

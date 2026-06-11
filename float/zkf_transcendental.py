@@ -22,7 +22,7 @@ recurrence (see ``hdl/_zkf_horner.v``). ``D`` is a closed-form function of ``WMA
 This module is the single source of truth. ``--emit`` writes, per supported ``WMAN``, a self-contained per-table eval
 core ``hdl/_tables/_zkf_<func>_m<WMAN>.v`` plus the Python data table ``tb/zkf_trans_tables.py`` that the bit-exact
 reference model imports. The public ``hdl/zkf_<func>.v`` modules carry a hand-written generate-if that enumerates every
-``WMAN`` in [11, 53] and instantiates the matching table module, passing the closed-form degree the table asserts
+``WMAN`` in [16, 53] and instantiates the matching table module, passing the closed-form degree the table asserts
 against its ROM (mirroring the ``LATENCY`` parameter); an un-pregenerated ``WMAN`` fails elaboration loudly (the chosen
 table module is simply undefined). ``--check`` verifies the tables against an ``mpmath`` ground truth.
 
@@ -63,27 +63,21 @@ FUNCS = ("exp2", "log2")
 GUARD = 12
 ERR_GUARD = 8   # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
 
-# Segment-index bits: the unit interval is split into 2**K_CAP equal segments, indexed by the top K_CAP bits of the
-# reduced argument; the remaining bits feed the per-segment polynomial. K_CAP is the single ROM-size knob (2**K_CAP
-# words) and, being constant for every supported WMAN, makes the per-segment degree a closed-form function of WMAN
-# alone (see degree()). BRAM is cheap, so this is a deliberate area-for-latency trade: a larger K_CAP would lower the
-# degree (shorter Horner pipeline) at the cost of a wider ROM.
-K_CAP = 9
-ACC_MARGIN = 3  # extra accumulator bits above the measured maximum, guarding against wrap
+# Maximum segment-index bits: choose_spec() searches for the smallest K <= K_CAP that meets the accuracy target, so
+# actual ROM row counts vary by WMAN/function. K_CAP still sets the closed-form degree scale: larger caps permit lower
+# Horner degree (shorter pipeline) at the cost of potentially wider ROMs.
+K_CAP = 11
+ACC_MARGIN = 1  # extra accumulator bits above the measured maximum, guarding against wrap
 
-# Minimum supported WMAN. degree() peels K_CAP segment-index bits off the reduced argument and needs >=1 bit left for
-# the in-segment coordinate, so the argument must be >= K_CAP + 1 bits wide. exp2's argument is the FF = WMAN + GUARD
-# bit reduced fraction (always wide enough); log2's symmetric-reduction index coordinate v is WFRAC + 1 = WMAN bits
-# wide (see choose_spec), which needs WMAN >= K_CAP + 1 -- looser than exp2. The binding constraint is thus WMAN >=
-# K_CAP + 2 = 11 (exp2's FF must clear it too, and 11 is exactly binary16's significand precision, 10 stored + 1
-# hidden). At and above it both functions keep the full K_CAP segments and share one degree formula. The public
-# hdl/zkf_<func>.v modules enumerate this closed-form range; a WMAN in it without a pre-generated table fails
-# elaboration loudly (the named _zkf_<func>_m<WMAN> module is undefined), and WMAN outside it hits a sentinel.
-WMAN_MIN, WMAN_MAX = K_CAP + 2, 53
+# Minimum supported WMAN for exp2/log2 generated tables. The K_CAP=11 geometry would fit a few narrower formats, but the
+# shipped exp2/log2 contract starts at WMAN=16 to keep the table family focused on useful precisions and avoid carrying
+# the old WMAN=11 area/accuracy tradeoff. The public hdl/zkf_<func>.v modules reject WMAN < 16 explicitly; a WMAN in
+# [16, 53] without a pre-generated table still fails elaboration loudly by naming an undefined table module.
+WMAN_MIN, WMAN_MAX = 16, 53
 
-# WMAN values shipped with pre-generated tables: binary16 precision (11) through the most common ones, including
-# FPGA-friendly significand sizes and the standard IEEE 754 ones. New ones can be added easily.
-SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
+# WMAN values shipped with pre-generated tables: FPGA-friendly significand sizes and the standard IEEE 754 ones. New
+# ones can be added easily.
+SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
 
 # Random faithful-rounding samples per (format, operator) drawn in the --check for non-exhaustive formats. The RNG is
 # UNSEEDED (true randomness) so every run explores fresh inputs and repeated runs accumulate coverage; any miss prints
@@ -123,10 +117,10 @@ def degree(wman: int) -> int:
     """
     Per-segment polynomial degree, a closed-form function of WMAN alone, so the Horner pipeline depth is too.
 
-    Each of the 2**K_CAP segments spans 2**-K_CAP of the unit interval, and its polynomial must approximate the helper
-    there to B = WMAN + ERR_GUARD bits; the minimal degree spanning B bits across K_CAP segment-index bits is
-    ceil(B / K_CAP) - 1. There is no `func` selector and no argument-width parameter: for WMAN >= 11 (see WMAN_MIN)
-    both exp2 and log2 retain the full K_CAP segment-index bits.
+    K_CAP is the maximum segment-index width used by choose_spec(). At that finest allowed segmentation each segment
+    spans 2**-K_CAP of the unit interval, and its polynomial must approximate the helper there to B = WMAN + ERR_GUARD
+    bits; the degree target is therefore ceil(B / K_CAP) - 1. choose_spec() may select a smaller K when it still meets
+    the same error target, but D remains fixed by this cap so latency depends only on WMAN.
     """
     if not (WMAN_MIN <= wman <= WMAN_MAX):
         raise ValueError(f"Bad {wman=}")
@@ -144,6 +138,7 @@ class Spec:
     func: str            # "exp2" | "log2"
     wman: int
     k: int               # segment-index bits
+    seg_base: int        # first ROM segment represented by coeffs; zero for exp2, compacted for log2
     d: int               # polynomial degree
     cf: int              # coefficient fractional bits (scale 2**-cf)
     rw: int              # reduced-argument bits (wn = w / 2**rw); the total argument width is k + rw
@@ -153,7 +148,7 @@ class Spec:
 
     @property
     def nseg(self) -> int:
-        return 1 << self.k
+        return len(self.coeffs)
 
 
 # --------------------------------------------------------------------------------------------------
@@ -194,8 +189,44 @@ def horner(coeffs_idx: list[int], w: int, rw: int) -> int:
     return acc
 
 
-def _arg_grid(width: int, k: int):
+def _log2_reachable_v_bounds(wman: int) -> tuple[int, int]:
+    """Inclusive bounds for the log2 table-index coordinate v over all positive finite inputs."""
+    wfrac = wman - 1
+    half = 1 << wfrac
+    thr = log2_sqrt2_threshold(wfrac)
+    min_v = thr - half
+    max_v = (2 * thr) - half - 2
+    assert 0 <= min_v <= half <= max_v < (1 << wman)
+    return min_v, max_v
+
+
+def _segment_span(func: str, wman: int, k: int) -> tuple[int, int]:
+    """Return (first segment index, number of segment rows) needed by this function."""
+    if func == "exp2":
+        return 0, 1 << k
+    min_v, max_v = _log2_reachable_v_bounds(wman)
+    rw = wman - k
+    seg_base = min_v >> rw
+    seg_last = max_v >> rw
+    return seg_base, seg_last - seg_base + 1
+
+
+def _arg_grid(func: str, wman: int, width: int, k: int, seg_base: int, nseg: int):
     """Argument values to probe: exhaustive when small, else dense segment-local sampling."""
+    if func == "log2":
+        min_v, max_v = _log2_reachable_v_bounds(wman)
+        if width <= 16:
+            return range(min_v, max_v + 1)
+        rw = width - k
+        span = 1 << rw
+        probes = sorted({0, span // 7, span // 4, span // 2, (5 * span) // 7, (3 * span) // 4, span - 1})
+        out = []
+        for idx in range(seg_base, seg_base + nseg):
+            for w in probes:
+                a = (idx << rw) | w
+                if min_v <= a <= max_v:
+                    out.append(a)
+        return out
     if width <= 16:
         return range(1 << width)
     rw = width - k
@@ -204,7 +235,7 @@ def _arg_grid(width: int, k: int):
     return [(idx << rw) | w for idx in range(1 << k) for w in probes]
 
 
-def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
+def measure(func: str, wman: int, k: int, seg_base: int, cf: int, width: int, coeffs: list[list[int]]):
     """
     Return (max relative helper error, max |accumulator| seen) over the probe grid, exercising the truncating
     Horner so that meeting the accuracy target guarantees faithful rounding by construction.
@@ -212,8 +243,8 @@ def measure(func: str, k: int, cf: int, width: int, coeffs: list[list[int]]):
     rw = width - k
     scale = mp.mpf(1 << cf)
     max_rel, max_acc = mp.mpf(0), 0
-    for a in _arg_grid(width, k):
-        idx, w = a >> rw, a & ((1 << rw) - 1)
+    for a in _arg_grid(func, wman, width, k, seg_base, len(coeffs)):
+        idx, w = (a >> rw) - seg_base, a & ((1 << rw) - 1)
         ci = coeffs[idx]
         acc = ci[-1]
         max_acc = max(max_acc, abs(acc))
@@ -231,7 +262,7 @@ def choose_spec(func: str, wman: int) -> Spec:
     With the degree fixed by the closed-form ``degree`` (so the pipeline depth is a closed-form function of WMAN),
     pick the smallest segment count K (smallest ROM) that meets the accuracy target. K affects only the ROM, not the
     depth. Accuracy is measured through the truncating Horner, so meeting the target guarantees faithful rounding.
-    For WMAN >= 11 both functions keep the full K_CAP segment-index bits, so K is searched over 1..K_CAP.
+    K is searched over 1..K_CAP and the smallest passing ROM is emitted; the degree remains fixed by K_CAP.
     """
     cf = cf_bits(wman)
     # Reduced-argument (table index coordinate) width. exp2: FF = WMAN + GUARD. log2: the symmetric reduction's
@@ -242,21 +273,22 @@ def choose_spec(func: str, wman: int) -> Spec:
     target = mp.mpf(2) ** (-(wman + ERR_GUARD))  # relative helper-error budget
 
     for k in range(1, K_CAP + 1):
-        coeffs = [segment_coeffs(func, k, d, cf, idx) for idx in range(1 << k)]
-        rel, max_acc = measure(func, k, cf, width, coeffs)
+        seg_base, nseg = _segment_span(func, wman, k)
+        coeffs = [segment_coeffs(func, k, d, cf, idx) for idx in range(seg_base, seg_base + nseg)]
+        rel, max_acc = measure(func, wman, k, seg_base, cf, width, coeffs)
         if rel < target:
             maxabs = max(abs(c) for seg in coeffs for c in seg)
             cw = maxabs.bit_length() + 2                          # +1 sign, +1 margin
             accw = max(max_acc, maxabs).bit_length() + 1 + ACC_MARGIN
             if func == "log2":
-                # log2's signed final multiply trims the Horner result to ACCM = CF+2 bits (_zkf_log2_final_mul.v),
+                # log2's signed final multiply trims the Horner result to ACCM = CF+2 bits,
                 # which is lossless only because C(f) = log2(1+f)/f < 2 over the reduced range so acc < 2**(CF+1).
                 # Assert the bound at generation time: a future kernel/range change that broke it would otherwise
                 # silently truncate the product (caught only end-to-end), so fail here instead.
                 assert max_acc < (1 << (cf + 2)), (
                     f"log2 WMAN={wman}: max Horner acc {max_acc} >= 2**ACCM (2**{cf + 2}); "
-                    f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table/_zkf_log2_final_mul")
-            return Spec(func, wman, k, d, cf, width - k, cw, accw, coeffs)
+                    f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table")
+            return Spec(func, wman, k, seg_base, d, cf, width - k, cw, accw, coeffs)
     raise RuntimeError(f"degree {d} needs K>K_CAP={K_CAP} for {func} WMAN={wman}: raise K_CAP")
 
 
@@ -297,51 +329,72 @@ class _Writer:
         return "\n".join(self._lines) + "\n"
 
 
-def _rom_rows(w: _Writer, s: Spec) -> None:
-    """Emit the coefficient ROM: one packed word per segment, rom[seg] = {c[D], ..., c[0]}, one (wide) line each."""
-    # ROM inference hint by size: tiny tables stay in soft logic, larger ones map to block RAM. Portable, vendor-neutral
-    # attribute only -- contents and timing are unchanged.
-    if s.nseg <= 16:
-        w('(* rom_style = "logic" *) // keep a small table in logic')
-    else:
-        w('(* rom_style = "block" *)  // map a large table to block RAM')
-    w("reg [(D+1)*CW-1:0] rom [0:NSEG-1];")
+def _rom_word(s: Spec, coeffs: list[int]) -> str:
+    """Return one packed coefficient word {c[D], ..., c[0]} as a Verilog concatenation."""
+    return "{" + ", ".join(
+        f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}" for c in reversed(coeffs)
+    ) + "}"
+
+
+def _rom_read_pipeline(
+    w: _Writer,
+    s: Spec,
+    *,
+    valid_expr: str = "in_valid",
+    idx_expr: str = "idx",
+    arg_expr: str = "w",
+    sb_load: str,
+    sb_width: str,
+) -> None:
+    """
+    Emit the registered coefficient lookup. The ROM itself is a single initialized array. Its read register is followed
+    by a mandatory fabric register that isolates the ROM clk-to-q from the first Horner multiply without changing the
+    staging of every Horner product.
+    """
+    source_valid = valid_expr
+    source_arg = arg_expr
+    source_sb = sb_load
+    select_expr = idx_expr
+    sb_range = "" if sb_width == "1" else f"[{sb_width}-1:0] "
+    roww = max(1, len(str(s.nseg - 1)))
+
+    w('`ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;')
     w("initial begin")
     w.push()
-    for seg in range(s.nseg):  # c[D] .. c[0]
-        word = ", ".join(f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}" for c in reversed(s.coeffs[seg]))
-        w(f"rom[{seg:3}] = {{{word}}};")
+    for row, coeffs in enumerate(s.coeffs):
+        w(f"rom[{row:{roww}d}] = {_rom_word(s, coeffs)};")
     w.pop()
     w("end")
-
-
-def _rom_read_pipeline(w: _Writer, sb_load: str) -> None:
-    """
-    Emit the 2-deep registered ROM read: r_co1 is the synchronous (BRAM) read register with a slow clk-to-q on
-    ECP5; r_co2 is a fabric register isolating that delay from the first Horner multiply. w/sideband/valid ride along.
-    """
-    w("""
-        reg  [(D+1)*CW-1:0] r_co1, r_co2;
-        reg        [RW-1:0] r_w1, r_w2;
-        reg                 r_rv1, r_rv2;
-        reg      [HSBW-1:0] r_rsb1, r_rsb2;
+    w(f"""
+        reg [(D+1)*CW-1:0] r_co1, r_co2;
+        reg [RW-1:0] r_w1, r_w2;
+        reg r_rv1, r_rv2;
+        reg {sb_range}r_rsb1, r_rsb2;
         always @(posedge clk) begin
     """)
     w.push()
     w("if (rst) begin r_rv1 <= 1'b0; r_rv2 <= 1'b0; end")
-    w("else     begin r_rv1 <= in_valid; r_rv2 <= r_rv1; end")
-    w("r_co1  <= rom[idx]; r_co2  <= r_co1;")
-    w("r_w1   <= w;        r_w2   <= r_w1;")
-    w(f"r_rsb1 <= {sb_load}; r_rsb2 <= r_rsb1;")
+    w(f"else begin r_rv1 <= {source_valid}; r_rv2 <= r_rv1; end")
+    w(f"r_co1  <= rom[{select_expr}];")
+    w(f"r_w1   <= {source_arg};")
+    w(f"r_rsb1 <= {source_sb};")
+    w("r_co2  <= r_co1;")
+    w("r_w2   <= r_w1;")
+    w("r_rsb2 <= r_rsb1;")
     w.pop()
     w("end")
-    w("""
+    w(f"""
         wire signed [ACCW-1:0] acc;
         wire                   ev;
-        wire      [HSBW-1:0]   esb;
-        _zkf_horner #(.D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(HSBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_h (
+        wire         {sb_range}esb;
+        wire          [RW-1:0] ew;
+        _zkf_horner #(
+            .D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB({sb_width}),
+            .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
+        ) u_h (
             .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
-            .out_valid(ev), .sb_out(esb), .acc(acc));
+            .out_valid(ev), .sb_out(esb), .w_out(ew), .acc(acc)
+        );
     """)
 
 
@@ -357,61 +410,83 @@ def _emit_table(s: Spec) -> str:
     if s.func == "exp2":
         w(f"/// Table+polynomial core for zkf_exp2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
           "/// Evaluates the significand 2**f in [1,2) from the reduced fractional argument f (FF = WMAN + 12 bits).",
-          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner); valid and sb_in are delayed to match.")
+          "/// Register stages: two-stage ROM read + D*(2+STAGE_PRODUCT) (Horner).")
     else:
         w(f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
-          "/// Symmetric reduction: indexes the kernel C(f)=log2(1+f)/f by the unsigned coordinate v (WFRAC+1 bits) and",
+          "/// Symmetric reduction: indexes C(f)=log2(1+f)/f by unsigned v (WFRAC+1 bits) and",
           "/// returns the SIGNED log2(m') = f*C(f) = F*C(f) at scale 2**-F2, F2 = WFRAC+1+CF (f<0 when m>=sqrt(2)).",
-          "/// Register stages: 2 (ROM read) + D*(2+STAGE_PRODUCT) (Horner) + _zkf_log2_final_mul; valid/sb_in match.")
+          "/// Register stages: two-stage ROM read + Horner + final multiply.")
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
     w("")
     w("`default_nettype none")
     w("")
+    w("`ifndef ZKF_ATTRIBUTE_ROM_PRE")
+    w("`define ZKF_ATTRIBUTE_ROM_PRE")
+    w("`define ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
+    w("`endif")
+    w("`ifndef ZKF_ATTRIBUTE_ROM_POST")
+    w("`define ZKF_ATTRIBUTE_ROM_POST")
+    w("`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
+    w("`endif")
+    w("")
+    w("// verilator coverage_off")
     if s.func == "exp2":
-        w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0, parameter integer WMULTIPLIER = 0) (")
+        w(f"module {mod} #(")
+        w.push()
+        w(f"parameter D             = {s.d},")
+        w( "parameter WSB           = 1,")
+        w( "parameter WMULTIPLIER   = 0,")
+        w( "parameter STAGE_PRODUCT = 0")
+        w.pop()
+        w(") (")
     else:
-        w(f"module {mod} #(parameter integer WMAN = {s.wman}, parameter integer D = {s.d}, "
-          "parameter integer WSB = 1, parameter integer STAGE_PRODUCT = 0, parameter integer WMULTIPLIER = 0) (")
+        w(f"module {mod} #(")
+        w.push()
+        w(f"parameter D                   = {s.d},")
+        w( "parameter WSB                 = 1,")
+        w( "parameter WMULTIPLIER         = 0,")
+        w( "parameter STAGE_PRODUCT       = 0,")
+        w( "parameter STAGE_PRODUCT_FINAL = STAGE_PRODUCT")
+        w.pop()
+        w(") (")
     w.push()
     if s.func == "exp2":
-        w("""
+        w(f"""
+            input  wire           clk,
+            input  wire           rst,
+            input  wire           in_valid,
+            input  wire [WSB-1:0] sb_in,
+            input  wire [{s.wman + 12:3}-1:0] f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
+            output wire           out_valid,
+            output wire [WSB-1:0] sb_out,
+            output wire [{s.wman:3}-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
+            output wire           guard,
+            output wire           round,
+            output wire           sticky
+        """)
+    else:
+        w(f"""
             input  wire               clk,
             input  wire               rst,
             input  wire               in_valid,
             input  wire     [WSB-1:0] sb_in,
-            input  wire [WMAN+12-1:0] f,            // FF = WMAN + 12 reduced-argument fraction bits, in [0,1)
+            input  wire     [{s.wman:3}-1:0] v,  // index coordinate v = f + 2**WFRAC (WFRAC+1 = WMAN bits)
             output wire               out_valid,
             output wire     [WSB-1:0] sb_out,
-            output wire    [WMAN-1:0] significand,  // 2**f in [1,2): hidden bit + WFRAC fraction
-            output wire               guard,
-            output wire               round,
-            output wire               sticky
-        """)
-    else:
-        w("""
-            input  wire                   clk,
-            input  wire                   rst,
-            input  wire                   in_valid,
-            input  wire         [WSB-1:0] sb_in,
-            input  wire        [WMAN-1:0] v,          // index coordinate v = f + 2**WFRAC (WFRAC+1 = WMAN bits)
-            input  wire signed [WMAN-1:0] f,          // signed reduced argument F = v - 2**WFRAC, scale 2**-(WFRAC+1)
-            output wire                   out_valid,
-            output wire         [WSB-1:0] sb_out,
-            output wire signed [2*WMAN+12:0] l_fix    // SIGNED log2(m') = f*C(f) at scale 2**-F2, F2 = WFRAC+1+CF
+            output wire signed [{2 * s.wman + 12}:0] l_fix  // SIGNED log2(m') = f*C(f) at scale 2**-F2, F2 = WFRAC+1+CF
         """)
     w.pop()
     w(");")
     w.push()
-    # Blanket coverage_off over the whole module body (re-enabled just before endmodule): these are pure generated
-    # data tables, exhaustively checked against the mpmath model by --check, not through HDL line/toggle coverage.
-    w("// verilator coverage_off")
+    # Blanket coverage_off over the generated module: these are pure data tables, exhaustively checked against the
+    # mpmath model by --check, not through HDL line/toggle coverage.
     # Degree contract (mirrors the LATENCY parameter): D defaults to this ROM's fitted degree and zkf_<func>.v drives
     # it with its own closed-form degree; a mismatch fails elaboration, so the Horner pipeline depth -- hence the
     # operator latency -- cannot silently drift from the degree the ROM was actually fitted for.
     w(f"generate if (D != {s.d}) begin : g_degree_mismatch  _zkf_invalid_degree_mismatch u_invalid(); end endgenerate")
     # Shape localparams (baked); the public module hard-codes the matching FF/CF so it need not know K.
+    w(f"localparam integer WMAN = {s.wman};")
     if s.func == "exp2":
         w("localparam integer FF   = WMAN + 12;")
     else:
@@ -424,51 +499,77 @@ def _emit_table(s: Spec) -> str:
     w(f"localparam integer K    = {s.k};")
     if s.func == "exp2":
         w(f"localparam integer CF   = {s.cf};")
+    if s.func == "log2":
+        w(f"localparam integer SEG_BASE = {s.seg_base};")
     w(f"localparam integer RW   = {s.rw};")
     w(f"localparam integer CW   = {s.cw};")
     w(f"localparam integer ACCW = {s.accw};")
     w(f"localparam integer NSEG = {s.nseg};")
-    if s.func == "exp2":
-        w("localparam integer HSBW = WSB;")
-    else:
-        w("localparam integer HSBW = WSB + WF;  // carry the signed reduced argument f to the final multiply")
+    w("localparam integer WIDX = (NSEG <= 1) ? 1 : $clog2(NSEG);")
     w("")
-    _rom_rows(w, s)
     if s.func == "exp2":
-        w("wire [K-1:0]  idx = f[FF-1 -: K];")
-        w("wire [RW-1:0] w   = f[RW-1:0];")
-        _rom_read_pipeline(w, "sb_in")
+        # NSEG == 2**K for every exp2 table, so WIDX == K and idx is the top WIDX bits of f directly.
+        w("wire [WIDX-1:0] idx = f[FF-1 -: WIDX];")
+        w("wire [RW-1:0]   w   = f[RW-1:0];")
+        # The external sideband rides the two ROM-read registers and the Horner sideband; that delay is exactly
+        # 2 + D*(2+STAGE_PRODUCT) cycles, so esb lands aligned with out_valid (= ev) -- no separate delay line needed.
+        _rom_read_pipeline(w, s, sb_load="sb_in", sb_width="WSB")
         # acc scale 2^-CF, value 2^f in [1,2): bit CF is the hidden one. Output is combinational after the Horner.
         w("""
+            wire _unused_horner = &{1'b0, ew, 1'b0};
+            assign sb_out      = esb;
             assign significand = acc[CF -: WMAN];
             assign guard       = acc[CF-WMAN];
             assign round       = acc[CF-WMAN-1];
             assign sticky      = |acc[CF-WMAN-2:0];
             assign out_valid   = ev;
-            assign sb_out      = esb;
         """)
     else:
         # The unsigned coordinate v (WFRAC+1 = WMAN bits) selects the segment by its top K bits and feeds the in-segment
-        # Horner argument w by its low RW bits; idx and w mirror the model's `v >> rw` / `v & mask(rw)` exactly. The
-        # SIGNED reduced argument f rides the sideband to the final multiply (it differs from v by the constant 2**WFRAC).
-        w("wire [K-1:0]  idx = v[WMAN-1 -: K];")
-        w("wire [RW-1:0] w   = v[RW-1:0];")
-        _rom_read_pipeline(w, "{sb_in, f}")
-        # log2(m') = f * C(f) = f * acc, SIGNED (f < 0 when m >= sqrt(2); acc = C(f) > 0), at scale 2^-F2. acc is trimmed
-        # to ACCM = CF+2 bits (its high guard bits are structurally zero since C(f) < 2) so the signed multiply maps to a
-        # smaller DSP grid / shallower reduction. The split-aware multiply follows the Horner's STAGE_PRODUCT contract.
+        # Horner argument w by its low RW bits; idx_raw/w mirror the model's `v >> rw` / `v & mask(rw)` exactly. The ROM
+        # stores only the continuous span of reachable log2 rows, so idx subtracts SEG_BASE. idx_raw rides the Horner
+        # sideband (low K bits) packed together with the external sideband (high WSB bits); _zkf_horner returns delayed
+        # ew so the full delayed v, then signed f, can be reconstructed. The external sideband continues through the
+        # final multiply so sb_out lands aligned with out_valid; no separate delay line is needed.
+        w("wire [K-1:0]    idx_raw = v[WMAN-1 -: K];")
+        w("wire [K-1:0]    idx_ofs = idx_raw - SEG_BASE[K-1:0];")
+        w("wire [WIDX-1:0] idx     = idx_ofs[WIDX-1:0];")
+        w("wire [RW-1:0]   w       = v[RW-1:0];")
+        _rom_read_pipeline(w, s, sb_load="{sb_in, idx_raw}", sb_width="(K + WSB)")
+        # log2(m') = f * C(f) = f * acc, SIGNED (f < 0 when m >= sqrt(2); acc = C(f) > 0), at scale
+        # 2^-F2. acc is trimmed to ACCM = CF+2 bits (its high guard bits are structurally zero since C(f) < 2) so
+        # the signed multiply maps to a
+        # smaller DSP grid / shallower reduction. The final multiply has its own split-depth knob because its operands
+        # are wider than the Horner acc*w product, and it carries the external sideband to its output.
         w("""
-            wire signed [WF-1:0] f_p   = $signed(esb[WF-1:0]);
-            wire        [WSB-1:0] sb_p = esb[HSBW-1 -: WSB];
-            _zkf_log2_final_mul #(
-                .WF(WF), .WACC(ACCM), .F2(F2), .WSB(WSB), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
-            ) u_tp (
-                .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p), .f(f_p), .acc(acc[ACCM-1:0]),
-                .out_valid(out_valid), .sb_out(sb_out), .l_fix(l_fix));
+            wire        [K-1:0]    idx_p = esb[K-1:0];
+            wire        [WSB-1:0]  sb_p  = esb[K +: WSB];
+            wire        [WMAN-1:0] v_p   = {idx_p, ew};
+            wire signed [WF-1:0]   f_p   = $signed({~v_p[WMAN-1], v_p[WMAN-2:0]});
+
+            wire [WF+ACCM-1:0] prod_p;
+            _zkf_pmul #(
+                .WA(WF), .WB(ACCM), .A_SIGNED(1), .B_SIGNED(0),
+                .WSB(WSB), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT_FINAL)
+            ) u_final_pmul (
+                .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p),
+                .a(f_p), .b(acc[ACCM-1:0]),
+                .out_valid(out_valid), .sb_out(sb_out), .p(prod_p)
+            );
+            assign l_fix = $signed(prod_p[F2:0]);
         """)
-    w("// verilator coverage_on")
     w.pop()
     w("endmodule")
+    w("// verilator coverage_on")
+    w("")
+    w("`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
+    w("`undef ZKF_ATTRIBUTE_ROM_PRE")
+    w("`undef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
+    w("`endif")
+    w("`ifdef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
+    w("`undef ZKF_ATTRIBUTE_ROM_POST")
+    w("`undef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
+    w("`endif")
     w("")
     w("// verilog_lint: waive-stop line-length")
     w("`default_nettype wire")
@@ -486,7 +587,7 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
         s = all_specs[(func, wman)]
         w(f"({func!r}, {wman}): dict(")
         w.push()
-        w(f"k={s.k}, d={s.d}, cf={s.cf}, rw={s.rw}, cw={s.cw}, accw={s.accw},")
+        w(f"k={s.k}, seg_base={s.seg_base}, d={s.d}, cf={s.cf}, rw={s.rw}, cw={s.cw}, accw={s.accw},")
         w(f"coeffs={s.coeffs!r},")
         w.pop()
         w("),")
@@ -521,18 +622,18 @@ def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
 # Reporting and accuracy check
 # --------------------------------------------------------------------------------------------------
 def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
-    print(f"{'func':5} {'WMAN':>4} {'K':>3} {'D':>3} {'CF':>4} {'RW':>4} "
+    print(f"{'func':5} {'WMAN':>4} {'K':>3} {'base':>5} {'rows':>5} {'D':>3} {'CF':>4} {'RW':>4} "
           f"{'CW':>4} {'ACCW':>5} {'entries':>8} {'ROM_kbit':>9}")
     for (func, wman), s in sorted(all_specs.items()):
         entries = s.nseg * (s.d + 1)
-        print(f"{func:5} {wman:>4} {s.k:>3} {s.d:>3} {s.cf:>4} {s.rw:>4} {s.cw:>4} {s.accw:>5} "
-              f"{entries:>8} {entries * s.cw / 1024.0:>9.1f}")
+        print(f"{func:5} {wman:>4} {s.k:>3} {s.seg_base:>5} {s.nseg:>5} {s.d:>3} {s.cf:>4} "
+              f"{s.rw:>4} {s.cw:>4} {s.accw:>5} {entries:>8} {entries * s.cw / 1024.0:>9.1f}")
 
-    # zkf_<func>.v derives the degree D = (WMAN+16)/9 - 1 closed-form at elaboration (the ZKF_<func>_DEGREE macro,
+    # zkf_<func>.v derives the degree D = (WMAN+18)/11 - 1 closed-form at elaboration (the ZKF_<func>_DEGREE macro,
     # matching degree() above), so the module name need not encode it. The map is a cross-check for that value; it is
     # identical for exp2 and log2 (degree does not depend on the function).
     d_map = " ".join(f"{wman}:{degree(wman)}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
-    print(f"\nclosed-form degree D = (WMAN+16)/9 - 1 derived in zkf_<func>.v "
+    print(f"\nclosed-form degree D = (WMAN+18)/11 - 1 derived in zkf_<func>.v "
           f"({WMAN_MAX - WMAN_MIN + 1} values, same for both):\n  {d_map}")
 
 
@@ -547,9 +648,9 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
     import numpy as np
 
     print("end-to-end correct-rounding check (model vs mpmath):")
-    # Every supported WMAN (5/11 & 6/16 run exhaustive; wider formats random). Previously only 5 of 9 were listed,
+    # Every supported WMAN (2/16 and 3/16 run exhaustive; wider formats random). Previously only 5 of 9 were listed,
     # leaving m18/27/32/53 unchecked -- now all of SUPPORTED_WMAN are covered.
-    cases = [(5, 11), (6, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]
+    cases = [(2, 16), (3, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
             continue
@@ -612,7 +713,8 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
         wfull_mask = (1 << fmt.wfull) - 1
         nf = 1 << fmt.wfrac
         ins = set()
-        for e in range(1, min(5, fmt.exp_inf)):                  # x -> 0: the 1.0 seam, dense low/high fracs, both signs
+        # x -> 0: the 1.0 seam, dense low/high fracs, both signs.
+        for e in range(1, min(5, fmt.exp_inf)):
             for s in (0, 1):
                 for fr in set(list(range(eb)) + list(range(max(0, nf - eb), nf))):
                     ins.add((s << fmt.sign_shift) | (e << fmt.wfrac) | fr)

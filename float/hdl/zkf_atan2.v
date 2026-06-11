@@ -655,7 +655,7 @@ module zkf_atan2 #(
     wire [WMAG-1:0]  pmul_p;                                    // WX + KINV_MAG == WMAG bits (the dominant product)
     _zkf_pmul #(
         .WA(WX), .WB(KINV_MAG), .A_SIGNED(0), .B_SIGNED(0), .WSB(1),
-        .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+        .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(pmul_iv), .sb_in(pmul_tag_in),
         .a(pmul_a), .b(pmul_b), .out_valid(pmul_ov), .sb_out(pmul_tag_out), .p(pmul_p)

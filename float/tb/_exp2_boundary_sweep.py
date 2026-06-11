@@ -11,7 +11,7 @@ but for exp2's hard regions, which are BOUNDARIES not zeros (2^x has no near-zer
                                              true overflow-to-+inf seam and underflow-to-min-normal/zero seam
   D. top/bottom fracs of EACH input binade-> reduced-argument extremes feeding the polynomial (f->0, f->1)
 
-For all 9 supported WMAN, compares exp2_reference (bit-exact RTL) vs exp2_true (mp.prec>=280 oracle,
+For all 8 supported exp2/log2 WMAN values, compares exp2_reference (bit-exact RTL) vs exp2_true (mp.prec>=280 oracle,
 ties-to-even faithful rounding) and reports the worst ULP per region per WMAN, flagging any > 1 ULP.
 """
 
@@ -31,7 +31,7 @@ mp.mp.prec = 320  # >= the generator's 280; extra headroom for the oracle
 import zkf_model as M  # noqa: E402
 from zkf_model import ZkfFormat, exp2_reference, exp2_true, decode  # noqa: E402
 
-SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
+SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
 
 # Representative WEXP per WMAN (same pairing the --check uses, so the gate e>=WEXP-1 and the bias match what ships).
 WEXP_FOR = {11: 5, 16: 6, 18: 6, 24: 8, 27: 8, 32: 8, 36: 8, 48: 8, 53: 8}

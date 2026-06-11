@@ -47,6 +47,8 @@ def _run_fusesoc(run) -> None:
     cmd = [FUSESOC, "run", f"--build-root={run.root}", f"--target={run.target}", CORE]
     for name, value in run.vlog:
         cmd += [f"--{name}", str(value)]
+    for name, value in run.defines:
+        cmd += [f"--{name}"] if value is True else [f"--{name}", str(value)]
     for name, value in run.plus:
         cmd += [f"--{name}", str(value)]
     env = _subprocess_env()

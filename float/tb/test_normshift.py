@@ -4,7 +4,15 @@
 _zkf_normshift replaced the former _zkf_lod-plus-separate-barrel-shift pair shared by zkf_add and
 zkf_from_int. Embedded callers drive it with narrow, zero-padded inputs over a limited leading-one
 range, so this bench sweeps x exhaustively at small widths (so every reachable cascade node toggles)
-and checks (zero, count, y) against the model, for both STAGE_SPLIT polarities.
+and checks (zero, count, y) against the model, across STAGE_SPLIT and STAGE_OUTPUT.
+
+Two tests:
+  - normshift_runtime_cases: the (zero, count, y) datapath, swept over x, read after the module's
+    STAGE_SPLIT + STAGE_OUTPUT output latency.
+  - normshift_sideband_stream: the streaming sideband. It drives a fresh in_valid/sb_in every cycle and
+    uses RegisterStageScoreboard to assert out_valid/sb_out are delayed by EXACTLY STAGE_SPLIT +
+    STAGE_OUTPUT cycles (with valid gaps and a flush), which pins the latency an input-holding sweep
+    cannot.
 """
 
 from __future__ import annotations
@@ -14,8 +22,14 @@ import numpy as np
 from cocotb.triggers import RisingEdge, Timer
 
 from zkf_model import mask, normshift_reference
-from zkf_params import plusarg_int, plusarg_str
-from zkf_stream import drive_unsigned, is_resolvable, start_clock
+from zkf_params import TestContext, plusarg_int, plusarg_str
+from zkf_stream import (
+    RegisterStageScoreboard,
+    drive_unsigned,
+    is_resolvable,
+    run_stream_cases,
+    start_clock,
+)
 
 
 def cases_for(width: int, kind: str, seed: int, count: int) -> list[int]:
@@ -37,6 +51,7 @@ def cases_for(width: int, kind: str, seed: int, count: int) -> list[int]:
 async def normshift_runtime_cases(dut) -> None:
     width = plusarg_int("ZKF_NS_W")
     split = plusarg_int("ZKF_NS_SPLIT", 0)
+    output = plusarg_int("ZKF_NS_OUTPUT", 0)
     kind = plusarg_str("ZKF_KIND", "exhaustive")
     seed = plusarg_int("ZKF_SEED", 0)
     count = plusarg_int("ZKF_COUNT", 0)
@@ -44,16 +59,24 @@ async def normshift_runtime_cases(dut) -> None:
     if len(dut.x) != width:
         raise AssertionError(f"{cfg}: x width {len(dut.x)} != ZKF_NS_W={width}")
 
+    # Total output latency: the STAGE_SPLIT cascade barriers plus the optional STAGE_OUTPUT register. zero/count/y land
+    # after exactly this many cycles. (out_valid/sb_out latency is pinned separately by normshift_sideband_stream.)
+    latency = split + output
+
     cases = cases_for(width, kind, seed, count)
     start_clock(dut)
+    # The (zero, count, y) outputs are pure datapath (independent of in_valid/sb_in/rst), so this sweep leaves the
+    # streaming controls idle and reads the settled result after the module's output latency.
+    dut.rst.value = 0
+    dut.in_valid.value = 0
     checked = 0
     for x in cases:
         drive_unsigned(dut.x, x)
-        # Settle the combinational path (the result for STAGE_SPLIT=0), then advance `split` real clock
-        # edges holding x stable across the cascade-internal register barrier. Settling before the first
-        # edge avoids a t=0 drive/clock race on the un-reset datapath register.
+        # Settle the combinational path (the result for latency==0), then advance `latency` real clock edges holding x
+        # stable across the cascade-internal register barriers and the output register. Settling before the first edge
+        # avoids a t=0 drive/clock race on the un-reset datapath registers.
         await Timer(1, unit="ns")
-        for _ in range(split):
+        for _ in range(latency):
             await RisingEdge(dut.clk)
             await Timer(1, unit="ns")
         exp_zero, exp_count, exp_y = normshift_reference(width, x)
@@ -73,3 +96,68 @@ async def normshift_runtime_cases(dut) -> None:
             )
         checked += 1
     assert checked == len(cases), f"{cfg}: checked {checked} of {len(cases)}"
+
+
+@cocotb.test()
+async def normshift_sideband_stream(dut) -> None:
+    """Pin the streaming sideband latency: out_valid/sb_out must be delayed by exactly STAGE_SPLIT + STAGE_OUTPUT.
+
+    Unlike the input-holding sweep above, this drives a fresh in_valid/sb_in every cycle, so a wrong delay (one stage
+    too few or too many) makes the alternating sb_out bit -- or the gated out_valid under a valid gap -- mismatch.
+    """
+    width = plusarg_int("ZKF_NS_W")
+    split = plusarg_int("ZKF_NS_SPLIT", 0)
+    output = plusarg_int("ZKF_NS_OUTPUT", 0)
+    seed = plusarg_int("ZKF_SEED", 0)
+    cfg = plusarg_str("ZKF_CONFIG", "default")
+    sbw = len(dut.sb_in)
+    latency = split + output
+
+    context = TestContext(suite="normshift", config=cfg, seed=seed, stage_normalize=split, stage_output=output)
+    start_clock(dut)
+    rng = np.random.default_rng(seed ^ 0x5DEECE66D)
+    sb_mask = (1 << sbw) - 1
+    x_fixed = 1 << (width - 1)  # any nonzero magnitude; this test checks the sideband/valid channel, not (zero,count,y)
+    sample_count = max(64, latency * 8)
+
+    if latency == 0:
+        # Purely combinational: out_valid follows in_valid and sb_out follows sb_in with no rst gating, so the
+        # RegisterStageScoreboard's reset-flush model does not apply -- check passthrough directly (mirrors test_pipe).
+        dut.rst.value = 0
+        for i in range(sample_count):
+            valid = (i % 3) != 0
+            value = int(rng.integers(0, sb_mask + 1))
+            dut.in_valid.value = int(valid)
+            dut.sb_in.value = value
+            drive_unsigned(dut.x, x_fixed)
+            await Timer(1, unit="ns")
+            assert is_resolvable(dut.out_valid), f"{cfg}: out_valid unresolved i={i}"
+            assert int(dut.out_valid.value) == int(valid), f"{cfg}: out_valid mismatch i={i}"
+            if valid:
+                assert is_resolvable(dut.sb_out), f"{cfg}: sb_out unresolved i={i}"
+                assert int(dut.sb_out.value) == value, f"{cfg}: sb_out mismatch i={i} got={int(dut.sb_out.value)} exp={value}"
+            await RisingEdge(dut.clk)
+        return
+
+    scoreboard = RegisterStageScoreboard(dut, latency, context, {"sb_out": (dut.sb_out, sbw)})
+
+    def drive_case(case: int) -> dict[str, int]:
+        drive_unsigned(dut.x, x_fixed)
+        dut.sb_in.value = case
+        return {"sb_out": case}
+
+    def invalid_drive() -> None:
+        dut.in_valid.value = 0
+        drive_unsigned(dut.x, x_fixed)
+        dut.sb_in.value = 0
+
+    cases = [int(rng.integers(0, sb_mask + 1)) for _ in range(sample_count)]
+    await run_stream_cases(
+        dut,
+        scoreboard,
+        cases,
+        drive_case,
+        invalid_drive,
+        lambda index, case: f"{cfg}: i={index} sb={case:#x}",
+    )
+    assert scoreboard.checked >= sample_count, f"{cfg}: checked {scoreboard.checked} of {sample_count}"

@@ -34,17 +34,28 @@
 ///
 /// STAGE_OUTPUT=1: register the fully aligned y/count/zero outputs after the cascade (+1 cycle). This is useful when
 /// the consumer needs a clean boundary after normalization without changing the internal split geometry.
+///
+/// Streaming sideband: in_valid/out_valid and the generic sb_in/sb_out bus are delayed by exactly the module's output
+/// latency (STAGE_SPLIT + STAGE_OUTPUT) so they land aligned with y/count/zero. This lets callers thread their control
+/// payload through the normalizer instead of a parallel zkf_pipe. Reset clears only out_valid; sb and the datapath
+/// free-run per the project reset policy. Callers that don't need the sideband set WSB=1 and stub sb_in with a constant.
 
 `default_nettype none
 
 module _zkf_normshift #(
-    parameter W           = 16,
-    parameter WSHAMT      = $clog2(W),
-    parameter STAGE_SPLIT = 0,
-    parameter STAGE_OUTPUT = 0
+    parameter W            = 16,
+    parameter WSHAMT       = $clog2(W),
+    parameter STAGE_SPLIT  = 0,
+    parameter STAGE_OUTPUT = 0,
+    parameter WSB          = 1      // sideband passthrough bit width
 ) (
-    input  wire              clk,    // unused when STAGE_SPLIT == 0
+    input  wire              clk,   // unused when STAGE_SPLIT == 0 && STAGE_OUTPUT == 0
+    input  wire              rst,   // resets only out_valid; unused when purely combinational
+    input  wire              in_valid,
+    input  wire    [WSB-1:0] sb_in,
     input  wire      [W-1:0] x,
+    output wire              out_valid,
+    output wire    [WSB-1:0] sb_out,
     output wire              zero,
     output wire [WSHAMT-1:0] count,
     output wire      [W-1:0] y
@@ -204,23 +215,69 @@ module _zkf_normshift #(
         end
     endgenerate
 
+    // Sideband and valid ride the same STAGE_SPLIT-deep delay as `zero` (sampled off the inputs in the same cycle as
+    // x), so after the optional output register they are delayed by exactly STAGE_SPLIT + STAGE_OUTPUT cycles. sb is
+    // pure datapath (free-runs); valid is the only reset-bearing register, matching the project reset policy.
+    wire [WSB-1:0] sb_aligned;
+    wire           valid_aligned;
+    generate
+        if (STAGE_SPLIT == 1) begin : g_sb_delay
+            reg [WSB-1:0] sb_r;
+            reg           valid_r;
+            always @(posedge clk) sb_r <= sb_in;
+            always @(posedge clk) begin
+                if (rst) valid_r <= 1'b0;
+                else     valid_r <= in_valid;
+            end
+            assign sb_aligned    = sb_r;
+            assign valid_aligned = valid_r;
+        end else if (STAGE_SPLIT == 2) begin : g_sb_delay2
+            reg [WSB-1:0] sb_r1, sb_r2;
+            reg           valid_r1, valid_r2;
+            always @(posedge clk) begin
+                sb_r1 <= sb_in;
+                sb_r2 <= sb_r1;
+            end
+            always @(posedge clk) begin
+                if (rst) begin valid_r1 <= 1'b0; valid_r2 <= 1'b0; end
+                else     begin valid_r1 <= in_valid; valid_r2 <= valid_r1; end
+            end
+            assign sb_aligned    = sb_r2;
+            assign valid_aligned = valid_r2;
+        end else begin : g_sb_pass
+            assign sb_aligned    = sb_in;
+            assign valid_aligned = in_valid;
+        end
+    endgenerate
+
     generate
         if (STAGE_OUTPUT) begin : g_output_reg
             reg              zero_r;
             reg [WSHAMT-1:0] count_r;
             reg      [W-1:0] y_r;
+            reg  [WSB-1:0]   sb_r;
+            reg              valid_r;
             always @(posedge clk) begin
                 zero_r  <= zero_aligned;
                 count_r <= count_aligned;
                 y_r     <= y_aligned;
+                sb_r    <= sb_aligned;
             end
-            assign zero  = zero_r;
-            assign count = count_r;
-            assign y     = y_r;
+            always @(posedge clk) begin
+                if (rst) valid_r <= 1'b0;
+                else     valid_r <= valid_aligned;
+            end
+            assign zero      = zero_r;
+            assign count     = count_r;
+            assign y         = y_r;
+            assign sb_out    = sb_r;
+            assign out_valid = valid_r;
         end else begin : g_output_pass
-            assign zero  = zero_aligned;
-            assign count = count_aligned;
-            assign y     = y_aligned;
+            assign zero      = zero_aligned;
+            assign count     = count_aligned;
+            assign y         = y_aligned;
+            assign sb_out    = sb_aligned;
+            assign out_valid = valid_aligned;
         end
     endgenerate
 endmodule

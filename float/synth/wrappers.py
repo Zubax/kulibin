@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from common import SYNTH_REG_ATTR
-from modules import MUL_ILOG2_CONST_K, ModuleSpec, effective_parallel, register_stages
+from modules import MUL_ILOG2_CONST_K, ModuleSpec, effective_parallel, effective_stage_product_final, register_stages
 
 
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -1158,6 +1158,7 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
+        .STAGE_REDUCE({spec.stage_reduce}),
         .STAGE_PRODUCT({spec.stage_product}),
         .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_PACK({spec.stage_pack}),
@@ -1235,9 +1236,12 @@ module {spec.top} (
         .WEXP({spec.wexp}),
         .WMAN({spec.wman}),
         .STAGE_INPUT({spec.stage_input}),
+        .STAGE_DECODE({spec.stage_decode}),
         .STAGE_PRODUCT({spec.stage_product}),
+        .STAGE_PRODUCT_FINAL({effective_stage_product_final(spec)}),
         .WMULTIPLIER({spec.wmultiplier}),
         .STAGE_NORMALIZE({spec.stage_normalize}),
+        .STAGE_NORMALIZE_OUTPUT({spec.stage_normalize_output}),
         .STAGE_PACK({spec.stage_pack}),
         .STAGE_OUTPUT({spec.stage_output}),
         .LATENCY({register_stages(spec)})

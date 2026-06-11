@@ -1,15 +1,19 @@
 /// Fixed-point Horner polynomial evaluator for the transcendental table+polynomial cores.
 /// Register stages: D*(2+STAGE_PRODUCT).
-/// Zero-bubble, throughput-1. A generic sideband (sb_in -> sb_out) and the valid flag are pipelined
-/// alongside the accumulator so the instantiating module need not know D.
+/// Zero-bubble, throughput-1. A generic sideband (sb_in -> sb_out), the valid flag, and the reduced argument
+/// (w -> w_out) are pipelined alongside the accumulator so the instantiating module need not know D.
 ///
 /// Computes acc = c[D]; then for j = D-1 .. 0: acc = c[j] + floor(acc * w / 2^WRARG), i.e. Horner in the segment-local
-/// argument wn = w / 2^WRARG in [0,1). Coefficients share the fractional scale 2^-CF: c[j] is a signed WCOEF-bit value at
-/// bit offset j*WCOEF of the flat `coeffs` bus. The arithmetic right shift `>>> WRARG` floors toward minus infinity,
-/// matching the Python reference model's truncating integer Horner exactly.
+/// argument wn = w / 2^WRARG in [0,1). Coefficients share the fractional scale 2^-CF: c[j] is a signed WCOEF-bit
+/// value at bit offset j*WCOEF of the flat `coeffs` bus. The arithmetic right shift `>>> WRARG` floors toward minus
+/// infinity, matching the Python reference model's truncating integer Horner exactly.
 ///
 /// Each degree step is one shared _zkf_pmul multiply (acc*w, acc signed, w unsigned -- latency 1+STAGE_PRODUCT) plus
-/// one coefficient-add register stage, so the per-degree depth is 2+STAGE_PRODUCT.
+/// one coefficient-add register stage, so the per-degree depth is 2+STAGE_PRODUCT. The non-arithmetic payload
+/// (live coefficients, w, caller sideband) is delayed in a plain pipe next to the multiplier instead of riding through
+/// _zkf_pmul's internal sideband registers. This is because the payload is wide and passing it through the pmul
+/// sideband hurts placement and timings.
+///
 /// WMULTIPLIER and STAGE_PRODUCT are forwarded to _zkf_pmul.
 ///
 /// WACC must hold every intermediate `acc` without wrap (the generator sizes it from the actual coefficient set).
@@ -23,8 +27,8 @@ module _zkf_horner #(
     parameter integer WRARG         = 8,  // reduced-argument width; wn = w / 2^WRARG
     parameter integer WACC          = 40, // signed accumulator width (>= every intermediate, sized by the generator)
     parameter integer WSB           = 1,  // sideband width carried alongside the pipeline
-    parameter integer STAGE_PRODUCT = 0,  // forwarded to _zkf_pmul
-    parameter integer WMULTIPLIER   = 0   // forwarded to _zkf_pmul
+    parameter integer WMULTIPLIER   = 0,  // forwarded to _zkf_pmul
+    parameter integer STAGE_PRODUCT = 0   // forwarded to _zkf_pmul
 ) (
     input  wire                    clk,
     input  wire                    rst,
@@ -40,6 +44,7 @@ module _zkf_horner #(
     input  wire        [WRARG-1:0] w,        // reduced argument, unsigned, in [0, 2^WRARG)
     output wire                    out_valid,
     output wire        [WSB-1:0]   sb_out,
+    output wire        [WRARG-1:0] w_out,
     // verilator coverage_off
     output wire signed [WACC-1:0]  acc       // Horner result, signed, scale 2^-CF
     // verilator coverage_on
@@ -69,22 +74,30 @@ module _zkf_horner #(
             // read at the top of the slice. c[D] already seeded a_acc[0] and is never carried. a_co[s+1] zero-extends
             // the narrow forward into the uniform wiring array, and the next step slices off what it needs.
             localparam integer COW   = (J + 1) * WCOEF;
-            localparam integer WSB_H = COW + WRARG + WSB;  // multiplier sideband: {live coeffs, w, module sideband}
+            localparam integer WSB_H = COW + WRARG + WSB;  // delayed payload: {live coeffs, w, module sideband}
 
             // Multiply stage: acc*w via the shared pipelined multiplier (acc signed, w unsigned). The live coefficient
-            // bus, w (forwarded unchanged to the next degree), and the module sideband ride the multiplier sideband so
-            // they emerge registered alongside the product.
+            // bus, w (forwarded unchanged to the next degree), and the module sideband are delayed in a separate
+            // pipe so the multiplier does not carry a wide non-arithmetic sideband through its DSP-adjacent registers.
             wire                  prod_v;
+            wire                  prod_sb_valid;
             wire [WSB_H-1:0]      prod_sb;
             wire [WACC+WRARG-1:0] prod_p;  // raw two's-complement acc*w (signedness assigned by the caller below)
             _zkf_pmul #(
                 .WA(WACC), .WB(WRARG), .A_SIGNED(1), .B_SIGNED(0),
-                .WSB(WSB_H), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+                .WSB(1), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
             ) u_pmul (
-                .clk(clk), .rst(rst), .in_valid(a_val[s]), .sb_in({a_co[s][COW-1:0], a_w[s], a_sb[s]}),
+                .clk(clk), .rst(rst), .in_valid(a_val[s]), .sb_in(1'b0),
                 .a(a_acc[s]), .b(a_w[s]),
-                .out_valid(prod_v), .sb_out(prod_sb), .p(prod_p)
+                .out_valid(prod_v), .sb_out(), .p(prod_p)
             );
+            zkf_pipe #(.W(WSB_H), .N(1 + STAGE_PRODUCT)) u_payload_delay (
+                .clk(clk), .rst(rst), .in_valid(a_val[s]), .in({a_co[s][COW-1:0], a_w[s], a_sb[s]}),
+                .out_valid(prod_sb_valid), .out(prod_sb)
+            );
+            // verilator coverage_off
+            wire _unused_prod_sb_valid = &{1'b0, prod_sb_valid, 1'b0};
+            // verilator coverage_on
             wire [COW-1:0]   p_co = prod_sb[WSB_H-1 -: COW];
             wire [WRARG-1:0] p_w  = prod_sb[WSB+WRARG-1 -: WRARG];
             wire [WSB-1:0]   p_sb = prod_sb[WSB-1:0];
@@ -116,6 +129,7 @@ module _zkf_horner #(
     assign acc       = a_acc[D];
     assign out_valid = a_val[D];
     assign sb_out    = a_sb[D];
+    assign w_out     = a_w[D];
 endmodule
 
 `default_nettype wire

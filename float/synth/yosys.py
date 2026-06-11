@@ -55,7 +55,6 @@ class NextpnrPaths:
     netlist: Path                             # Yosys JSON netlist fed to nextpnr via --json
     report: Path                              # JSON utilization/timing report nextpnr writes via --report
     target_freq_mhz: float                    # clock target passed via --freq
-    synth_device: str = ""                    # flow-interpreted device-size hint from the spec ("" = flow default)
 
 
 @dataclass(frozen=True)
@@ -92,7 +91,12 @@ def write_yosys_script(
     # generic operators (adders, muxes, registers) rather than device primitives; flatten first so submodules
     # show their internals instead of opaque boxes. The original design is then popped back for the actual
     # synthesis pass, leaving its results unaffected.
-    rtl = [str(path) for path in rtl_sources(spec)] + [str(wrapper)]
+    defines = script.parent / "zkf_yosys_defines.vh"
+    defines.write_text(
+        '`define ZKF_ATTRIBUTE_ROM_PRE (* rom_style = "block" *)\n'
+        "`define ZKF_ATTRIBUTE_ROM_POST\n"
+    )
+    rtl = [str(defines)] + [str(path) for path in rtl_sources(spec)] + [str(wrapper)]
     schematic_commands = []
     if spec.emit_schematic:
         schematic_commands = [
@@ -104,7 +108,7 @@ def write_yosys_script(
         ]
     script.write_text(
         "\n".join(
-            [f"read_verilog {path}" for path in rtl]
+            ["read_verilog " + " ".join(rtl)]
             + [
                 f"hierarchy -check -top {spec.top}",
                 "proc",
@@ -118,7 +122,6 @@ def write_yosys_script(
             ]
         )
     )
-
 
 def parse_cell_counts(yosys_log: str) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -364,7 +367,6 @@ def synthesize(spec: ModuleSpec, target: YosysTarget, yosys_bin: Path, nextpnr_b
         netlist=netlist,
         report=nextpnr_report,
         target_freq_mhz=target.target_freq_mhz,
-        synth_device=spec.synth_device,
     )
     run([yosys_bin, "-s", yosys_script], yosys_log, timeout=YOSYS_TIMEOUT_S)
     run([nextpnr_bin, *target.nextpnr_args(target, nextpnr_paths)], nextpnr_log, timeout=NEXTPNR_TIMEOUT_S)

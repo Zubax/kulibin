@@ -19,9 +19,9 @@
 module zkf_mul #(
     parameter WEXP          = 6,    // exponent field width
     parameter WMAN          = 18,   // significand precision including the hidden bit
+    parameter WMULTIPLIER   = 0,    // forwarded to _zkf_pmul
     parameter STAGE_INPUT   = 0,
     parameter STAGE_PRODUCT = 0,    // forwarded to _zkf_pmul
-    parameter WMULTIPLIER   = 0,    // forwarded to _zkf_pmul
     parameter STAGE_PACK    = 0,
     parameter STAGE_OUTPUT  = 0,
     parameter LATENCY       = `ZKF_MUL_LATENCY   // must equal the register-stage count; checked below
@@ -119,7 +119,7 @@ module zkf_mul #(
 
     _zkf_pmul #(
         .WA(WMAN), .WB(WMAN), .A_SIGNED(0), .B_SIGNED(0),
-        .WSB(WSB_MUL), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+        .WSB(WSB_MUL), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(mul_sb_in),
         .a(a_significand), .b(b_significand),

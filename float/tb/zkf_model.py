@@ -621,7 +621,7 @@ def exp2_reference(fmt: ZkfFormat, bits: int) -> int:
     i = v >> ff                              # arithmetic floor -> integer part of x
     f = v & mask(ff)                         # fractional part in [0, 2^FF)
 
-    acc = _horner_eval(spec["coeffs"][f >> rw], f & mask(rw), rw)  # 2**f at scale 2^-cf, in [1,2)
+    acc = _horner_eval(spec["coeffs"][(f >> rw) - spec.get("seg_base", 0)], f & mask(rw), rw)
     significand_value = (acc >> (cf - fmt.wfrac)) & mask(fmt.wman)
     guard = (acc >> (cf - fmt.wman)) & 1
     round_bit = (acc >> (cf - fmt.wman - 1)) & 1
@@ -660,7 +660,7 @@ def log2_reference(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
         v = (1 << fmt.wfrac) + (d.frac << 1)     # = 2*sig - 2^WFRAC
         f_signed = d.frac << 1                   # = 2*frac, >= 0
 
-    acc = _horner_eval(spec["coeffs"][v >> rw], v & mask(rw), rw)  # C(f) at scale 2^-cf, signed
+    acc = _horner_eval(spec["coeffs"][(v >> rw) - spec.get("seg_base", 0)], v & mask(rw), rw)
     f2 = fmt.wfrac + 1 + cf                       # one extra bit vs the old reduction: f is at scale 2^-(WFRAC+1)
     l_signed = f_signed * acc                     # log2(m') = f * C(f), signed, at scale 2^-f2
     r = (e << f2) + l_signed                       # signed fixed point e + log2(m')

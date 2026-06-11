@@ -330,9 +330,11 @@ module zkf_add #(
     wire s2_add_round  = s2_add_carry ?   s2_raw_result[WRAW-WMAN-2]    :   s2_raw_result[NORM_TOP-WMAN-1];
     wire s2_add_sticky = s2_add_carry ? (|s2_raw_result[WRAW-WMAN-3:0]) : (|s2_raw_result[NORM_TOP-WMAN-2:0]);
 
-    // Add-path s2x catch-up chain: a STAGE_NORMALIZE-deep register pipe that delays the s2 add-path signals by
-    // exactly the same number of cycles the sub-path spends inside the normshift, so both paths arrive at the s3
-    // register boundary aligned. STAGE_NORMALIZE=0 is a pure passthrough (no registers); each unit adds 1 cycle.
+    // Add-path s2x catch-up: the s2 add-path bundle rides the sub-path normalizer's own sideband (u_sub_norm below,
+    // STAGE_SPLIT=STAGE_NORMALIZE, STAGE_OUTPUT=0), so it is delayed by exactly the STAGE_NORMALIZE cycles the sub-path
+    // spends inside the normshift and both paths reach the s3 register boundary aligned. STAGE_NORMALIZE=0 is a pure
+    // passthrough. q_valid/q_out are driven by u_sub_norm's out_valid/sb_out below; the sideband free-runs (only valid
+    // resets), matching the former zkf_pipe payload semantics.
     // Bundle: {sign, same_sign, force_zero, force_inf} + exp_biased + add_exp_biased + add_significand + GRS.
     localparam Q_W = 4 + 2*WEXP + WMAN + 3;
     wire [Q_W-1:0] s2_q_in  = {s2_sign, s2_same_sign, s2_force_zero, s2_force_inf,
@@ -340,11 +342,6 @@ module zkf_add #(
                                 s2_add_guard, s2_add_round, s2_add_sticky};
     wire           q_valid;
     wire [Q_W-1:0] q_out;
-    zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
-        .clk(clk), .rst(rst),
-        .in_valid(s2_valid), .in(s2_q_in),
-        .out_valid(q_valid), .out(q_out)
-    );
     wire                q_sign              = q_out[Q_W-1];
     wire                q_same_sign         = q_out[Q_W-2];
     wire                q_force_zero        = q_out[Q_W-3];
@@ -386,9 +383,13 @@ module zkf_add #(
     // Normalized magnitude; its slices feed the covered significand/GRS below.
     wire   [NINPUT-1:0] norm_sub_aligned;
     // verilator coverage_on
-    _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE)) u_sub_norm (
-        .clk(clk),
+    _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE), .WSB(Q_W)) u_sub_norm (
+        .clk(clk), .rst(rst),
+        .in_valid(s2_valid),
+        .sb_in(s2_q_in),
         .x(s2_raw_result[NINPUT-1:0]),
+        .out_valid(q_valid),
+        .sb_out(q_out),
         .zero(norm_sub_zero),
         .count(norm_sub_shift),
         .y(norm_sub_aligned)

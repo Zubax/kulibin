@@ -31,9 +31,9 @@
 module zkf_fma #(
     parameter WEXP            = 6,  // exponent field width
     parameter WMAN            = 18, // significand precision including the hidden bit
+    parameter WMULTIPLIER     = 0,  // forwarded to _zkf_pmul
     parameter STAGE_INPUT     = 0,  // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
     parameter STAGE_PRODUCT   = 0,  // forwarded to _zkf_pmul
-    parameter WMULTIPLIER     = 0,  // forwarded to _zkf_pmul
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
     parameter STAGE_NORMALIZE = 0,  // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
@@ -161,7 +161,7 @@ module zkf_fma #(
 
     _zkf_pmul #(
         .WA(WMAN), .WB(WMAN), .A_SIGNED(0), .B_SIGNED(0),
-        .WSB(WSB_FMA), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)
+        .WSB(WSB_FMA), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(mul_sb_in),
         .a(a_sig), .b(b_sig),
@@ -418,6 +418,18 @@ module zkf_fma #(
     wire                  s2_add_round  = s2_add_carry ? s2_raw_result[WF-WMAN-1]      : s2_raw_result[WF-WMAN-2];
     wire                  s2_add_sticky = s2_add_carry ? (|s2_raw_result[WF-WMAN-2:0]) : (|s2_raw_result[WF-WMAN-3:0]);
 
+    // Add-path s2x catch-up: the s2 add-path bundle rides the sub-path normalizer's own sideband (u_sub_norm below,
+    // STAGE_SPLIT=STAGE_NORMALIZE, STAGE_OUTPUT=0), delayed by exactly STAGE_NORMALIZE cycles so it reaches the s3
+    // register boundary aligned with the sub-path. q_valid/q_out are driven by u_sub_norm's out_valid/sb_out below; the
+    // sideband free-runs (only valid resets), matching the former zkf_pipe payload semantics.
+    // Bundle: {sign, same_sign, force_zero, force_inf, anchor_exp, add_exp, add_sig, add_guard, add_round, add_sticky}.
+    localparam Q_W = 4 + 2*WEU + WMAN + 3;
+    wire [Q_W-1:0] s2_q_in = {s2_sign, s2_same_sign, s2_force_zero, s2_force_inf,
+                              s2_anchor_exp, s2_add_exp, s2_add_sig,
+                              s2_add_guard, s2_add_round, s2_add_sticky};
+    wire           q_valid;
+    wire [Q_W-1:0] q_out;
+
     // Opposite-sign subtraction can cancel down into the product's low half, so the close-cancellation normalize
     // scans the FULL WF-bit magnitude (this full width is the irreducible cost of correct FMA rounding).
     // STAGE_NORMALIZE forwards directly to _zkf_normshift.STAGE_SPLIT (0/1/2 internal register barriers). For
@@ -430,9 +442,13 @@ module zkf_fma #(
     // verilator coverage_off
     wire     [WF-1:0] norm_sub_aligned;
     // verilator coverage_on
-    _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE)) u_sub_norm (
-        .clk(clk),
+    _zkf_normshift #(.W(WF), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE), .WSB(Q_W)) u_sub_norm (
+        .clk(clk), .rst(rst),
+        .in_valid(s2_valid),
+        .sb_in(s2_q_in),
         .x(s2_raw_result[WF-1:0]),
+        .out_valid(q_valid),
+        .sb_out(q_out),
         .zero(norm_sub_zero),
         .count(norm_sub_shift),
         .y(norm_sub_aligned)
@@ -550,21 +566,7 @@ module zkf_fma #(
         s2_raw_result <= s1_raw_result;
     end
 
-    // Add-path s2x catch-up: a STAGE_NORMALIZE-deep register pipe that delays the s2 add-path signals so they
-    // arrive at the s3 register boundary aligned with the sub-path's normshift internal register cycles.
-    // Bundle: {sign, same_sign, force_zero, force_inf, anchor_exp, add_exp, add_sig, add_guard, add_round,
-    // add_sticky}.
-    localparam Q_W = 4 + 2*WEU + WMAN + 3;
-    wire [Q_W-1:0] s2_q_in = {s2_sign, s2_same_sign, s2_force_zero, s2_force_inf,
-                              s2_anchor_exp, s2_add_exp, s2_add_sig,
-                              s2_add_guard, s2_add_round, s2_add_sticky};
-    wire           q_valid;
-    wire [Q_W-1:0] q_out;
-    zkf_pipe #(.W(Q_W), .N(STAGE_NORMALIZE)) u_s2x (
-        .clk(clk), .rst(rst),
-        .in_valid(s2_valid), .in(s2_q_in),
-        .out_valid(q_valid), .out(q_out)
-    );
+    // Add-path s2x catch-up bundle and its delayed copy q_* are produced above by u_sub_norm's sideband.
     wire                  q_sign         = q_out[Q_W-1];
     wire                  q_same_sign    = q_out[Q_W-2];
     wire                  q_force_zero   = q_out[Q_W-3];

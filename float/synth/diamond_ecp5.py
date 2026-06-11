@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Lattice Diamond / LSE synthesis of the float modules, targeting the Lattice ECP5.
+"""Lattice Diamond LSE synthesis of the float modules, targeting the Lattice ECP5.
 
-Diamond is Lattice-only, so unlike the Yosys flow there is no second-device profile to abstract; the
-whole flow lives here. Shares the module catalog, harness generators, and HTML/plumbing toolkit with
+Diamond is Lattice-only, so unlike the Yosys flow there is no second-device profile to abstract; the whole flow lives
+here. The flow uses LSE exclusively and shares the module catalog, harness generators, and HTML/plumbing toolkit with
 the rest of the suite via modules / wrappers / common.
 """
 
@@ -45,20 +45,11 @@ from wrappers import write_wrapper
 
 
 DIAMOND_BUILD = REPO / "build" / "float_synth_diamond_ecp5"
-DIAMOND_DEVICE = os.environ.get("DIAMOND_DEVICE", "LFE5U-12F-6BG381C")
-# Map of spec.synth_device hints to the corresponding LFE5U part (6BG381C package + speed grade 6); "" is the default.
-_DIAMOND_DEVICE_BY_HINT = {"": DIAMOND_DEVICE, "12k": "LFE5U-12F-6BG381C", "25k": "LFE5U-25F-6BG381C",
-                           "45k": "LFE5U-45F-6BG381C", "85k": "LFE5U-85F-6BG381C"}
-
-
-def _diamond_device(spec: ModuleSpec) -> str:
-    try:
-        return _DIAMOND_DEVICE_BY_HINT[spec.synth_device]
-    except KeyError:
-        raise ValueError(f"unsupported synth_device {spec.synth_device!r} for spec {spec.name!r}")
+DIAMOND_DEVICE = "LFE5U-12F-6BG381C"
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
 DIAMOND_ROUTE_PASSES = int(os.environ.get("DIAMOND_ROUTE_PASSES", "3"))
 DIAMOND_PAR_EFFORT = int(os.environ.get("DIAMOND_PAR_EFFORT", "3"))
+DIAMOND_ROUTER = os.environ.get("DIAMOND_ROUTER", "NBR")
 
 
 @dataclass(frozen=True)
@@ -135,9 +126,9 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_LST_OptimizeGoal": "Timing",
         "PROP_LST_PropagatConst": "True",
         "PROP_LST_RAMStyle": "Auto",
-        "PROP_LST_ROMStyle": "Auto",
+        "PROP_LST_ROMStyle": "EBR",
         "PROP_LST_RemoveDupRegs": "True",
-        "PROP_LST_ResourceShare": "False",
+        "PROP_LST_ResourceShare": "True",
         "PROP_LST_UseIOReg": "Auto",
         "PROP_LST_UseLPF": "True",
         "PROP_MAPSTA_AnalysisOption": "Standard Setup and Hold Analysis",
@@ -148,7 +139,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_MAPSTA_ReportStyle": "Verbose Timing Report",
         "PROP_MAP_MAPIORegister": "Auto",
         "PROP_MAP_MAPInferGSR": "True",
-        "PROP_MAP_RegRetiming": "True",
+        "PROP_MAP_RegRetiming": "False",
         "PROP_MAP_TimingDriven": "True",
         "PROP_MAP_TimingDrivenNodeRep": "True",
         "PROP_MAP_TimingDrivenPack": "True",
@@ -164,7 +155,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_PAR_DisableTDParDes": "False",
         "PROP_PAR_EffortParDes": str(DIAMOND_PAR_EFFORT),
         "PROP_PAR_MultiSeedSortMode": "Worst Slack",
-        "PROP_PAR_NewRouteParDes": "NBR",
+        "PROP_PAR_NewRouteParDes": DIAMOND_ROUTER,
         "PROP_PAR_PARClockSkew": "Off",
         "PROP_PAR_PlcIterParDes": "5",
         "PROP_PAR_PlcStCostTblParDes": "1",
@@ -199,18 +190,23 @@ def write_diamond_strategy(path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
-def write_diamond_ldf(spec: ModuleSpec, wrapper: Path, lpf: Path, sty: Path, ldf: Path) -> None:
+def write_diamond_ldf(
+    spec: ModuleSpec,
+    wrapper: Path,
+    lpf: Path,
+    sty: Path,
+    ldf: Path,
+) -> None:
     project_dir = ldf.parent
     sources = [wrapper] + rtl_sources(spec)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         (
             f'<BaliProject version="3.2" title="{xml_attr(project_name(spec))}" '
-            f'device="{xml_attr(_diamond_device(spec))}" default_implementation="impl1">'
+            f'device="{xml_attr(DIAMOND_DEVICE)}" default_implementation="impl1">'
         ),
         "    <Options/>",
-        '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse" '
-        'default_strategy="Strategy1">',
+        '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse" default_strategy="Strategy1">',
         f'        <Options def_top="{xml_attr(spec.top)}">',
         f'            <Option name="top" value="{xml_attr(spec.top)}"/>',
         "        </Options>",
@@ -323,13 +319,22 @@ def parse_diamond_timing_errors(twr_text: str) -> tuple[int | None, int | None]:
     return None, None
 
 
-def parse_diamond_resource(pattern: str, text: str) -> str:
+def parse_diamond_resource_counts(pattern: str, text: str) -> tuple[int | None, int | None]:
     match = re.search(pattern, text, re.MULTILINE)
     if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
+
+
+def format_diamond_resource(counts: tuple[int | None, int | None]) -> str:
+    used, available = counts
+    if used is None or available is None:
         return "not reported"
-    used = int(match.group(1))
-    available = int(match.group(2))
     return f"{used}/{available} ({100.0 * used / available:.2f}%)"
+
+
+def parse_diamond_resource(pattern: str, text: str) -> str:
+    return format_diamond_resource(parse_diamond_resource_counts(pattern, text))
 
 
 def parse_diamond_par_summary(par_text: str, key: str) -> int | None:
@@ -346,6 +351,36 @@ def format_diamond_slack_from_fmax(fmax_mhz: float | None) -> str:
         return "not reported"
     slack_ns = (1000.0 / DIAMOND_TARGET_FREQ_MHZ) - (1000.0 / fmax_mhz)
     return f"{slack_ns:.3f} ns"
+
+
+DIAMOND_TABLE_EBR_MIN_BITS = 16 * 1024
+
+
+def diamond_table_bits(spec: ModuleSpec) -> int | None:
+    if spec.kind not in {"exp2", "log2"}:
+        return None
+    import zkf_trans_tables
+
+    table = zkf_trans_tables.get_spec(spec.kind, spec.wman)
+    return len(table["coeffs"]) * (table["d"] + 1) * table["cw"]
+
+
+def diamond_requires_table_bram(spec: ModuleSpec) -> bool:
+    bits = diamond_table_bits(spec)
+    return bits is not None and bits >= DIAMOND_TABLE_EBR_MIN_BITS
+
+
+def format_rom_inference(spec: ModuleSpec, bram_used: int | None) -> str:
+    bits = diamond_table_bits(spec)
+    if bits is None:
+        return "not required"
+    if bits < DIAMOND_TABLE_EBR_MIN_BITS:
+        return f"not required: {bits / 1024.0:.1f} kbit generated table below EBR gate"
+    if bram_used is None:
+        return "FAIL: block RAM usage was not reported for generated table ROM"
+    if bram_used <= 0:
+        return "FAIL: generated table ROM mapped to zero block RAMs"
+    return f"PASS: generated table ROM uses {bram_used} block RAMs"
 
 
 def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
@@ -374,6 +409,8 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     setup_errors, hold_errors = parse_diamond_timing_errors(twr_text)
     unrouted = parse_diamond_par_summary(par_text, "Number of unrouted conns")
     par_errors = parse_diamond_par_summary(par_text, "Number of errors")
+    bram_counts = parse_diamond_resource_counts(r"Number of block RAMs:\s+([0-9]+) out of ([0-9]+)", mrp_text)
+    bram_used, _ = bram_counts
     route_clean = unrouted in {None, 0} and par_errors in {None, 0}
     timing_clean = (
         fmax is not None
@@ -381,6 +418,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         and setup_errors in {None, 0}
         and hold_errors in {None, 0}
     )
+    rom_clean = not diamond_requires_table_bram(spec) or (bram_used is not None and bram_used > 0)
 
     return {
         "name": spec.name,
@@ -390,9 +428,11 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "target": format_mhz(DIAMOND_TARGET_FREQ_MHZ),
         "fmax": format_optional_fmax(fmax),
         "slack": format_diamond_slack_from_fmax(fmax),
-        "status": "PASS" if route_clean and timing_clean else "FAIL",
+        "status": "PASS" if route_clean and timing_clean and rom_clean else "FAIL",
         "registers": parse_diamond_resource(r"Number of registers:\s+([0-9]+) out of ([0-9]+)", mrp_text),
         "lut4": parse_diamond_resource(r"Number of LUT4s:\s+([0-9]+) out of ([0-9]+)", mrp_text),
+        "bram": format_diamond_resource(bram_counts),
+        "dsp_mult": parse_diamond_resource(r"Number of Used DSP MULT Sites:\s+([0-9]+) out of ([0-9]+)", mrp_text),
         "slice": parse_diamond_resource(r"SLICE\s+([0-9]+)/([0-9]+)", par_text),
         "pio": parse_diamond_resource(r"PIO \(prelim\)\s+([0-9]+)/([0-9]+)", par_text),
         "diamond_log": relative_or_missing(diamond_log, DIAMOND_BUILD),
@@ -405,6 +445,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "lpf": relative_or_missing(lpf, DIAMOND_BUILD),
         "setup_errors": "not reported" if setup_errors is None else str(setup_errors),
         "hold_errors": "not reported" if hold_errors is None else str(hold_errors),
+        "rom_inference": format_rom_inference(spec, bram_used),
         "unrouted": "not reported" if unrouted is None else str(unrouted),
         "par_errors": "not reported" if par_errors is None else str(par_errors),
         "group": module_group(spec),
@@ -434,6 +475,8 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
             + f"<td><span class=\"status {status_class}\">{escape(result['status'])}</span></td>"
             + f"<td class=\"resource\">{escape(result['lut4'])}</td>"
             + f"<td class=\"resource\">{escape(result['registers'])}</td>"
+            + f"<td class=\"resource\">{escape(result['bram'])}</td>"
+            + f"<td class=\"resource\">{escape(result['dsp_mult'])}</td>"
             + metric_cell(result["slice"], slice_bounds, higher_is_better=False, class_name="resource")
             + f"<td class=\"resource\">{escape(result['pio'])}</td>"
             + "<td>"
@@ -452,6 +495,7 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
             "<pre>"
             f"setup errors: {escape(result['setup_errors'])}\n"
             f"hold errors:  {escape(result['hold_errors'])}\n"
+            f"ROM inference: {escape(result['rom_inference'])}\n"
             f"unrouted:     {escape(result['unrouted'])}\n"
             f"PAR errors:   {escape(result['par_errors'])}"
             "</pre>"
@@ -475,7 +519,7 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Kulibin Float Diamond/LSE Synthesis Report</title>
+<title>Kulibin Float Diamond Synthesis Report</title>
 <style>
 body { font-family: sans-serif; margin: 2rem; color: #111; }
 table { border-collapse: collapse; margin-bottom: 2rem; }
@@ -490,13 +534,13 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 </style>
 </head>
 <body>
-<h1>Kulibin Float Diamond/LSE Synthesis Report</h1>
+<h1>Kulibin Float Diamond Synthesis Report</h1>
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
-        + f"<p>Flow: Lattice Diamond LSE (device per module; default {escape(DIAMOND_DEVICE)}) at "
-        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. LSE optimization goal is Timing, "
-        + f"MAP register retiming is enabled, PAR placement effort is {DIAMOND_PAR_EFFORT} with 5 placement seeds, "
-        + f"and routing passes are {DIAMOND_ROUTE_PASSES}.</p>"
+        + f"<p>Flow: Lattice Diamond LSE ({escape(DIAMOND_DEVICE)}) at "
+        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. Synthesis optimization goal is Timing, "
+        + f"MAP register retiming is disabled, PAR placement effort is {DIAMOND_PAR_EFFORT} with 5 placement seeds, "
+        + f"router is {escape(DIAMOND_ROUTER)}, and routing passes are {DIAMOND_ROUTE_PASSES}.</p>"
         + """
 <p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper register and
 every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register limit instead
@@ -507,7 +551,7 @@ helper and parent resource counts are not additive.</p>
 <table>
 <thead><tr>
 <th>Module</th><th>Parameters</th><th>DUT latency</th><th>Target</th><th>f max</th><th>Slack</th><th>Status</th>
-<th>LUT4</th><th>Registers</th><th>Slice</th><th>PIO</th><th>Logs</th>
+<th>LUT4</th><th>Registers</th><th>Block RAM</th><th>DSP MULT Sites</th><th>Slice</th><th>PIO</th><th>Logs</th>
 </tr></thead>
 <tbody>
 """
@@ -527,7 +571,7 @@ helper and parent resource counts are not additive.</p>
 def run_diamond_flow(modules: list[ModuleSpec]) -> bool:
     tools, reason = resolve_diamond()
     if tools is None:
-        print(f"skipping Diamond/LSE synthesis: {reason}")
+        print(f"skipping Diamond synthesis: {reason}")
         return False
 
     DIAMOND_BUILD.mkdir(parents=True, exist_ok=True)
@@ -536,7 +580,7 @@ def run_diamond_flow(modules: list[ModuleSpec]) -> bool:
     report_path = DIAMOND_BUILD / "index.html"
     print(f"wrote {report_path}")
     print_run_summary("diamond", results, "slice", "slices")
-    require_passing_results("Diamond/LSE", results, report_path)
+    require_passing_results("Diamond", results, report_path)
     return True
 
 

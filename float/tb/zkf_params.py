@@ -30,11 +30,14 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
-    stage_input: int = 0     # zkf_div / zkf_from_int / zkf_to_int / zkf_resize / zkf_mul / zkf_fma
-    stage_product: int = 0   # zkf_mul / zkf_fma
+    stage_input: int = 0     # input register knob for sequential float operators
+    stage_reduce: int = 0    # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input
+    stage_product: int = 0   # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
+    stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
     stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma (alignment shifter split)
-    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma (decoded-signal pipeline register)
+    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma / zkf_log2 (decoded-signal pipeline register)
     stage_normalize: int = 0 # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int (normshift internal barriers)
+    stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
     stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
     unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (mirrors the UNROLL100 vlogparam)
@@ -47,14 +50,20 @@ class TestContext:
         knob_suffix = ""
         if self.stage_input:
             knob_suffix += f" SI={self.stage_input}"
+        if self.stage_reduce:
+            knob_suffix += f" SR={self.stage_reduce}"
         if self.stage_product:
             knob_suffix += f" SP={self.stage_product}"
+        if self.stage_product_final != self.stage_product:
+            knob_suffix += f" SPF={self.stage_product_final}"
         if self.stage_align:
             knob_suffix += f" SA={self.stage_align}"
         if self.stage_decode:
             knob_suffix += f" SD={self.stage_decode}"
         if self.stage_normalize:
             knob_suffix += f" SN={self.stage_normalize}"
+        if self.stage_normalize_output:
+            knob_suffix += f" SNO={self.stage_normalize_output}"
         if self.stage_pack:
             knob_suffix += f" PA={self.stage_pack}"
         if self.stage_output == 0:
@@ -136,11 +145,25 @@ def _stage_input() -> int:
     return value
 
 
+def _stage_reduce() -> int:
+    value = plusarg_int("ZKF_STAGE_REDUCE", 0)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_STAGE_REDUCE must be 0 or 1, got {value}")
+    return value
+
+
 def _stage_product() -> int:
     value = plusarg_int("ZKF_STAGE_PRODUCT", 0)
     if value < 0:
         raise ValueError(f"ZKF_STAGE_PRODUCT must be non-negative, got {value}")
     return value
+
+
+def _stage_product_final(stage_product: int) -> int:
+    # STAGE_PRODUCT_FINAL mirrors STAGE_PRODUCT when not explicitly provided. The matrix passes it alongside
+    # STAGE_PRODUCT whenever STAGE_PRODUCT is set, and the core defaults both to 0, so the plusarg fallback here
+    # (stage_product) only applies to direct cocotb runs without FuseSoC.
+    return plusarg_int("ZKF_STAGE_PRODUCT_FINAL", stage_product)
 
 
 def _stage_align() -> int:
@@ -161,6 +184,13 @@ def _stage_normalize() -> int:
     value = plusarg_int("ZKF_STAGE_NORMALIZE", 0)
     if value < 0:
         raise ValueError(f"ZKF_STAGE_NORMALIZE must be non-negative, got {value}")
+    return value
+
+
+def _stage_normalize_output() -> int:
+    value = plusarg_int("ZKF_STAGE_NORMALIZE_OUTPUT", 0)
+    if value not in (0, 1):
+        raise ValueError(f"ZKF_STAGE_NORMALIZE_OUTPUT must be 0 or 1, got {value}")
     return value
 
 
@@ -220,6 +250,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         raise ValueError(
             f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}"
         )
+    stage_product = _stage_product()
     return TestContext(
         suite=suite,
         config=plusarg_str("ZKF_CONFIG", "default"),
@@ -230,10 +261,13 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wman=wman,
         wexp_unbiased=wexp_unbiased,
         stage_input=_stage_input(),
-        stage_product=_stage_product(),
+        stage_reduce=_stage_reduce(),
+        stage_product=stage_product,
+        stage_product_final=_stage_product_final(stage_product),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
         stage_normalize=_stage_normalize(),
+        stage_normalize_output=_stage_normalize_output(),
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
         unroll100=_unroll100(),

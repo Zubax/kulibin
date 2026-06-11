@@ -134,15 +134,18 @@ def exp2_latency(
     wman: int,
     *,
     stage_input: int = 0,
+    stage_reduce: int = 0,
     stage_product: int = 0,
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
     degree = TRANS_SPECS[("exp2", wman)]["d"]
+    product_stages = _count(stage_product)
     return (
         _enabled(stage_input)
-        + 5
-        + degree * (2 + _count(stage_product))
+        + _enabled(stage_reduce)
+        + 4
+        + degree * (2 + product_stages)
         + _enabled(stage_pack)
         + _enabled(stage_output)
     )
@@ -152,18 +155,25 @@ def log2_latency(
     wman: int,
     *,
     stage_input: int = 0,
+    stage_decode: int = 0,
     stage_product: int = 0,
+    stage_product_final: int | None = None,
     stage_normalize: int = 0,
+    stage_normalize_output: int = 0,
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
     degree = TRANS_SPECS[("log2", wman)]["d"]
     product_stages = _count(stage_product)
+    final_product_raw = stage_product if stage_product_final in (None, -1) else stage_product_final
+    final_product_stages = _count(final_product_raw)
     return (
         _enabled(stage_input)
+        + _enabled(stage_decode)
         + 5
-        + product_stages
+        + final_product_stages
         + _count(stage_normalize)
+        + _enabled(stage_normalize_output)
         + _enabled(stage_pack)
         + degree * (2 + product_stages)
         + _enabled(stage_output)
@@ -260,10 +270,13 @@ def module_latency(
     unroll100: int = 100,
     parallel: int = 0,
     stage_input: int = 0,
+    stage_reduce: int = 0,
     stage_product: int = 0,
+    stage_product_final: int | None = None,
     stage_align: int = 0,
     stage_decode: int = 0,
     stage_normalize: int = 0,
+    stage_normalize_output: int = 0,
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
@@ -321,6 +334,7 @@ def module_latency(
         return exp2_latency(
             wman,
             stage_input=stage_input,
+            stage_reduce=stage_reduce,
             stage_product=stage_product,
             stage_pack=stage_pack,
             stage_output=stage_output,
@@ -329,8 +343,11 @@ def module_latency(
         return log2_latency(
             wman,
             stage_input=stage_input,
+            stage_decode=stage_decode,
             stage_product=stage_product,
+            stage_product_final=stage_product_final,
             stage_normalize=stage_normalize,
+            stage_normalize_output=stage_normalize_output,
             stage_pack=stage_pack,
             stage_output=stage_output,
         )

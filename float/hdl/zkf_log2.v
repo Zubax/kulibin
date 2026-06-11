@@ -30,31 +30,40 @@
 ///     owns the _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input
 ///     register, and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path.
 ///
-/// The re-center (THR compare, v/f construction, e increment) is combinational and folds into the existing decode cone
-/// ahead of the evaluator's first (ROM-read) register, so the operator latency is unchanged from the old reduction.
+/// STAGE_INPUT=1 registers the raw input before decode.
+/// STAGE_DECODE=1 splits classification/re-center across two registers; STAGE_DECODE=0 keeps one register.
+/// The generated evaluator uses a registered ROM read followed by a mandatory fabric register before Horner;
+/// non-arithmetic sideband payloads are aligned by plain delay pipes.
 ///
 /// STAGE_PRODUCT selects product computation staging; see _zkf_pmul for details.
+/// STAGE_PRODUCT_FINAL selects product computation staging for only the final f*C(f) multiply; defaults to
+/// STAGE_PRODUCT.
 /// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
 /// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
+/// STAGE_NORMALIZE_OUTPUT={0,1} forwards directly to _zkf_normshift.STAGE_OUTPUT.
 /// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
 /// STAGE_OUTPUT={0,1} registers the output.
 
 `default_nettype none
 
-`define ZKF_LOG2_DEGREE (((WMAN+16)/9)-1)
+`define ZKF_LOG2_DEGREE (((WMAN+18)/11)-1)
 `define ZKF_LOG2_LATENCY \
-    (STAGE_INPUT + 5 + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK + `ZKF_LOG2_DEGREE*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
+    (STAGE_INPUT + STAGE_DECODE + 5 + STAGE_PRODUCT_FINAL + STAGE_NORMALIZE + STAGE_NORMALIZE_OUTPUT \
+     + STAGE_PACK + `ZKF_LOG2_DEGREE*(2+STAGE_PRODUCT) + STAGE_OUTPUT)
 
 module zkf_log2 #(
-    parameter WEXP            = 6,    // exponent field width
-    parameter WMAN            = 18,   // significand precision including the hidden bit
-    parameter STAGE_INPUT     = 0,    // 0: combinational inputs;   1: latch inputs before any logic (+1 stage)
-    parameter STAGE_PRODUCT   = 0,    // forwarded to _zkf_pmul
-    parameter WMULTIPLIER     = 0,    // forwarded to _zkf_pmul
-    parameter STAGE_NORMALIZE = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
-    parameter STAGE_PACK      = 0,    // 0: comb pack input; 1: register pack input (insulates rounder from normshift)
-    parameter STAGE_OUTPUT    = 0,    // 0: combinational outputs;     1: registered outputs, +1 stage
-    parameter LATENCY         = `ZKF_LOG2_LATENCY   // must equal the register-stage count; checked below
+    parameter WEXP                  = 6,    // exponent field width
+    parameter WMAN                  = 18,   // significand precision including the hidden bit
+    parameter WMULTIPLIER           = 0,    // forwarded to _zkf_pmul
+    parameter STAGE_INPUT           = 0,    // 0: combinational inputs;   1: latch inputs before any logic (+1 stage)
+    parameter STAGE_DECODE          = 0,    // 0: one decode/re-center register; 1: split across two registers
+    parameter STAGE_PRODUCT         = 0,    // forwarded to the Horner _zkf_pmul instances
+    parameter STAGE_PRODUCT_FINAL   = STAGE_PRODUCT,  // forwarded to the final f*C(f) _zkf_pmul only
+    parameter STAGE_NORMALIZE       = 0,    // 0/1/2 internal normshift barriers (direct -> _zkf_normshift.STAGE_SPLIT)
+    parameter STAGE_NORMALIZE_OUTPUT = 0,   // 0/1 register normshift outputs (direct -> _zkf_normshift.STAGE_OUTPUT)
+    parameter STAGE_PACK            = 0,    // 0: comb pack input; 1: register pack input (insulates rounder)
+    parameter STAGE_OUTPUT          = 0,    // 0: combinational outputs;     1: registered outputs, +1 stage
+    parameter LATENCY               = `ZKF_LOG2_LATENCY   // must equal the register-stage count; checked below
 ) (
     input wire clk,
     input wire rst,
@@ -76,6 +85,9 @@ module zkf_log2 #(
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end
+        if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
+            _zkf_invalid_stage_decode u_invalid();
+        end
         if (LATENCY != `ZKF_LOG2_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -88,18 +100,22 @@ module zkf_log2 #(
     // fraction f at scale 2^-(WFRAC+1), so the combine scale gains one bit over the old reduction: F2 = WFRAC + 1 + CF.
     localparam CF     = WMAN + 12;
     localparam F2     = WFRAC + 1 + CF;         // fractional bits of log2(m') and of the R accumulator
-    localparam WNORM  = WEXP + F2 + 1;          // magnitude width fed to the normalizer
+    // For finite positive inputs, re-centering may increment e to 2^(WEXP-1), but then log2(m') < 0; otherwise
+    // e <= 2^(WEXP-1)-1 and log2(m') < 1/2. Thus |e + log2(m')| < 2^(WEXP-1), so WEXP-1 unsigned integer magnitude
+    // bits plus F2 fractional bits are sufficient. Specials are forced through the sideband and ignore this magnitude.
+    localparam WNORM  = (WEXP - 1) + F2;        // finite-result magnitude width fed to the normalizer
     localparam WR     = WNORM + 1;              // signed R = (e << F2) + log2(m') width
     localparam WE     = WEXP + 1;               // signed e = exp - BIAS (+1 on re-center)
     // Signed unbiased result exponent in [-F2, WEXP-1]; also kept >= WEXP+2 because _zkf_pack requires its
     // exponent field to be at least WEXP+1 bits wide for its internal bias arithmetic.
     localparam WEU_RAW = $clog2(F2 + 1) + 2;
     localparam WEU     = (WEU_RAW > (WEXP + 2)) ? WEU_RAW : (WEXP + 2);
-    localparam SBW     = WE + 4;                // evaluator sideband: {e, is_special, special_sign, pole, de}
+    localparam SBW     = WE + 4;                // delayed evaluator sideband: {e, is_special, special_sign, pole, de}
 
     localparam integer BIAS = (1 << (WEXP - 1)) - 1;
 
-    // Re-center threshold THR = round(sqrt(2) * 2^WFRAC): re-center iff the WMAN-bit significand sig >= THR (m >= sqrt2).
+    // Re-center threshold THR = round(sqrt(2) * 2^WFRAC): re-center iff the WMAN-bit significand sig >= THR
+    // (m >= sqrt2).
     // Computed at elaboration by an exact integer sqrt (the same value as the model's _trans_sqrt2_threshold and the
     // generator's log2_sqrt2_threshold): round(sqrt(S)) for S = 2^(2*WFRAC+1) is (floor(sqrt(4*S)) + 1) / 2, and
     // 4*S = 2^(2*WFRAC+3). The streaming digit-by-digit isqrt below is a fixed-bound constant function (no while loop)
@@ -128,15 +144,19 @@ module zkf_log2 #(
     // verilator coverage_on
     localparam [WFRAC:0] THR = (_zkf_isqrt128(128'd1 << (2 * WFRAC + 3)) + 128'd1) >> 1;
 
-    // -- Decode, classify, and re-center -- all combinational from the PRE-register input x, so the optional
-    // STAGE_INPUT register below latches the finished {v, f, e, flags} payload rather than raw x. This keeps the
-    // re-center cone (the THR compare + the v/f selects, the only logic added by the symmetric reduction) on the
-    // input -> register side, isolated from the register -> ROM-read path that addresses the table core's BRAM; on
-    // the wide configs (which run STAGE_INPUT=1) that isolation is what holds timing. The register count is unchanged,
-    // so the latency is identical whether the re-center sits before or after this stage.
-    wire             sign_in = x[WFULL-1];
-    wire [WEXP-1:0]  exp_in  = x[WFULL-2:WFRAC];
-    wire [WFRAC-1:0] frac_in = x[WFRAC-1:0];
+    // -- Optional raw input register stage: with STAGE_INPUT=1, no decode/re-center logic sits on the input side.
+    wire             in_valid_q;
+    wire [WFULL-1:0] x_q;
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+        .clk(clk), .rst(rst),
+        .in_valid(in_valid), .in(x),
+        .out_valid(in_valid_q), .out(x_q)
+    );
+
+    // -- Decode, classify, and prepare for re-center.
+    wire             sign_in = x_q[WFULL-1];
+    wire [WEXP-1:0]  exp_in  = x_q[WFULL-2:WFRAC];
+    wire [WFRAC-1:0] frac_in = x_q[WFRAC-1:0];
     wire             is_zero = ~|exp_in;
     wire             is_inf  =  &exp_in;
     // Special results are all +/-inf: +inf for +inf input; -inf for +0 (pole), negative finite, or -inf (domain).
@@ -148,45 +168,113 @@ module zkf_log2 #(
     // Symmetric re-center. sig = {hidden 1, frac} is the WMAN-bit significand; re-center when m >= sqrt(2). v is the
     // unsigned index coordinate (WMAN bits) and f the signed combine operand (WMAN = WFRAC+1 bits), both formed exactly
     // from frac (no irrational subtraction), matching the model. v and f are carry-free concatenations: the +2^WFRAC
-    // only sets bit WFRAC, which never collides with the low bits of 2*frac in the branch that selects them (m < sqrt(2)
-    // keeps frac < 2^(WFRAC-1)). The two's-complement identity {1'b1, frac} (= sig) read as signed is exactly
-    // frac - 2^WFRAC, the re-center branch's f.
+    // only sets bit WFRAC, which never collides with the low bits of 2*frac in the branch that selects them
+    // (m < sqrt(2) keeps frac < 2^(WFRAC-1)). The two's-complement identity {1'b1, frac} (= sig) read as signed is
+    // exactly frac - 2^WFRAC, the re-center branch's f.
     wire [WFRAC:0]   sig_in    = {1'b1, frac_in};                  // WMAN-bit significand, m = sig / 2^WFRAC
     wire             recenter  = sig_in >= THR;                    // m >= sqrt(2)
-    wire [WMAN-1:0]  v_pre     = recenter ? {1'b0, frac_in}                  // v = frac
-                                          : {1'b1, frac_in[WFRAC-2:0], 1'b0};  // v = 2^WFRAC + 2*frac (no carry)
-    // verilator coverage_off
-    wire signed [WMAN-1:0] f_pre = recenter ? $signed({1'b1, frac_in})   // f = frac - 2^WFRAC (< 0)
-                                            : $signed({frac_in, 1'b0});   // f = 2*frac          (>= 0)
-    // e = (exp - BIAS) + (re-center ? 1 : 0); the +1 lands in the sideband alongside f, so the combine sees e + log2(m').
-    wire signed [WE-1:0] e_pre = ($signed({1'b0, exp_in}) - $signed(BIAS[WE-1:0]))
-                                 + $signed({{(WE-1){1'b0}}, recenter});
-    // verilator coverage_on
 
-    // -- Optional input register stage: latch the decoded {v, f, e, flags} payload ahead of the table core. Pipe width
-    // packs the index coordinate, the signed reduced argument, the signed exponent, and the four special-case flags.
-    localparam DECW = WMAN + WMAN + WE + 4;
-    wire            in_valid_q;
-    // verilator coverage_off
-    wire [DECW-1:0] dec_q;
-    // verilator coverage_on
-    zkf_pipe #(.W(DECW), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
-        .clk(clk), .rst(rst), .in_valid(in_valid),
-        .in({v_pre, f_pre, e_pre, is_special_pre, special_sign_pre, pole_pre, de_pre}),
-        .out_valid(in_valid_q), .out(dec_q)
-    );
-    wire        [WMAN-1:0] v_in            = dec_q[DECW-1 -: WMAN];
-    // verilator coverage_off
-    wire signed [WMAN-1:0] f_in            = $signed(dec_q[DECW-1-WMAN -: WMAN]);
-    wire signed [WE-1:0]   e_in            = $signed(dec_q[4 +: WE]);
-    // verilator coverage_on
-    wire                   is_special_in   = dec_q[3];
-    wire                   special_sign_in = dec_q[2];
-    wire                   pole_in         = dec_q[1];
-    wire                   de_in           = dec_q[0];
+    // For special/noncanonical transactions, clamp v to the exact x=1 reduced argument (v=1/2, f=0) so compact log2
+    // ROMs are never addressed outside their reachable segment span.
+    wire [WMAN-1:0]       v_pre_raw_1 = recenter ? {1'b0, frac_in}                  // v = frac
+                                                  : {1'b1, frac_in[WFRAC-2:0], 1'b0}; // v = 2^WFRAC + 2*frac
+    wire signed [WE-1:0]  e_pre_1     = ($signed({1'b0, exp_in}) - $signed(BIAS[WE-1:0]))
+                                           + $signed({{(WE-1){1'b0}}, recenter});
+    wire [WMAN-1:0]       v_safe_1    = is_special_pre ? {1'b1, {WFRAC{1'b0}}} : v_pre_raw_1;
+    wire signed [WE-1:0]  e_safe_1    = is_special_pre ? {WE{1'b0}} : e_pre_1;
+
+    wire                  r0_valid;
+    wire       [WMAN-1:0] r0_v;
+    wire signed [WE-1:0]  r0_e;
+    wire                  r0_is_special;
+    wire                  r0_special_sign;
+    wire                  r0_pole;
+    wire                  r0_de;
+    generate
+        if (STAGE_DECODE == 0) begin : g_decode_one
+            // One decode/re-center register. Reset only validity; payload free-runs.
+            reg                  r_valid;
+            reg       [WMAN-1:0] r_v;
+            reg signed [WE-1:0]  r_e;
+            reg                  r_is_special;
+            reg                  r_special_sign;
+            reg                  r_pole;
+            reg                  r_de;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else     r_valid <= in_valid_q;
+                r_v            <= v_safe_1;
+                r_e            <= e_safe_1;
+                r_is_special   <= is_special_pre;
+                r_special_sign <= special_sign_pre;
+                r_pole         <= pole_pre;
+                r_de           <= de_pre;
+            end
+            assign r0_valid       = r_valid;
+            assign r0_v           = r_v;
+            assign r0_e           = r_e;
+            assign r0_is_special  = r_is_special;
+            assign r0_special_sign = r_special_sign;
+            assign r0_pole        = r_pole;
+            assign r0_de          = r_de;
+        end else begin : g_decode_two
+            // Split raw decode/re-center predicate from final coordinate/exponent formation.
+            reg              d0_valid;
+            reg [WEXP-1:0]   d0_exp;
+            reg [WFRAC-1:0]  d0_frac;
+            reg              d0_recenter;
+            reg              d0_is_special;
+            reg              d0_special_sign;
+            reg              d0_pole;
+            reg              d0_de;
+            always @(posedge clk) begin
+                if (rst) d0_valid <= 1'b0;
+                else     d0_valid <= in_valid_q;
+                d0_exp          <= exp_in;
+                d0_frac         <= frac_in;
+                d0_recenter     <= recenter;
+                d0_is_special   <= is_special_pre;
+                d0_special_sign <= special_sign_pre;
+                d0_pole         <= pole_pre;
+                d0_de           <= de_pre;
+            end
+
+            wire [WMAN-1:0]      v_pre_raw = d0_recenter ? {1'b0, d0_frac}
+                                                         : {1'b1, d0_frac[WFRAC-2:0], 1'b0};
+            wire signed [WE-1:0] e_pre     = ($signed({1'b0, d0_exp}) - $signed(BIAS[WE-1:0]))
+                                               + $signed({{(WE-1){1'b0}}, d0_recenter});
+            wire [WMAN-1:0]      v_safe    = d0_is_special ? {1'b1, {WFRAC{1'b0}}} : v_pre_raw;
+            wire signed [WE-1:0] e_safe    = d0_is_special ? {WE{1'b0}} : e_pre;
+
+            reg                  r_valid;
+            reg       [WMAN-1:0] r_v;
+            reg signed [WE-1:0]  r_e;
+            reg                  r_is_special;
+            reg                  r_special_sign;
+            reg                  r_pole;
+            reg                  r_de;
+            always @(posedge clk) begin
+                if (rst) r_valid <= 1'b0;
+                else     r_valid <= d0_valid;
+                r_v            <= v_safe;
+                r_e            <= e_safe;
+                r_is_special   <= d0_is_special;
+                r_special_sign <= d0_special_sign;
+                r_pole         <= d0_pole;
+                r_de           <= d0_de;
+            end
+            assign r0_valid       = r_valid;
+            assign r0_v           = r_v;
+            assign r0_e           = r_e;
+            assign r0_is_special  = r_is_special;
+            assign r0_special_sign = r_special_sign;
+            assign r0_pole        = r_pole;
+            assign r0_de          = r_de;
+        end
+    endgenerate
 
     // -- Pipelined evaluator: log2(m') = f*C(f). e and the special-case flags ride the sideband, aligned to l_fix.
-    wire [SBW-1:0] sb_in_l = {e_in, is_special_in, special_sign_in, pole_in, de_in};
+    wire [SBW-1:0] sb_in_l = {r0_e, r0_is_special, r0_special_sign, r0_pole, r0_de};
     wire           ev_valid;
     wire [SBW-1:0] sb_out_l;
     // verilator coverage_off
@@ -194,13 +282,26 @@ module zkf_log2 #(
     // verilator coverage_on
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
-    // A WMAN without a pre-generated table names a missing module and fails loudly.
-    `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_log2_m``W #(.D(`ZKF_LOG2_DEGREE), .WSB(SBW), .STAGE_PRODUCT(STAGE_PRODUCT), .WMULTIPLIER(WMULTIPLIER)) u_eval ( \
-            .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(sb_in_l), .v(v_in), .f(f_in), \
-            .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix));
+    // A WMAN without a pre-generated table fails elaboration through the unsupported-table sentinel.
+    `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin \
+        _zkf_log2_m``W #( \
+            .D(`ZKF_LOG2_DEGREE), .WSB(SBW), \
+            .WMULTIPLIER(WMULTIPLIER), \
+            .STAGE_PRODUCT(STAGE_PRODUCT), .STAGE_PRODUCT_FINAL(STAGE_PRODUCT_FINAL) \
+        ) u_eval ( \
+            .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_l), .v(r0_v), \
+            .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix) \
+        );
+    // verilog_lint: waive-start generate-label  (macro-expanded selector blocks are intentionally unlabeled)
     generate
-        if (1'b0) begin : g_none  // seed: the macro opens with "end else if", so every table line is uniform
+        if (1'b0) begin  // seed: the macro opens with "end else if", so every table line is uniform
+        `ZKF_LOG2_TABLE(4)
+        `ZKF_LOG2_TABLE(5)
+        `ZKF_LOG2_TABLE(6)
+        `ZKF_LOG2_TABLE(7)
+        `ZKF_LOG2_TABLE(8)
+        `ZKF_LOG2_TABLE(9)
+        `ZKF_LOG2_TABLE(10)
         `ZKF_LOG2_TABLE(11)
         `ZKF_LOG2_TABLE(12)
         `ZKF_LOG2_TABLE(13)
@@ -244,11 +345,12 @@ module zkf_log2 #(
         `ZKF_LOG2_TABLE(51)
         `ZKF_LOG2_TABLE(52)
         `ZKF_LOG2_TABLE(53)
-        end else begin : g_unsupported
+        end else begin
             _zkf_invalid_unsupported_table_wman u_invalid();
         end
     endgenerate
     `undef ZKF_LOG2_TABLE
+    // verilog_lint: waive-stop generate-label
     wire signed [WE-1:0] e_o       = sb_out_l[SBW-1 -: WE];
     wire                 e_special = sb_out_l[3];
     wire                 e_ssign   = sb_out_l[2];
@@ -291,9 +393,10 @@ module zkf_log2 #(
     end
 
     // -- Normalize, combine, and pack via the shared back-end. The helper owns the _zkf_normshift instance
-    // (STAGE_SPLIT = 1 + STAGE_NORMALIZE), the GRS extraction, exp_unbiased = (WNORM-1-F2) - shamt, the optional P2
-    // pack-input register (STAGE_PACK forwarded to _zkf_pack.STAGE_INPUT; the synth configs set it for fmax closure), and the
-    // _zkf_pack output. The pole / domain_error flags ride the WSB=2 sideband and emerge in lockstep with y.
+    // (STAGE_SPLIT = STAGE_NORMALIZE, STAGE_OUTPUT = STAGE_NORMALIZE_OUTPUT), GRS extraction,
+    // exp_unbiased = (WNORM-1-F2) - shamt, the optional P2 pack-input register (STAGE_PACK forwarded to
+    // _zkf_pack.STAGE_INPUT), and the _zkf_pack output. The pole / domain_error flags ride the WSB=2 sideband and
+    // emerge in lockstep with y.
     wire [1:0] sb_out_flags;
     localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = WNORM - 1 - F2;
     _zkf_fixed_to_float #(
@@ -303,6 +406,7 @@ module zkf_log2 #(
         .ASSUME_NO_OVERFLOW(1),  // log2(finite>0) is always representable, disable overflow detection circuit
         .WSB(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),
+        .STAGE_NORMALIZE_OUTPUT(STAGE_NORMALIZE_OUTPUT),
         .STAGE_PACK(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_fixed_to_float (

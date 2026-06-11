@@ -4,7 +4,7 @@
 /// generic sideband through sb_in / sb_out for outputs that don't fit the y / valid channels (e.g., zkf_log2's pole
 /// and domain_error flags).
 ///
-/// Register stages = STAGE_NORMALIZE+STAGE_PACK+STAGE_OUTPUT
+/// Register stages = STAGE_NORMALIZE+STAGE_NORMALIZE_OUTPUT+STAGE_PACK+STAGE_OUTPUT
 ///
 /// Zero-bubble, throughput-1, no backpressure. Reset clears only the control signals.
 ///
@@ -26,16 +26,17 @@
 
 // verilator coverage_off
 module _zkf_fixed_to_float #(
-    parameter WEXP                  = 6,    // exponent field width
-    parameter WMAN                  = 18,   // significand precision including the hidden bit
-    parameter WMAG                  = 64,   // width of the unsigned magnitude fed to the normalizer
-    parameter WEU                   = 8,    // internal signed exponent width, also passed to _zkf_pack as WEXP_UNBIASED
-    parameter integer EXP_IS_BIASED = 0,
-    parameter ASSUME_NO_OVERFLOW    = 0,    // forwarded to _zkf_pack; 1 prunes overflow detect
-    parameter WSB                   = 1,    // generic sideband width carried alongside the pipeline
-    parameter STAGE_NORMALIZE       = 0,    // {0,1,2} direct forward to _zkf_normshift.STAGE_SPLIT
-    parameter STAGE_PACK            = 0,    // {0,1} direct forward to _zkf_pack.STAGE_INPUT
-    parameter STAGE_OUTPUT          = 0     // {0,1} direct forward to _zkf_pack.STAGE_OUTPUT
+    parameter WEXP                   = 6,   // exponent field width
+    parameter WMAN                   = 18,  // significand precision including the hidden bit
+    parameter WMAG                   = 64,  // width of the unsigned magnitude fed to the normalizer
+    parameter WEU                    = 8,   // internal signed exponent width, also passed to _zkf_pack as WEXP_UNBIASED
+    parameter EXP_IS_BIASED          = 0,
+    parameter ASSUME_NO_OVERFLOW     = 0,   // forwarded to _zkf_pack; 1 prunes overflow detect
+    parameter WSB                    = 1,   // generic sideband width carried alongside the pipeline
+    parameter STAGE_NORMALIZE        = 0,   // {0,1,2} direct forward to _zkf_normshift.STAGE_SPLIT
+    parameter STAGE_NORMALIZE_OUTPUT = 0,   // {0,1} direct forward to _zkf_normshift.STAGE_OUTPUT
+    parameter STAGE_PACK             = 0,   // {0,1} direct forward to _zkf_pack.STAGE_INPUT
+    parameter STAGE_OUTPUT           = 0    // {0,1} direct forward to _zkf_pack.STAGE_OUTPUT
 ) (
     input  wire clk,
     input  wire rst,
@@ -62,19 +63,17 @@ module _zkf_fixed_to_float #(
         if (WEU < $clog2(WMAG)) begin : g_invalid_weu_count
             _zkf_invalid_fixed_to_float_weu_too_narrow_for_count u_invalid();
         end
-        // STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT are forwarded as-is to their owners (_zkf_normshift.STAGE_SPLIT,
-        // _zkf_pack.STAGE_INPUT/STAGE_OUTPUT), which validate their own legal ranges -- no range check is duplicated here.
-        if (WSB < 1) begin : g_invalid_sb_w
-            _zkf_invalid_sb_w_too_narrow u_invalid();
-        end
     endgenerate
     // verilator coverage_on
 
     localparam WIDX = $clog2(WMAG);
 
-    // -- Normalize the magnitude. STAGE_NORMALIZE directly forwards to _zkf_normshift.STAGE_SPLIT (0=no internal
-    // register, 1=one barrier mid-cascade, 2=two barriers; see hdl/_zkf_normshift.v). norm_count is the left-shift
-    // amount; norm_zero asserts when mag == 0; norm_aligned has the leading 1 at bit WMAG-1 for nonzero input.
+    // -- Normalize the magnitude. STAGE_NORMALIZE/STAGE_NORMALIZE_OUTPUT forward to _zkf_normshift.STAGE_SPLIT/
+    // STAGE_OUTPUT. norm_count is the left-shift amount; norm_zero asserts when mag == 0; norm_aligned has the leading
+    // 1 at bit WMAG-1 for nonzero input. The control/sideband bundle {sign, force_zero, force_inf, exp_offset, sb_in}
+    // rides the normalizer's own sideband, delayed by exactly STAGE_NORMALIZE + STAGE_NORMALIZE_OUTPUT cycles so it
+    // lands aligned with norm_aligned -- no parallel zkf_pipe. The normalizer resets only out_valid; sb free-runs.
+    localparam PIPE_W = 3 + WEU + WSB;
     wire              norm_zero;
     // verilator coverage_off
     // norm_count's top bits assert only for normalize distances the small coverage formats cannot reach (the wide
@@ -83,58 +82,60 @@ module _zkf_fixed_to_float #(
     wire [WIDX-1:0]   norm_count;
     wire [WMAG-1:0]   norm_aligned;
     // verilator coverage_on
-    _zkf_normshift #(.W(WMAG), .STAGE_SPLIT(STAGE_NORMALIZE)) u_norm (
-        .clk(clk),
+    wire              sb_valid;
+    wire [PIPE_W-1:0] sb_pipe_out;
+    _zkf_normshift #(
+        .W(WMAG), .STAGE_SPLIT(STAGE_NORMALIZE), .STAGE_OUTPUT(STAGE_NORMALIZE_OUTPUT), .WSB(PIPE_W)
+    ) u_norm (
+        .clk(clk), .rst(rst),
+        .in_valid(in_valid),
+        .sb_in({sign, force_zero, force_inf, exp_offset, sb_in}),
         .x(mag),
+        .out_valid(sb_valid),
+        .sb_out(sb_pipe_out),
         .zero(norm_zero),
         .count(norm_count),
         .y(norm_aligned)
     );
-
-    // -- Delay sidebands alongside the normshift so they land with norm_aligned. zkf_pipe resets only the valid flag;
-    // the payload free-runs (project reset policy). For STAGE_NORMALIZE=0 the pipe is a passthrough.
-    localparam PIPE_W = 3 + WEU + WSB;
-    wire              sb_valid;
-    wire [PIPE_W-1:0] sb_pipe_in;
-    wire [PIPE_W-1:0] sb_pipe_out;
-    zkf_pipe #(.W(PIPE_W), .N(STAGE_NORMALIZE)) u_sb_pipe (
-        .clk(clk), .rst(rst),
-        .in_valid(in_valid), .in(sb_pipe_in),
-        .out_valid(sb_valid), .out(sb_pipe_out)
-    );
-    wire                    sign_d;
+    wire                    sign_d       = sb_pipe_out[PIPE_W-1];
     // verilator coverage_off
-    wire                    force_zero_d;
+    wire                    force_zero_d = sb_pipe_out[PIPE_W-2];
     // verilator coverage_on
-    wire                    force_inf_d;
-    wire signed [WEU-1:0]   exp_offset_d;
-    wire [WSB-1:0]          sb_d = sb_pipe_out[WSB-1:0];
+    wire                    force_inf_d  = sb_pipe_out[PIPE_W-3];
+    wire signed [WEU-1:0]   exp_offset_d = sb_pipe_out[WSB +: WEU];
+    wire [WSB-1:0]          sb_d         = sb_pipe_out[WSB-1:0];
 
-    assign sb_pipe_in   = {sign, force_zero, force_inf, exp_offset, sb_in};
-    assign sign_d       = sb_pipe_out[PIPE_W-1];
-    assign force_zero_d = sb_pipe_out[PIPE_W-2];
-    assign force_inf_d  = sb_pipe_out[PIPE_W-3];
-    assign exp_offset_d = sb_pipe_out[WSB +: WEU];
+    // The optional post-normalize boundary is owned by _zkf_normshift.STAGE_OUTPUT. The control/sideband pipe above
+    // matches that latency, so GRS/exponent combine can consume the aligned normalizer outputs directly.
+    wire                  c_valid        = sb_valid;
+    wire                  c_sign         = sign_d;
+    wire                  c_force_zero   = force_zero_d;
+    wire                  c_force_inf    = force_inf_d;
+    wire signed [WEU-1:0] c_exp_offset   = exp_offset_d;
+    wire [WSB-1:0]        c_sb           = sb_d;
+    wire                  c_norm_zero    = norm_zero;
+    wire [WIDX-1:0]       c_norm_count   = norm_count;
+    wire [WMAG-1:0]       c_norm_aligned = norm_aligned;
 
     // -- Pack-input combine (combinational). Slicing follows zkf_from_int's pattern exactly: the leading WMAN bits
     // of the aligned bus carry the significand (hidden bit included), the next bit is guard, then round, and the OR
     // of the rest is sticky.
-    wire [WMAN-1:0]  pre_sig    =  norm_aligned[WMAG-1 -: WMAN];
-    wire             pre_guard  =  norm_aligned[WMAG-WMAN-1];
-    wire             pre_round  =  norm_aligned[WMAG-WMAN-2];
-    wire             pre_sticky = |norm_aligned[WMAG-WMAN-3:0];
+    wire [WMAN-1:0]  pre_sig    =  c_norm_aligned[WMAG-1 -: WMAN];
+    wire             pre_guard  =  c_norm_aligned[WMAG-WMAN-1];
+    wire             pre_round  =  c_norm_aligned[WMAG-WMAN-2];
+    wire             pre_sticky = |c_norm_aligned[WMAG-WMAN-3:0];
 
     // exp = exp_offset - norm_count, as a signed WEU-bit value. For zkf_from_int (EXP_IS_BIASED=1) this is
     // the biased exponent EXP_BIASED_TOP - shamt and is forwarded to _zkf_pack with the bias-add disabled; for
     // zkf_log2 and remquo it is the unbiased exponent.
     // verilator coverage_off
     // The pad bits below the active range are structurally zero; covered downstream through y.
-    wire        [WEU-1:0] norm_count_ext = {{(WEU-WIDX){1'b0}}, norm_count};
-    wire signed [WEU-1:0] pre_exp        = exp_offset_d - $signed(norm_count_ext);
+    wire        [WEU-1:0] norm_count_ext = {{(WEU-WIDX){1'b0}}, c_norm_count};
+    wire signed [WEU-1:0] pre_exp        = c_exp_offset - $signed(norm_count_ext);
     // verilator coverage_on
 
-    wire pre_force_inf  = force_inf_d;
-    wire pre_force_zero = force_zero_d || (~force_inf_d & norm_zero);
+    wire pre_force_inf  = c_force_inf;
+    wire pre_force_zero = c_force_zero || (~c_force_inf & c_norm_zero);
 
     // -- The packer owns its optional input register (STAGE_INPUT=STAGE_PACK) and its optional output
     // register (STAGE_OUTPUT). When STAGE_PACK=1, the rounder is insulated from the wide normshift output
@@ -149,8 +150,8 @@ module _zkf_fixed_to_float #(
     ) u_pack (
         .clk(clk),
         .rst(rst),
-        .in_valid(sb_valid),
-        .sign(sign_d),
+        .in_valid(c_valid),
+        .sign(c_sign),
         .force_zero(pre_force_zero),
         .force_inf(pre_force_inf),
         .exp_unbiased(pre_exp),
@@ -165,7 +166,7 @@ module _zkf_fixed_to_float #(
     // -- Forward sideband through the packer's input + output stages so sb_out lands with out_valid. Pure datapath:
     // the delay free-runs with no reset; sb_out is only sampled in lockstep with out_valid, which is reset.
     _zkf_pack_delay #(.W(WSB), .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)) u_sb_pack_delay (
-        .clk(clk), .x(sb_d), .y(sb_out)
+        .clk(clk), .x(c_sb), .y(sb_out)
     );
 endmodule
 

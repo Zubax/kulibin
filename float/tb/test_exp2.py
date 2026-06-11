@@ -96,6 +96,7 @@ async def exp2_runtime_cases(dut) -> None:
     register_stages = exp2_latency(
         context.wman,
         stage_input=context.stage_input,
+        stage_reduce=context.stage_reduce,
         stage_product=context.stage_product,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,

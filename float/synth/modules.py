@@ -36,16 +36,18 @@ class ModuleSpec:
     wexp_out: int = 0
     wman_out: int = 0
     stage_input: int = 0     # zkf_div, zkf_from_int, zkf_to_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
+    stage_reduce: int = 0    # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
     stage_product: int = 0   # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..4.
+    stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
     stage_align: int = 0     # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma: 0 or 1 (decoded-signal register).
+    stage_decode: int = 0    # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma, zkf_log2: 0 or 1.
     stage_normalize: int = 0 # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
+    stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
     stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
     parallel: int = -1       # zkf_sincos: run z ahead of x/y. -1 = auto (the RTL default, = UNROLL100 < 100); 0/1 force.
     wmultiplier: int = 0     # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric; >=8 -> slice grid).
-    synth_device: str = ""   # flow-interpreted device-size hint ("" = flow default; e.g. "45k" picks a larger ECP5).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
 
 
@@ -107,7 +109,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_mul_w8m36_sp2",
         label="zkf_mul (WEXP=8, WMAN=36, STAGE_PRODUCT=2 registered 2x2 18x18 split, WMULTIPLIER=18, STAGE_PACK=1 "
-              "registers the pack inputs so the product->round->pack route closes on the more pessimistic Diamond/LSE)",
+              "registers the pack inputs so the product->round->pack route closes on Diamond)",
         top="zkf_mul_w8m36_sp2_synth_top",
         kind="mul",
         wexp=8,
@@ -120,7 +122,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_mul_w8m36_si1_sp2",
         label="zkf_mul (WEXP=8, WMAN=36, STAGE_INPUT=1 latched inputs + STAGE_PRODUCT=2 registered 2x2 18x18 "
-              "split, WMULTIPLIER=18, STAGE_PACK=1 registers pack inputs for Diamond/LSE closure)",
+              "split, WMULTIPLIER=18, STAGE_PACK=1 registers pack inputs for Diamond closure)",
         top="zkf_mul_w8m36_si1_sp2_synth_top",
         kind="mul",
         wexp=8,
@@ -134,7 +136,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_mul_w8m25_sp2",
         label="zkf_mul (WEXP=8, WMAN=25, STAGE_PRODUCT=2 registered symmetric 2x2 split 13/12, STAGE_PACK=1 "
-              "registers pack inputs for Diamond/LSE closure)",
+              "registers pack inputs for Diamond closure)",
         top="zkf_mul_w8m25_sp2_synth_top",
         kind="mul",
         wexp=8,
@@ -179,7 +181,7 @@ MODULES = [
         label="zkf_fma (true single-rounding a*b+c; WEXP=6, WMAN=18, STAGE_INPUT=1 latched operands + "
               "STAGE_DECODE=1 splits the post-product normalize + magnitude-compare/select cone + STAGE_ALIGN=1 "
               "split aligner + STAGE_NORMALIZE=2 FMA-local 3-segment normalizer + STAGE_PACK=1 registered packer "
-              "inputs: closes every datapath cone on Yosys and the more pessimistic Diamond/LSE using a single "
+              "inputs: closes every datapath cone on Yosys and Diamond using a single "
               "MULT18X18D.)",
         top="zkf_fma_synth_top",
         kind="fma",
@@ -258,7 +260,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_div_w8m36",
         label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18; STAGE_INPUT=1 shields the wide input decode cone, "
-              "STAGE_OUTPUT=1 registers the wide quotient round so Diamond/LSE closes timing)",
+              "STAGE_OUTPUT=1 registers the wide quotient round so Diamond closes timing)",
         top="zkf_div_w8m36_synth_top",
         kind="div",
         wexp=8,
@@ -504,10 +506,14 @@ MODULES = [
     #     out ~85 MHz on Yosys, so the headline carries STAGE_PRODUCT=2: each Horner multiply maps to a registered
     #     2x2 DSP grid with an operand-capture stage (in the shared _zkf_pmul the registered split starts at 2, since
     #     1 is operand-capture + native multiply). It then reaches ~125 MHz Yosys.
-    #   - log2's argument is the narrow segment-local fraction, so acc*w is wide x narrow -- a single DSP multiply
-    #     both tools map cleanly, so the product is left unsplit (STAGE_PRODUCT=0). The shared multiplier's wider
-    #     product register, however, shifts the close-cancellation normalizer onto the critical path, so the headline
-    #     carries STAGE_NORMALIZE=2 to split it (~108 MHz Yosys); log2_so1 (STAGE_OUTPUT=1) is the higher-margin variant.
+    #   - log2's argument is the narrow segment-local fraction, so acc*w is wide x narrow and the Horner multiply can
+    #     stay unsplit. The generated tables insert their own mandatory post-ROM hold register, so STAGE_PRODUCT is not
+    #     used merely to isolate the first multiply. The critical path is the final f*C(f) multiply + its carry chain;
+    #     STAGE_NORMALIZE=2 (splitting the close-cancellation x->1 normalize) is the single knob that relieves the
+    #     surrounding placement enough to close 100 MHz on both Yosys ECP5 (102.9 MHz) and Diamond (105.9 MHz). The
+    #     formerly carried STAGE_NORMALIZE_OUTPUT=1 / STAGE_PACK=1 were redundant -- adding those stages only worsened
+    #     placement congestion (e.g. si1+sn2+sno1+pa1 dropped to ~98 MHz) -- so they are removed. log2_so1 adds
+    #     STAGE_OUTPUT=1 as the alternate registered-output boundary.
     ModuleSpec(
         name="zkf_exp2",
         label="zkf_exp2 (2**x, table+polynomial; STAGE_PRODUCT=2 splits each Horner multiply into a registered "
@@ -522,46 +528,46 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2",
-        label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_INPUT=1 shields the decode/re-center/evaluator "
-              "cone + STAGE_NORMALIZE=2 splits the near-zero-result (x->1) normalize-shift + STAGE_PACK=1 keep both wide "
-              "pre-pack cones below the 100 MHz gate)",
+        label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_NORMALIZE=2 splits the "
+              "near-zero-result (x->1) normalize-shift -- the single knob that closes 100 MHz on Yosys ECP5 "
+              "(102.9 MHz) and Diamond (105.9 MHz); the formerly carried STAGE_NORMALIZE_OUTPUT/STAGE_PACK were "
+              "redundant and removed)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        stage_input=1,
         stage_normalize=2,
-        stage_pack=1,
     ),
     ModuleSpec(
         name="zkf_log2_so1",
-        label="zkf_log2 (STAGE_NORMALIZE=1 + STAGE_PACK=1 + STAGE_OUTPUT=1 registered output -- higher timing margin)",
+        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_OUTPUT=1 registered-output boundary; closes on Yosys ECP5 "
+              "(104.5 MHz) and Diamond (107.2 MHz). STAGE_NORMALIZE_OUTPUT/STAGE_PACK were redundant and removed)",
         top="zkf_log2_so1_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        stage_normalize=1,
-        stage_pack=1,
+        stage_normalize=2,
         stage_output=1,
     ),
-    # WEXP=8, WMAN=36 (degree-4 evaluator: four wide Horner multiplies). The shallow product modes are deep DSP
+    # WEXP=8, WMAN=36 (degree-3 evaluator: three wide Horner multiplies). The shallow product modes are deep DSP
     # cascades that top out near 60 MHz; the split product modes cut the operands into chunks and add the
     # operand-capture stage. WMULTIPLIER=18 pins each slice to an 18-bit DSP tile: a symmetric STAGE_PRODUCT=3 split
     # (WMULTIPLIER=0) would cut the 53-bit accumulator into 18/18/17-bit slices, but the signed slice product then
-    # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice LSE drops the whole
-    # Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives a 4x3 (signed)
-    # / 2x3 (unsigned final mul) grid whose slices fit one tile each, so every multiply maps to DSP on both Yosys and
-    # Diamond/LSE; latency is unchanged. exp2 closes at STAGE_PRODUCT=3 (single-stage GA-way column sum); log2's larger
-    # design (the extra final F*C(f) multiply + the wide normshift back-end) places its Horner reduction worse, so its
-    # single-stage GA=4 column sum is the Diamond/LSE limiter (~77 MHz, insensitive to retiming and PAR effort). log2
-    # therefore uses STAGE_PRODUCT=4, which keeps the same DSP grid but splits that final column sum into a registered
-    # pairwise reduction (105+ MHz). These need <=48 MULT18X18D, so they target the LFE5U-45F (72 DSP) via synth_device.
+    # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice synthesis can drop the
+    # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
+    # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
+    # so every multiply maps to DSP on both Yosys and Diamond. exp2 closes at STAGE_PRODUCT=3 without the optional
+    # fixed-point split register. log2 is heavier (27/28 DSPs plus the normalize/reconstruct cone) and is
+    # placement-bound on the small LFE5U-12F: it needs STAGE_PRODUCT=4 (deeper Horner column-sum) + STAGE_DECODE=1 and,
+    # crucially, STAGE_NORMALIZE_OUTPUT=0 -- dropping that back-end register lowers FF congestion enough to clear
+    # 100 MHz on nextpnr-ecp5 (Diamond, with its stronger placer, closes the design comfortably either way). Adding
+    # back-end registers to a congestion-bound part hurts placement more than it helps logic depth.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + "
-              "STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + "
+              "STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_OUTPUT=1)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
@@ -571,26 +577,28 @@ MODULES = [
         stage_product=3,
         wmultiplier=18,
         stage_output=1,
-        synth_device="45k",
         emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=4 (3x3 grid + two-stage reduction) + "
-              "WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 (deep normshift split) + STAGE_PACK=1 "
-              "(register pack inputs) + STAGE_OUTPUT=1; LFE5U-45F)",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_DECODE=1 + STAGE_PRODUCT=4 Horner grid + "
+              "STAGE_PRODUCT_FINAL=3 final f*C(f) grid + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 "
+              "(deep normshift split) + STAGE_PACK=1 + STAGE_OUTPUT=1; STAGE_NORMALIZE_OUTPUT dropped to relieve "
+              "FF congestion -- the 27/28-DSP design is placement-bound on the small LFE5U-12F, so fewer back-end "
+              "registers raise f_max here)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
+        stage_decode=1,
         stage_product=4,
+        stage_product_final=3,
         wmultiplier=18,
         stage_normalize=2,
         stage_pack=1,
         stage_output=1,
-        synth_device="45k",
         emit_schematic=False,
     ),
     # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the
@@ -654,13 +662,13 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         unroll100=50,     # half-rate 2-cycle engine: the full-rate vectoring shift+add+angle-LUT recurrence is the
-                          #   limiter on BOTH flows (Yosys ~100, Diamond/LSE ~75 -- 26 logic levels), insensitive to PAR;
+                          #   limiter on BOTH flows (Yosys ~100, Diamond ~75 -- 26 logic levels), insensitive to PAR;
                           #   g_pipe splits the shift-sample from the add, clearing the cone. 2 cycles/iteration.
         stage_product=2,  # narrowed _zkf_pmul: now a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is trivial
                           #   and the row/column-sum split of SP=3 is no longer needed. Limiter is the radix-4 divider
                           #   (Yosys) / fixed-to-float normshift (Diamond), not the product.
         wmultiplier=18,   # 18-bit DSP-tile grid (MULT18X18D) for the magnitude / correction products.
-        stage_normalize=2,  # split the fixed-to-float close-cancellation normshift (the Diamond/LSE back-end limiter).
+        stage_normalize=2,  # split the fixed-to-float close-cancellation normshift (the Diamond back-end limiter).
         stage_pack=1,     # rounder pack register in each fixed-to-float back-end (load-bearing: pack->output cone).
         stage_output=0,   # LATENCY (-1): the wide back-end datapath is mildly over-pipelined here, so dropping the
                           #   packer output register relieves routing congestion (Yosys 112.6 MHz, Diamond >100).
@@ -682,7 +690,7 @@ MODULES = [
         stage_product=3,  # narrowed _zkf_pmul: 4x3 grid (KINV/INV_TAU->WMAN+5, WMAG 124->103). The 4-row column sum now
                           #   fits in the registered row-sum + single column-sum (SP=3); the extra pairwise split of SP=4
                           #   was for the old 4x4 wide grid and is no longer needed. Limiter is divider / normshift.
-        wmultiplier=18,   # 18-bit DSP-tile grid -> the 64x64 / ~45x60 products fit the default device (no 45k crutch).
+        wmultiplier=18,   # 18-bit DSP-tile grid -> the 64x64 / ~45x60 products fit the default device.
         stage_normalize=2,
         stage_pack=1,
         stage_output=1,
@@ -693,7 +701,7 @@ MODULES = [
 
 def module_group(spec: ModuleSpec) -> str:
     """Identifier for grouping a module with its STAGE_* variants."""
-    match = re.match(r"^(.+?)(?:_(?:si|sp|sa|sd|sn|pa|so)\d+)+$", spec.name)
+    match = re.match(r"^(.+?)(?:_(?:si|sr|sp|sa|sd|sn|pa|so)\d+)+$", spec.name)
     return match.group(1) if match else spec.name
 
 
@@ -787,9 +795,9 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             # owns the decode + folded-constant predicate cone shared with zkf_to_int.
             sources += [hdl / "_zkf_rshift_sticky.v", hdl / "_zkf_to_fixpoint.v"]
         if spec.kind == "log2":
-            # log2's _zkf_fixed_to_float helper owns the _zkf_normshift instance (STAGE_SPLIT = 1 + STAGE_NORMALIZE)
-            # plus the normshift -> pack-input combine -> _zkf_pack pipeline shared with zkf_from_int.
-            sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v", hdl / "_zkf_log2_final_mul.v"]
+            # log2's _zkf_fixed_to_float helper owns the _zkf_normshift instance, optional combine register, and
+            # pack-input/output pipeline shared with zkf_from_int.
+            sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
     if spec.kind == "sincos":
         # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic) bound per WMAN
@@ -847,10 +855,13 @@ def register_stages(spec: ModuleSpec) -> int:
         unroll100=spec.unroll100,
         parallel=effective_parallel(spec),
         stage_input=spec.stage_input,
+        stage_reduce=spec.stage_reduce,
         stage_product=spec.stage_product,
+        stage_product_final=effective_stage_product_final(spec),
         stage_align=spec.stage_align,
         stage_decode=spec.stage_decode,
         stage_normalize=spec.stage_normalize,
+        stage_normalize_output=spec.stage_normalize_output,
         stage_pack=spec.stage_pack,
         stage_output=spec.stage_output,
     )
@@ -865,8 +876,33 @@ def _si_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_INPUT={spec.stage_input}" if spec.stage_input else ""
 
 
+def _sr_suffix(spec: ModuleSpec) -> str:
+    return f", STAGE_REDUCE={spec.stage_reduce}" if spec.kind == "exp2" and spec.stage_reduce else ""
+
+
 def _sp_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_PRODUCT={spec.stage_product}" if spec.stage_product else ""
+
+
+def effective_stage_product_final(spec: ModuleSpec) -> int:
+    return spec.stage_product if spec.stage_product_final < 0 else spec.stage_product_final
+
+
+def _spf_suffix(spec: ModuleSpec) -> str:
+    spf = effective_stage_product_final(spec)
+    return f", STAGE_PRODUCT_FINAL={spf}" if spec.kind == "log2" and spf != spec.stage_product else ""
+
+
+def _wm_suffix(spec: ModuleSpec) -> str:
+    return f", WMULTIPLIER={spec.wmultiplier}" if spec.wmultiplier else ""
+
+
+def _un_suffix(spec: ModuleSpec) -> str:
+    return f", UNROLL100={spec.unroll100}" if spec.unroll100 != 100 else ""
+
+
+def _parallel_suffix(spec: ModuleSpec) -> str:
+    return f", PARALLEL={effective_parallel(spec)}" if spec.kind == "sincos" and effective_parallel(spec) else ""
 
 
 def _so_suffix(spec: ModuleSpec) -> str:
@@ -883,6 +919,13 @@ def _sd_suffix(spec: ModuleSpec) -> str:
 
 def _sn_suffix(spec: ModuleSpec) -> str:
     return f", STAGE_NORMALIZE={spec.stage_normalize}" if spec.stage_normalize else ""
+
+
+def _sno_suffix(spec: ModuleSpec) -> str:
+    return (
+        f", STAGE_NORMALIZE_OUTPUT={spec.stage_normalize_output}"
+        if spec.kind == "log2" and spec.stage_normalize_output else ""
+    )
 
 
 def _pa_suffix(spec: ModuleSpec) -> str:
@@ -919,7 +962,7 @@ def params(spec: ModuleSpec) -> str:
         return f"WEXP={spec.wexp}, WMAN={spec.wman}{_si_suffix(spec)}"
     if spec.kind == "mul":
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
-                f"{_sp_suffix(spec)}{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
+                f"{_sp_suffix(spec)}{_wm_suffix(spec)}{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind in {"add", "addsub"}:
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
                 f"{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}"
@@ -929,11 +972,20 @@ def params(spec: ModuleSpec) -> str:
                 f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}")
     if spec.kind in {"exp2", "log2"}:
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
-                f"{_sp_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
+                f"{_si_suffix(spec)}{_sr_suffix(spec)}{_sd_suffix(spec)}{_sp_suffix(spec)}{_spf_suffix(spec)}"
+                f"{_wm_suffix(spec)}{_sn_suffix(spec)}{_sno_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     if spec.kind == "fma":
         return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
-                f"{_sp_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}"
+                f"{_sp_suffix(spec)}{_wm_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}"
                 f"{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
+    if spec.kind == "sincos":
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_un_suffix(spec)}{_parallel_suffix(spec)}{_sp_suffix(spec)}{_wm_suffix(spec)}"
+                f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
+    if spec.kind == "atan2":
+        return (f"WEXP={spec.wexp}, WMAN={spec.wman}"
+                f"{_un_suffix(spec)}{_sp_suffix(spec)}{_wm_suffix(spec)}"
+                f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}")
     return f"WEXP={spec.wexp}, WMAN={spec.wman}"
 
 

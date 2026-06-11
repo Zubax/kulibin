@@ -17,8 +17,8 @@ from modules import ModuleSpec, flow_modules
 
 
 BUILD_DIR = REPO / "build" / "float_synth_yosys_ecp5"
-DEVICE_SPEED_GRADE = os.environ.get("ECP5_SPEED_GRADE", "6")
-DEVICE_PACKAGE = os.environ.get("ECP5_PACKAGE", "CABGA381")
+DEVICE_SPEED_GRADE = "6"
+DEVICE_PACKAGE = "CABGA381"
 TARGET_FREQ_MHZ = float(os.environ.get("YOSYS_TARGET_FREQ_MHZ", "100"))
 
 # Utilization keys always shown in the per-module details section, even when zero.
@@ -41,7 +41,7 @@ _RESOURCE_HEADERS = (
 )
 
 
-DEFAULT_DEVICE_SIZE = "12k"  # LFE5U-12F/25F die; the representative small part. Specs may request a larger one.
+DEFAULT_DEVICE_SIZE = "12k"  # LFE5U-12F/25F die; the representative small part.
 
 
 # -dff is intentionally NOT passed: it runs ABC in sequential mode, which retimes/moves flops across the
@@ -55,7 +55,7 @@ def _synth_command(spec: ModuleSpec, netlist) -> str:
 
 def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
     return [
-        f"--{paths.synth_device or DEFAULT_DEVICE_SIZE}",
+        f"--{DEFAULT_DEVICE_SIZE}",
         "--package",
         DEVICE_PACKAGE,
         "--speed",

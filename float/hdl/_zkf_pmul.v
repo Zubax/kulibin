@@ -35,13 +35,13 @@
 `default_nettype none
 
 module _zkf_pmul #(
-    parameter integer WA            = 16,  // operand a width  (illustrative default; the module works for any width)
-    parameter integer WB            = 16,  // operand b width
-    parameter integer A_SIGNED      = 1,   // 1 = a is signed (top slice sign-extended); 0 = unsigned
-    parameter integer B_SIGNED      = 1,   // 1 = b is signed; 0 = unsigned
-    parameter integer WSB           = 1,   // sideband carried alongside the pipeline
-    parameter integer STAGE_PRODUCT = 0,
-    parameter integer WMULTIPLIER   = 0
+    parameter WA            = 16,  // operand a width  (illustrative default; the module works for any width)
+    parameter WB            = 16,  // operand b width
+    parameter A_SIGNED      = 1,   // 1 = a is signed (top slice sign-extended); 0 = unsigned
+    parameter B_SIGNED      = 1,   // 1 = b is signed; 0 = unsigned
+    parameter WSB           = 1,   // sideband carried alongside the pipeline
+    parameter WMULTIPLIER   = 0,
+    parameter STAGE_PRODUCT = 0
 ) (
     input  wire             clk,
     input  wire             rst,        // resets only the valid pipe (control); datapath regs free-run
@@ -65,7 +65,7 @@ module _zkf_pmul #(
 
     // verilator coverage_off
     generate
-        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 4)) begin : g_invalid_stage_product
+        if (STAGE_PRODUCT > 4) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
         end
         if ((WMULTIPLIER != 0) && (WMULTIPLIER < 8)) begin : g_invalid_wmultiplier

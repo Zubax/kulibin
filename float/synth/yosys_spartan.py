@@ -10,7 +10,7 @@ therefore wired into CI on the deep-verify path only, not into the per-PR gate.
 
 Device: the open prjxray / nextpnr-xilinx Spartan-7 database coverage is xc7s50 only (there are no
 databases for the smaller xc7s6/xc7s15/xc7s25), so xc7s50 is the smallest *supported* Spartan-7. We
-target it at the slowest speed grade (-1; Spartan-7 has no -2L). Override with SPARTAN7_DEVICE.
+target it at the slowest speed grade (-1; Spartan-7 has no -2L).
 
 nextpnr-xilinx selects the device through a binary chip database (--chipdb) built from prjxray with
 bbaexport.py + bbasm. The database is not portable across nextpnr-xilinx versions, so we build it on
@@ -34,7 +34,7 @@ from modules import ModuleSpec, flow_modules
 
 BUILD_DIR = REPO / "build" / "float_synth_yosys_spartan7"
 CHIPDB_DIR = BUILD_DIR / "chipdb"
-DEVICE = os.environ.get("SPARTAN7_DEVICE", "xc7s50csga324-1")
+DEVICE = "xc7s50csga324-1"
 TARGET_FREQ_MHZ = float(os.environ.get("YOSYS_TARGET_FREQ_MHZ", "100"))
 
 # Yosys cell types summed into each resource column. Reading the netlist gives deterministic counts;

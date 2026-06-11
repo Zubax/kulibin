@@ -2,8 +2,8 @@
 """FULLY EXHAUSTIVE exp2 check for the small formats: every single input code is tested, so every boundary
 (integers, x->0, the 1.0 seam, saturation, all binade fracs) is covered with zero sampling gaps.
 
-m11/WEXP5 = 2**16 codes, m16/WEXP6 = 2**22 codes. Reports worst ULP and how many of the mismatches sit in
-each hard region, as airtight evidence that the dense targeted sweep missed nothing."""
+WMAN16/WEXP2 = 2**18 codes, WMAN16/WEXP3 = 2**19 codes, and WMAN16/WEXP6 = 2**22 codes. Reports worst ULP and how many
+of the mismatches sit in each hard region, as airtight evidence that the dense targeted sweep missed nothing."""
 
 from __future__ import annotations
 
@@ -84,9 +84,9 @@ def run(wexp, wman):
 
 
 if __name__ == "__main__":
-    cases = [(5, 11), (6, 16)]
-    if len(sys.argv) > 1 and sys.argv[1] == "m11only":
-        cases = [(5, 11)]
+    cases = [(2, 16), (3, 16), (6, 16)]
+    if len(sys.argv) > 1 and sys.argv[1] == "quick":
+        cases = [(2, 16)]
     overall = 0
     for wexp, wman in cases:
         overall = max(overall, run(wexp, wman))

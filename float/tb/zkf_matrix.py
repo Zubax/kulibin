@@ -71,25 +71,40 @@ UNARY = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
 ]
-# transcendental (exp2/log2): table+polynomial unary ops; tables exist only for the generator's supported WMAN
-# (11,16,18,24,27,32,36,48,53 -- min is binary16's 11, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every
-# config here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m11.
+# exp2/log2 table+polynomial unary ops; tables exist only for the generator's supported WMAN
+# (16,18,24,27,32,36,48,53 -- min is WMAN=16, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every config
+# here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m16.
 # (config, wexp, wman, kind, count)
-TRANS = [
-    ("w2_m11_exhaustive", 2, 11, "exhaustive", 0),    # wfull=13: cheap exhaustive at the minimum WMAN
-    ("w3_m11_exhaustive", 3, 11, "exhaustive", 0),    # wfull=14: a second WEXP, still exhaustive
-    ("w5_m11_random", 5, 11, "random", 512),          # binary16 significand width
+TRANS_EXPLOG = [
+    ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),    # wfull=18: exhaustive at the minimum WMAN
+    ("w6_m16_random", 6, 16, "random", 512),          # minimum exp2/log2 table width with a wider exponent
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
-    # Wide-exponent guard: WMAN=11 (the minimum) keeps the datapath small while WEXP=20 (vs <=11 elsewhere) and the
+    # Wide-exponent guard: WMAN=16 (the minimum) keeps the datapath small while WEXP=20 (vs <=11 elsewhere) and the
     # directed overflow/underflow/inf/pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
+    ("w20_m16_random", 20, 16, "random", 2000),
+]
+TRANS_EXPLOG_EXT = [
+    (2, 16, "exhaustive", 0), (3, 16, "exhaustive", 0),   # exhaustive at the minimum WMAN, two WEXP
+    (8, 27, "random", 512), (8, 32, "random", 512),       # mid-range supported WMAN
+    (14, 16, "random", 2000),  # wide exponent field (exhaustive infeasible above tiny WEXP), random sweep instead
+]
+
+# sincos/atan2 still support WMAN=11 via the CORDIC generator, so their low-cost coverage stays at WMAN=11.
+TRANS_TRIG = [
+    ("w2_m11_exhaustive", 2, 11, "exhaustive", 0),
+    ("w3_m11_exhaustive", 3, 11, "exhaustive", 0),
+    ("w5_m11_random", 5, 11, "random", 512),
+    ("w8_m24_random", 8, 24, "random", 1024),
+    ("w8_m32_random", 8, 32, "random", 768),
+    ("w11_m53_random", 11, 53, "random", 384),
     ("w20_m11_random", 20, 11, "random", 2000),
 ]
-TRANS_EXT = [
-    (2, 11, "exhaustive", 0), (3, 11, "exhaustive", 0),   # exhaustive at the minimum WMAN, two WEXP
-    (6, 16, "random", 512), (8, 27, "random", 512), (8, 32, "random", 512),  # mid-range supported WMAN
-    (14, 11, "random", 2000),  # wide exponent field (exhaustive infeasible at WMAN>=11), random sweep instead
+TRANS_TRIG_EXT = [
+    (2, 11, "exhaustive", 0), (3, 11, "exhaustive", 0),
+    (6, 16, "random", 512), (8, 27, "random", 512), (8, 32, "random", 512),
+    (14, 11, "random", 2000),
 ]
 
 # zkf_atan2 is two-input, so joint-exhaustive (2**(2*wfull)) is infeasible even at the minimum WMAN -- every format
@@ -169,6 +184,7 @@ class Run:
     root: str            # build root
     vlog: list           # [(name, value), ...]  -> --NAME value
     plus: list           # [(name, value), ...]  -> --ZKF_... value
+    defines: list = field(default_factory=list)   # [(name, value), ...] -> vlogdefine parameters
 
     @property
     def id(self) -> str:
@@ -194,14 +210,14 @@ def _common(kind: str, count: int, config: str, with_kind: bool = True) -> list:
 
 
 def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
-         target=None, with_kind=True, plus_names=None, root_module=None) -> Run:
+         target=None, with_kind=True, plus_names=None, root_module=None, defines=None) -> Run:
     """Assemble one Run. vlog params are mirrored to plusargs as ZKF_<name> unless plus_names overrides."""
     plus_names = plus_names or {}
     plus = [(plus_names.get(name, "ZKF_" + name), val) for name, val in vlog]
     plus += _common(kind, count, config, with_kind=with_kind)
     target = target or f"sim_{module}_{sim}"
     root = _root(tier, sim, root_module or module, config)
-    return Run(module, sim, tier, config, target, root, vlog, plus)
+    return Run(module, sim, tier, config, target, root, vlog, plus, list(defines or []))
 
 
 # --- builders that mirror the former bash helpers -------------------------------------------------
@@ -305,11 +321,12 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
 
 
 def _trans(module, sim, tier, base, w, m, kind, count, *,
-           si=None, sp=None, sn=None, pa=None, so=None, un=None, parallel=None, wm=None) -> Run:
+           si=None, sr=None, sd=None, sp=None, spf=None, sn=None, sno=None, pa=None, so=None, un=None, parallel=None,
+           wm=None) -> Run:
     # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
-    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); sincos and atan2 use
-    # un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so (STAGE_INPUT/OUTPUT), sp (STAGE_PRODUCT, its shared
-    # _zkf_pmul split), sn (STAGE_NORMALIZE), pa (STAGE_PACK), wm (WMULTIPLIER).
+    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); exp2 also uses
+    # sr (STAGE_REDUCE); log2 also uses sd/spf/sno (STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT); sincos and atan2 use
+    # un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so, sp, sn, pa, wm.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if un is not None:
@@ -318,12 +335,22 @@ def _trans(module, sim, tier, base, w, m, kind, count, *,
         vlog.append(("PARALLEL", parallel)); suffix += f"_par{parallel}"
     if si is not None:
         vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+    if module == "exp2" and sr is not None:
+        vlog.append(("STAGE_REDUCE", sr)); suffix += f"_sr{sr}"
+    if module == "log2" and sd is not None:
+        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+    if module == "log2":
+        spf_eff = sp if spf is None else spf
+        if spf_eff is not None:
+            vlog.append(("STAGE_PRODUCT_FINAL", spf_eff)); suffix += f"_spf{spf_eff}" if spf is not None else ""
     if wm is not None:
         vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+    if module == "log2" and sno is not None:
+        vlog.append(("STAGE_NORMALIZE_OUTPUT", sno)); suffix += f"_sno{sno}"
     if pa is not None:
         vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
     if so is not None:
@@ -405,20 +432,26 @@ def _per_pr(sim, out: list) -> None:
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-    for op in ("exp2", "log2", "sincos"):
-        for cfg, w, m, k, c in TRANS:
+    for op in ("exp2", "log2"):
+        for cfg, w, m, k, c in TRANS_EXPLOG:
+            out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
+    for cfg, w, m, k, c in TRANS_TRIG:
+        for op in ("sincos",):
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
     for op in ("exp2", "log2"):
         # STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
         # are staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
         # sincos shares STAGE_INPUT/STAGE_PRODUCT/STAGE_OUTPUT, plus its own UNROLL100 / STAGE_NORMALIZE / STAGE_PACK
         # staging (the decode and wide-datapath register stages are always-on) -- all covered in its own rows below.
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1))
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, so=1))
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=1))
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=2))
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, sp=3))
-        out.append(_trans(op, sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, si=1, sp=1, so=1))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, so=1))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=1))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=2))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=3))
+        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1, sp=1, so=1))
+    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sr=1))
+    out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=1))
+    out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, spf=2))
     # sincos throughput knob UNROLL100 (iterations/cycle x100): 50 = half-rate 2-cycle engine, 100 = the synthesized
     # M18 rate, 200 = 2/cycle. Each changes the published II, so exercise it -- the test asserts measured == model.
     out.append(_trans("sincos", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=50))
@@ -446,19 +479,24 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=2))
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=3))
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=0, sp=3))
-    # STAGE_NORMALIZE for log2 / sincos controls the normalizer's STAGE_SPLIT. Cover it on a fast small format
-    # (it needs the normshift's NL4 >= 3, which holds at WMAN >= 11 -- 4/6 has NL4 too small, so use 5/11 random).
-    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
-    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sp=1, sn=1))
+    # STAGE_NORMALIZE for log2 / sincos controls the normalizer's STAGE_SPLIT. Cover log2 at the minimum supported
+    # table width and sincos on the cheap 5/11 CORDIC format.
+    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1))
+    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sp=1, sn=1))
+    out.append(_trans("log2", sim, "pr", "w8_m24_sncheck", 8, 24, "random", 256, sn=2, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=2))
     # STAGE_PACK is a uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2/sincos. Exercise it on the
     # cheapest exhaustive format: standalone and in combination with the other staging knobs.
-    out.append(_trans("exp2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
-    out.append(_trans("log2", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
+    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
+    out.append(_trans("log2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
     out.append(_trans("sincos", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
-    out.append(_trans("log2", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
+    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
+    # Exact small log2 synthesis presets: the shipped 6/18 rows use the normalizer output register, so cover them at
+    # PR depth to pin the latency and pole/domain-error sideband alignment.
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=2, sno=1, pa=1))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, sno=1, pa=1, so=1))
     # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random across formats, then the shared knob sweeps
     # (UNROLL100 throughput; STAGE_INPUT/OUTPUT/NORMALIZE/PACK staging). Each row asserts bit-exactness vs the model and
     # measured II == atan2_latency. Directed alone exercises every special/axis/diagonal/bypass-boundary pair.
@@ -580,13 +618,20 @@ def _deep_correctness(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
     # exp2/log2: STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT staging (one knob at a time off the baseline) across the
-    # deep transcendental format list. sincos sweeps STAGE_PRODUCT (its shared _zkf_pmul split) plus its UNROLL100
-    # throughput knob and STAGE_NORMALIZE / STAGE_PACK; the testbench asserts measured II == model each time.
-    for w, m, k, c in TRANS_EXT:
+    # deep transcendental format list.
+    for w, m, k, c in TRANS_EXPLOG_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("exp2", "log2"):
             for si, sp, so in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)):
                 out.append(_trans(op, s, "deep", base, w, m, k, c, si=si, sp=sp, so=so))
+        out.append(_trans("exp2", s, "deep", base, w, m, k, c, sr=1))
+        out.append(_trans("log2", s, "deep", base + "_decode", w, m, k, c, sd=1))
+        out.append(_trans("log2", s, "deep", base + "_split_final", w, m, k, c, sp=1, spf=2))
+
+    # sincos sweeps STAGE_PRODUCT (its shared _zkf_pmul split) plus its UNROLL100 throughput knob and
+    # STAGE_NORMALIZE / STAGE_PACK; the testbench asserts measured II == model each time.
+    for w, m, k, c in TRANS_TRIG_EXT:
+        base = f"w{w}m{m}_{k}"
         for un in (50, 100, 200, 400):
             out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=un))
         for sp in (1, 2, 3):
@@ -597,13 +642,14 @@ def _deep_correctness(out: list) -> None:
         # formats. STAGE_NORMALIZE / STAGE_PACK are swept separately above; here the focus is the wide multiplier grid.
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3, wm=18))
     # The exact synthesized WEXP=8/WMAN=36 multiply-bearing operating points, end to end with WMULTIPLIER=18 (the
-    # 18-bit DSP-tile grid the Diamond/LSE flow needs): mul at STAGE_PRODUCT=2, exp2 at STAGE_PRODUCT=3, log2 at
-    # STAGE_PRODUCT=4 (the two-stage pmul reduction that closes log2 timing). WMULTIPLIER is bit-transparent, but
-    # pinning the shipped grid here exercises the full datapath at the operating point that synthesis actually builds
-    # rather than only the symmetric default.
+    # 18-bit DSP-tile grid the Diamond/LSE flow needs): mul at STAGE_PRODUCT=2, exp2 at STAGE_PRODUCT=3, log2 Horner
+    # and the wider final multiply at STAGE_PRODUCT=3, and log2's normalizer output register enabled. WMULTIPLIER is
+    # bit-transparent, but pinning the shipped grid here exercises the full datapath at the operating point that
+    # synthesis actually builds rather than only the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
-    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=4, wm=18, sn=2, pa=1, so=1))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512,
+                      si=1, sd=1, sp=4, spf=3, wm=18, sn=2, pa=1, so=1))
     # zkf_atan2 deep: a baseline per format, the UNROLL100 throughput sweep + full staging on the cheap 5/11 format,
     # and the exact synthesized 8/36 operating point (half-rate engine + staged back-ends). Each asserts II == model.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -682,20 +728,23 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
-    # exp2/log2/sincos coverage: cheapest exhaustive formats (min WMAN=11) toggle the ROM/Horner; the so=1 run
-    # covers the registered pack output, and the sp=2/3/4 runs toggle the shared _zkf_pmul split-product paths via the
-    # Horner multiply (sp=1 is operand-capture + native multiply; the registered 2x2 flat sum is sp=2; the 3x3 row-sum
-    # reduction is sp=3 (g_rows); sp=4 (g_rows2) adds the second, pairwise reduction stage -- the synthesized log2_w8m36
-    # operating point). sincos also runs w5_m11 so the tiny-input bypass (e <= -(GUARD_FF+2), only reached once the
-    # exponent field is wide enough) toggles too.
-    for w, m in [(2, 11), (3, 11)]:
-        for op in ("exp2", "log2", "sincos"):
+    # exp2/log2 coverage: cheapest exhaustive WMAN=16 formats toggle the ROM/Horner; the so=1 run covers the
+    # registered pack output, and the sp=2/3/4 runs toggle the shared _zkf_pmul split-product paths via the Horner
+    # multiply. The split-final row exercises log2's independent final f*C(f) multiply staging.
+    for w, m in [(2, 16), (3, 16)]:
+        for op in ("exp2", "log2"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
-    out.append(_trans("exp2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
-    out.append(_trans("log2", s, "deep", "w2m11", 2, 11, "exhaustive", 0, so=1))
-    for sp in (2, 3, 4):  # 2 = flat 2x2 sum, 3 = row-sum (g_rows), 4 = two-stage reduction (g_rows2, log2_w8m36 synth)
-        out.append(_trans("exp2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=sp))
-        out.append(_trans("log2", s, "deep", "w3m11", 3, 11, "exhaustive", 0, sp=sp))
+    out.append(_trans("exp2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, so=1))
+    out.append(_trans("exp2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, sr=1))
+    out.append(_trans("log2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, so=1))
+    for sp in (2, 3, 4):
+        out.append(_trans("exp2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
+        out.append(_trans("log2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
+    out.append(_trans("log2", s, "deep", "w3m16_split_final", 3, 16, "exhaustive", 0, sp=2, spf=3))
+    # sincos keeps WMAN=11 coverage via the CORDIC table family. It also runs w5_m11 so the tiny-input bypass
+    # (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
+    for w, m in [(2, 11), (3, 11)]:
+        out.append(_trans("sincos", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob and the
     # fixed-to-float normshift-barrier / pack-register toggles (it has STAGE_DECODE in place of STAGE_PRODUCT).
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
@@ -714,11 +763,17 @@ def _deep_coverage(out: list) -> None:
     # high count bits, the split digit registers, and the top-level z3 detect (whose group only fits for W>=49) toggle.
     # w130s1 pushes the internal radix-4 count to its top bit: CNTW = 8 only for clog2(W) in {7,8}, and a count of
     # W-1 = 129 (the one-hot at bit 0) sets cnt[7], which no narrower W and no embedded instance (all count < 128) can.
-    for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
-                                ("w9s1", 9, 1, "exhaustive"), ("w32s1", 32, 1, "directed"),
-                                ("w56s1", 56, 1, "directed"), ("w130s1", 130, 1, "directed")]:
-        out.append(_run("normshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,
-                        plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT"}))
+    # STAGE_OUTPUT sweep (output register + the streaming out_valid/sb_out path) and the standalone STAGE_SPLIT=2 path
+    # (w32s2*, NL4>=3) which only the wide log2 back-end exercised end-to-end before. The bench drives in_valid/sb_in
+    # and checks out_valid/sb_out are delayed by STAGE_SPLIT + STAGE_OUTPUT.
+    for cfg, w, split, output, kind in [("w8s0", 8, 0, 0, "exhaustive"), ("w8s1", 8, 1, 0, "exhaustive"),
+                                        ("w9s1", 9, 1, 0, "exhaustive"), ("w32s1", 32, 1, 0, "directed"),
+                                        ("w56s1", 56, 1, 0, "directed"), ("w130s1", 130, 1, 0, "directed"),
+                                        ("w8s0o1", 8, 0, 1, "exhaustive"), ("w8s1o1", 8, 1, 1, "exhaustive"),
+                                        ("w32s2o0", 32, 2, 0, "directed"), ("w32s2o1", 32, 2, 1, "directed")]:
+        out.append(_run("normshift", s, "deep", cfg,
+                        [("W", w), ("STAGE_SPLIT", split), ("STAGE_OUTPUT", output)], kind=kind, count=0,
+                        plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT", "STAGE_OUTPUT": "ZKF_NS_OUTPUT"}))
     for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
                                 ("w16s0", 16, 0, "directed"), ("w16s1", 16, 1, "directed")]:
         out.append(_run("rshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,
@@ -802,8 +857,8 @@ _FAST = [
     ("to_int_si1", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("resize_si0", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 0)]),
     ("resize_si1", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 1)]),
-    ("exp2", "exp2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
-    ("log2", "log2", [("WEXP", 2), ("WMAN", 11), ("STAGE_OUTPUT", 0)]),
+    ("exp2", "exp2", [("WEXP", 2), ("WMAN", 16), ("STAGE_OUTPUT", 0)]),
+    ("log2", "log2", [("WEXP", 2), ("WMAN", 16), ("STAGE_OUTPUT", 0)]),
     ("sincos", "sincos", [("WEXP", 2), ("WMAN", 11), ("UNROLL100", 50)]),
 ]
 

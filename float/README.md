@@ -200,7 +200,6 @@ and thus requires careful selection to achieve best resource utilization.
 
 |WMAN |≈ε (interval)| Description                                                                                 |
 |-----|-------------|---------------------------------------------------------------------------------------------|
-|  11 | 9.766e-04   | IEEE 754 binary16                                                                           |
 |  16 | 3.052e-05   | DSP tiles in Lattice iCE40 and similar                                                      |
 |  18 | 7.629e-06   | Classic FPGA DSP width, very common: ECP5, PolarFire, Trion, many Intel modes, etc.         |
 |  24 | 1.192e-07   | IEEE 754 binary32; also fits Versal DSP58's 27x24 asymmetric multiplier side                |
@@ -209,6 +208,9 @@ and thus requires careful selection to achieve best resource utilization.
 |  36 | 2.910e-11   | 2x18 (very common) or native Intel/Altera 36x36-style variable-precision mode               |
 |  48 | 7.105e-15   | 2x24 or 3x16; with an 8-bit exponent amounts to 7 bytes exactly                             |
 |  53 | 2.220e-16   | IEEE 754 binary64                                                                           |
+
+Narrower WMAN is rarely practical for computation due to low precision and fast error accumulation,
+although they can still be useful for storage/exchange. One notable exception is neural networks though.
 
 ### WMAN=18
 
