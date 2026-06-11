@@ -315,7 +315,8 @@ module zkf_sincos #(
             .clk(clk), .rst(rst), .start(eng_start), .sb_in(sb_red), \
             .x0({WX{1'b0}}), .y0({WX{1'b0}}), .z0(z0), \
             .busy(), .done(cd_done), .z_done(cd_zdone), .sb_out(cd_sb), \
-            .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(const2pi));
+            .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(const2pi), \
+            .inv_tau(), .kinv_mag(), .kinv());
     generate
         if (1'b0) begin : g_none
         `ZKF_SINCOS_CORE(11)
