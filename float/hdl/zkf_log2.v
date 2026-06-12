@@ -273,12 +273,15 @@ module zkf_log2 #(
         end
     endgenerate
 
-    // -- Pipelined evaluator: log2(m') = f*C(f). e and the special-case flags ride the sideband, aligned to l_fix.
+    // -- Pipelined evaluator: log2(m') = f*C(f). e and the special-case flags ride the sideband, aligned to the result.
+    // The evaluator returns the magnitude |log2(m')| and its sign separately (the sign is folded into the reconstruction
+    // add/subtract below), avoiding a standalone negate carry chain in the post-product cone.
     wire [SBW-1:0] sb_in_l = {r0_e, r0_is_special, r0_special_sign, r0_pole, r0_de};
     wire           ev_valid;
     wire [SBW-1:0] sb_out_l;
     // verilator coverage_off
-    wire signed [F2:0] l_fix;   // SIGNED log2(m') = f*C(f) at scale 2^-F2 (F2+1 bits); negative when m >= sqrt(2)
+    wire [F2:0] l_mag;   // |log2(m')| = |f|*C(f) magnitude at scale 2^-F2 (F2+1 bits, unsigned)
+    wire        l_neg;   // sign of log2(m') (= reduced f sign); 1 when m >= sqrt(2)
     // verilator coverage_on
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
@@ -290,7 +293,7 @@ module zkf_log2 #(
             .STAGE_PRODUCT(STAGE_PRODUCT), .STAGE_PRODUCT_FINAL(STAGE_PRODUCT_FINAL) \
         ) u_eval ( \
             .clk(clk), .rst(rst), .in_valid(r0_valid), .sb_in(sb_in_l), .v(r0_v), \
-            .out_valid(ev_valid), .sb_out(sb_out_l), .l_fix(l_fix) \
+            .out_valid(ev_valid), .sb_out(sb_out_l), .l_mag(l_mag), .l_neg(l_neg) \
         );
     // verilog_lint: waive-start generate-label  (macro-expanded selector blocks are intentionally unlabeled)
     generate
@@ -357,15 +360,24 @@ module zkf_log2 #(
     wire                 e_pole    = sb_out_l[1];
     wire                 e_de      = sb_out_l[0];
 
-    // -- R = (e << F2) + log2(m'), as a signed fixed-point value; take its magnitude for normalization. log2(m') is the
-    // signed l_fix (F2+1 bits), sign-extended into the accumulator alongside the shifted exponent.
+    // -- |R| = |e + log2(m')|, computed directly without a serial add -> result-sign -> wide-abs dependency chain.
+    // For finite x, log2(m') in [-1/2, 1/2), so the fractional term cannot flip the sign once |e| >= 1: the result sign
+    // is fixed by e alone (and falls back to l_neg only when e == 0), and the magnitude is |e| -/+ |log2(m')| with the
+    // direction known up front. So the sign and the add/subtract direction are resolved from the small exponent/sign
+    // flags -- off the critical path -- leaving a single wide add/subtract instead of an add feeding a sign-dependent
+    // abs (two dependent wide carry chains). Latency-unchanged and bit-identical to taking |(e << F2) + log2(m')|.
     // verilator coverage_off
-    wire signed [WR-1:0] e_ext   = {{(WR-WE){e_o[WE-1]}}, e_o};
-    wire signed [WR-1:0] l_ext   = {{(WR-(F2+1)){l_fix[F2]}}, l_fix};
-    wire signed [WR-1:0] r_val   = (e_ext <<< F2) + l_ext;
-    wire                 r_sign  = r_val[WR-1];
-    wire        [WR-1:0] r_abs  = r_sign ? (~r_val + {{(WR-1){1'b0}}, 1'b1}) : r_val;
-    wire     [WNORM-1:0] mag    = r_abs[WNORM-1:0];
+    wire                 e_neg   = e_o[WE-1];
+    wire                 e_zero  = ~|e_o;
+    wire                 r_sign  = e_neg | (e_zero & l_neg);                       // sign(e + log2(m'))
+    wire        [WE-1:0] e_mag   = e_neg ? (~e_o + {{(WE-1){1'b0}}, 1'b1}) : e_o;  // |e|, small WE-bit abs
+    wire        [WR-1:0] e_sh    = {{(WR-WE){1'b0}}, e_mag} << F2;                 // |e| at scale 2^-F2
+    wire        [WR-1:0] l_ext   = {{(WR-(F2+1)){1'b0}}, l_mag};                   // |log2(m')|, zero-extended
+    // |e| and |log2(m')| add toward |R| when e and log2(m') share a sign, else subtract. e == 0 forces the add branch:
+    // e_sh is 0 there, so the magnitude is exactly l_mag (the subtract branch would wrongly negate it).
+    wire                 add_mag = e_zero | ~(e_neg ^ l_neg);
+    wire        [WR-1:0] mag_full = add_mag ? (e_sh + l_ext) : (e_sh - l_ext);
+    wire     [WNORM-1:0] mag      = mag_full[WNORM-1:0];
     // verilator coverage_on
 
     // Resolve the final sign at the P1 input: when the evaluator flagged a special result (+/-inf), the resolved
@@ -394,15 +406,17 @@ module zkf_log2 #(
 
     // -- Normalize, combine, and pack via the shared back-end. The helper owns the _zkf_normshift instance
     // (STAGE_SPLIT = STAGE_NORMALIZE, STAGE_OUTPUT = STAGE_NORMALIZE_OUTPUT), GRS extraction,
-    // exp_unbiased = (WNORM-1-F2) - shamt, the optional P2 pack-input register (STAGE_PACK forwarded to
+    // exp = EXP_OFFSET_LOG2 - shamt, the optional P2 pack-input register (STAGE_PACK forwarded to
     // _zkf_pack.STAGE_INPUT), and the _zkf_pack output. The pole / domain_error flags ride the WSB=2 sideband and
     // emerge in lockstep with y.
+    // EXP_OFFSET carries the bias (EXP_IS_BIASED=1): folding +BIAS into this elaboration-time constant removes the
+    // packer's runtime bias add from the output cone at no logic cost (exp = BIAS + (WNORM-1-F2) - shamt = biased).
     wire [1:0] sb_out_flags;
-    localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = WNORM - 1 - F2;
+    localparam signed [WEU-1:0] EXP_OFFSET_LOG2 = BIAS + WNORM - 1 - F2;
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WMAG(WNORM), .WEU(WEU),
-        .EXP_IS_BIASED(0),
+        .EXP_IS_BIASED(1),
         .ASSUME_NO_OVERFLOW(1),  // log2(finite>0) is always representable, disable overflow detection circuit
         .WSB(2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE),

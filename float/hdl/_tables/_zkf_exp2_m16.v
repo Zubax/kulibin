@@ -134,7 +134,7 @@ module _zkf_exp2_m16 #(
     wire         [WSB-1:0] esb;
     wire          [RW-1:0] ew;
     _zkf_horner #(
-        .D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(WSB),
+        .D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB(WSB), .ACC_SIGNED(0),
         .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_h (
         .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),

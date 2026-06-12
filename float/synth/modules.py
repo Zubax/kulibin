@@ -528,27 +528,32 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2",
-        label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_NORMALIZE=2 splits the "
-              "near-zero-result (x->1) normalize-shift -- the single knob that closes 100 MHz on Yosys ECP5 "
-              "(102.9 MHz) and Diamond (105.9 MHz); the formerly carried STAGE_NORMALIZE_OUTPUT/STAGE_PACK were "
-              "redundant and removed)",
+        label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_NORMALIZE=1 normalize-shift split + "
+              "STAGE_PRODUCT_FINAL=1 operand-capture stage that shields the final unsigned |f|*C(f) multiply's DSP "
+              "from the |f| magnitude-negate cone. The biased fixed-to-float back-end (EXP_IS_BIASED) and the "
+              "direct-magnitude reconstruct freed enough slack to drop STAGE_NORMALIZE 2->1; closes 100 MHz on Yosys "
+              "ECP5 (103.0 MHz) and Diamond)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        stage_normalize=2,
+        stage_normalize=1,
+        stage_product_final=1,
     ),
     ModuleSpec(
         name="zkf_log2_so1",
-        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_OUTPUT=1 registered-output boundary; closes on Yosys ECP5 "
-              "(104.5 MHz) and Diamond (107.2 MHz). STAGE_NORMALIZE_OUTPUT/STAGE_PACK were redundant and removed)",
+        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_PRODUCT_FINAL=1 final-multiply operand capture + STAGE_OUTPUT=1 "
+              "registered-output boundary. The registered output adds back-end FFs, so this variant keeps "
+              "STAGE_NORMALIZE=2 -- with STAGE_NORMALIZE=1 the added congestion drops it below 100 MHz; closes on "
+              "Yosys ECP5 and Diamond)",
         top="zkf_log2_so1_synth_top",
         kind="log2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
         stage_normalize=2,
+        stage_product_final=1,
         stage_output=1,
     ),
     # WEXP=8, WMAN=36 (degree-3 evaluator: three wide Horner multiplies). The shallow product modes are deep DSP
@@ -559,11 +564,12 @@ MODULES = [
     # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
     # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
     # so every multiply maps to DSP on both Yosys and Diamond. exp2 closes at STAGE_PRODUCT=3 without the optional
-    # fixed-point split register. log2 is heavier (27/28 DSPs plus the normalize/reconstruct cone) and is
-    # placement-bound on the small LFE5U-12F: it needs STAGE_PRODUCT=4 (deeper Horner column-sum) + STAGE_DECODE=1 and,
-    # crucially, STAGE_NORMALIZE_OUTPUT=0 -- dropping that back-end register lowers FF congestion enough to clear
-    # 100 MHz on nextpnr-ecp5 (Diamond, with its stronger placer, closes the design comfortably either way). Adding
-    # back-end registers to a congestion-bound part hurts placement more than it helps logic depth.
+    # fixed-point split register. log2's final f*C(f) multiply is now fully UNSIGNED (|f|*C(f) with the sign folded into
+    # the back-end add/subtract), which cuts its grid from a signed 3x3 to an unsigned 2x3 -- 27 DSPs -> 24 -- and that
+    # relieves the LFE5U-12F placement bind. With the lighter DSP load and the biased-EXP/direct-magnitude back-end,
+    # the formerly load-bearing STAGE_PRODUCT=4, STAGE_DECODE=1, STAGE_OUTPUT=1 and STAGE_NORMALIZE_OUTPUT all come back
+    # out: STAGE_PRODUCT=3 + STAGE_DECODE=0 + no back-end output registers clears 100 MHz with margin (fewer FFs raise
+    # f_max on a congestion-bound part). It still needs STAGE_NORMALIZE=2 (the x->1 normalize) and STAGE_PACK=1.
     ModuleSpec(
         name="zkf_exp2_w8m36",
         label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + "
@@ -581,24 +587,22 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_DECODE=1 + STAGE_PRODUCT=4 Horner grid + "
-              "STAGE_PRODUCT_FINAL=3 final f*C(f) grid + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 "
-              "(deep normshift split) + STAGE_PACK=1 + STAGE_OUTPUT=1; STAGE_NORMALIZE_OUTPUT dropped to relieve "
-              "FF congestion -- the 27/28-DSP design is placement-bound on the small LFE5U-12F, so fewer back-end "
-              "registers raise f_max here)",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 Horner grid + STAGE_PRODUCT_FINAL=3 final "
+              "unsigned |f|*C(f) grid + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 (deep normshift split) "
+              "+ STAGE_PACK=1; the unsigned final multiply cut the grid to 24 DSPs, so STAGE_DECODE, STAGE_OUTPUT and "
+              "STAGE_NORMALIZE_OUTPUT all drop out -- fewer back-end FFs raise f_max on this congestion-bound part "
+              "(116.2 MHz on Yosys ECP5))",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
-        stage_decode=1,
-        stage_product=4,
+        stage_product=3,
         stage_product_final=3,
         wmultiplier=18,
         stage_normalize=2,
         stage_pack=1,
-        stage_output=1,
         emit_schematic=False,
     ),
     # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the

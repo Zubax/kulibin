@@ -8,11 +8,18 @@
 /// value at bit offset j*WCOEF of the flat `coeffs` bus. The arithmetic right shift `>>> WRARG` floors toward minus
 /// infinity, matching the Python reference model's truncating integer Horner exactly.
 ///
-/// Each degree step is one shared _zkf_pmul multiply (acc*w, acc signed, w unsigned -- latency 1+STAGE_PRODUCT) plus
+/// Each degree step is one shared _zkf_pmul multiply (acc*w, w always unsigned -- latency 1+STAGE_PRODUCT) plus
 /// one coefficient-add register stage, so the per-degree depth is 2+STAGE_PRODUCT. The non-arithmetic payload
 /// (live coefficients, w, caller sideband) is delayed in a plain pipe next to the multiplier instead of riding through
 /// _zkf_pmul's internal sideband registers. This is because the payload is wide and passing it through the pmul
 /// sideband hurts placement and timings.
+///
+/// ACC_SIGNED selects the accumulator multiply signedness forwarded to _zkf_pmul.A_SIGNED. log2 (default, =1) keeps a
+/// signed accumulator because its Chebyshev coefficients alternate sign, so intermediate `acc` can go negative. exp2
+/// (=0) has an all-non-negative coefficient set and the recurrence acc = c[j] + (acc*w)>>WRARG preserves
+/// non-negativity for every w, so acc stays >= 0; the fully-unsigned slice grid then packs whole WMULTIPLIER-bit DSP
+/// tiles (no sign bit), roughly a third fewer tiles, with bit-identical results (the product is non-negative either
+/// way, so its raw bits and the floor shift below are unchanged).
 ///
 /// WMULTIPLIER and STAGE_PRODUCT are forwarded to _zkf_pmul.
 ///
@@ -27,6 +34,7 @@ module _zkf_horner #(
     parameter integer WRARG         = 8,  // reduced-argument width; wn = w / 2^WRARG
     parameter integer WACC          = 40, // signed accumulator width (>= every intermediate, sized by the generator)
     parameter integer WSB           = 1,  // sideband width carried alongside the pipeline
+    parameter integer ACC_SIGNED    = 1,  // accumulator multiply signedness (A_SIGNED to _zkf_pmul); 0 only for exp2
     parameter integer WMULTIPLIER   = 0,  // forwarded to _zkf_pmul
     parameter integer STAGE_PRODUCT = 0   // forwarded to _zkf_pmul
 ) (
@@ -76,15 +84,16 @@ module _zkf_horner #(
             localparam integer COW   = (J + 1) * WCOEF;
             localparam integer WSB_H = COW + WRARG + WSB;  // delayed payload: {live coeffs, w, module sideband}
 
-            // Multiply stage: acc*w via the shared pipelined multiplier (acc signed, w unsigned). The live coefficient
-            // bus, w (forwarded unchanged to the next degree), and the module sideband are delayed in a separate
-            // pipe so the multiplier does not carry a wide non-arithmetic sideband through its DSP-adjacent registers.
+            // Multiply stage: acc*w via the shared pipelined multiplier (acc per ACC_SIGNED, w unsigned). The live
+            // coefficient bus, w (forwarded unchanged to the next degree), and the module sideband are delayed in a
+            // separate pipe so the multiplier does not carry a wide non-arithmetic sideband through its DSP-adjacent
+            // registers.
             wire                  prod_v;
             wire                  prod_sb_valid;
             wire [WSB_H-1:0]      prod_sb;
             wire [WACC+WRARG-1:0] prod_p;  // raw two's-complement acc*w (signedness assigned by the caller below)
             _zkf_pmul #(
-                .WA(WACC), .WB(WRARG), .A_SIGNED(1), .B_SIGNED(0),
+                .WA(WACC), .WB(WRARG), .A_SIGNED(ACC_SIGNED), .B_SIGNED(0),
                 .WSB(1), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
             ) u_pmul (
                 .clk(clk), .rst(rst), .in_valid(a_val[s]), .sb_in(1'b0),
@@ -103,7 +112,9 @@ module _zkf_horner #(
             wire [WSB-1:0]   p_sb = prod_sb[WSB-1:0];
 
             // Coefficient-add stage (the surviving +1 register): acc = c[J] + floor(acc*w / 2^WRARG). The arithmetic
-            // right shift floors toward minus infinity, matching the truncating-Horner reference exactly.
+            // right shift floors toward minus infinity, matching the truncating-Horner reference exactly. With
+            // ACC_SIGNED=0 (exp2) prod_p is a non-negative unsigned product whose top bits are structurally 0, so the
+            // arithmetic `>>>` behaves identically to a logical shift -- keep it as-is; do not specialize on ACC_SIGNED.
             wire signed [WACC-1:0] next_acc = $signed(p_co[J*WCOEF +: WCOEF]) + $signed($signed(prod_p) >>> WRARG);
             reg signed [WACC-1:0] r_acc;
             reg [COW-1:0]         r_co;

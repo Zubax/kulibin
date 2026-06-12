@@ -493,10 +493,11 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
-    # Exact small log2 synthesis presets: the shipped 6/18 rows use the normalizer output register, so cover them at
-    # PR depth to pin the latency and pole/domain-error sideband alignment.
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=2, sno=1, pa=1))
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, sno=1, pa=1, so=1))
+    # Exact small log2 synthesis presets: the shipped 6/18 rows use STAGE_NORMALIZE=1 + the final-multiply
+    # operand-capture (STAGE_PRODUCT_FINAL=1), so cover them at PR depth to pin the latency and the pole/domain-error
+    # sideband alignment under those exact knobs.
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
     # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random across formats, then the shared knob sweeps
     # (UNROLL100 throughput; STAGE_INPUT/OUTPUT/NORMALIZE/PACK staging). Each row asserts bit-exactness vs the model and
     # measured II == atan2_latency. Directed alone exercises every special/axis/diagonal/bypass-boundary pair.
@@ -649,7 +650,7 @@ def _deep_correctness(out: list) -> None:
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512,
-                      si=1, sd=1, sp=4, spf=3, wm=18, sn=2, pa=1, so=1))
+                      si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
     # zkf_atan2 deep: a baseline per format, the UNROLL100 throughput sweep + full staging on the cheap 5/11 format,
     # and the exact synthesized 8/36 operating point (half-rate engine + staged back-ends). Each asserts II == model.
     for cfg, w, m, k, c in TRANS_ATAN2:
