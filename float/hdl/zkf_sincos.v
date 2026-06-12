@@ -114,8 +114,8 @@ module zkf_sincos #(
     localparam integer K    = `ZKF_SINCOS_K;               // CORDIC iterations
     localparam integer XF   = ((3 * WMAN + 1) / 2) + GUARD_XY;  // x/y fractional scale
     localparam integer WX   = XF + 2;                   // signed x/y width
-    // Native scale of the pre-narrowed const2pi from the per-WMAN _zkf_cordic_m table (MUST match its CONST2PI_S): the
-    // table rounds 2*pi to WMAN+5 bits and emits it at scale 2**-CONST2PI_S, so const2pi == round(2*pi * 2**CONST2PI_S).
+    // Native scale of the pre-narrowed const2pi from the per-WMAN _zkf_cordic_m table (MUST match its CONST2PI_S):
+    // the table rounds 2*pi to WMAN+5 bits and emits it at scale 2**-CONST2PI_S, so const2pi is rounded there.
     localparam integer CONST2PI_S = WMAN + 2;
     // Two wide-datapath register stages are always present: an octant-fold register splits the WT-wide octant-fold
     // negate feeding the engine seed, and a merge-B3 register splits the WMAG-wide quadrant/octant magnitude muxing.
@@ -387,8 +387,8 @@ module zkf_sincos #(
     // to the merge.
     // WCP sizes the multiply's B operand to hold both the narrowed residual z_K and the bypass operand (WOP wide).
     localparam integer WCP = ((WOP > (ZF - K)) ? WOP : (ZF - K)) + 2;   // residual / bypass-operand width on B
-    // a holds the pre-narrowed const2pi (CWB == WMAN+5 bits) for the const products and the sign-extended x_K/y_K (WXC
-    // bits) for the corrections. CWB == WXC-1, so WA collapses to WXC (one fewer DSP column than a full-precision 2*pi).
+    // a holds the pre-narrowed const2pi (CWB == WMAN+5 bits) for the const products and the sign-extended x_K/y_K
+    // (WXC bits) for the corrections. CWB == WXC-1, so WA collapses to WXC.
     localparam integer WA  = ((CWB + 1) > WXC) ? (CWB + 1) : WXC;       // shared-multiply operand a
     localparam integer WB  = (WCP > WPHI) ? WCP : WPHI;                 // shared-multiply operand b
     localparam integer WP  = WA + WB;                                   // shared-multiply product
@@ -406,14 +406,14 @@ module zkf_sincos #(
 
     // verilator coverage_off
     wire signed [WCP-1:0] cphi_op   = $signed(cd_zn[WCP-1:0]);          // narrowed CORDIC residual z_K (corr. angle)
-    // The PHI product const2pi*z_K is at scale 2**-(CONST2PI_S+ZF); narrow phi to its top WPHI bits at scale 2**-PHI_S by
-    // a single right-shift (CONST2PI_S+ZF) - PHI_S. const2pi is already the narrowed WMAN+5-bit operand, so this is a
-    // plain product-scale-minus-target-scale shift -- no correction token.
+    // The PHI product const2pi*z_K is at scale 2**-(CONST2PI_S+ZF); narrow phi to its top WPHI bits at scale
+    // 2**-PHI_S by a single right-shift (CONST2PI_S+ZF) - PHI_S. const2pi is already the narrowed WMAN+5-bit operand,
+    // so this is a plain product-scale-minus-target-scale shift -- no correction token.
     wire signed [WPHI-1:0] phi      = tprod_r >>> ((CONST2PI_S + ZF) - PHI_S);  // ~2*pi*z_K narrowed to scale 2**-PHI_S
     wire signed [WXC-1:0]  xc       = e_xn >>> XK_TRUNC;
     wire signed [WXC-1:0]  yc       = e_yn >>> XK_TRUNC;
-    // Shared-multiply operand select. a = the (pre-narrowed) const2pi for the const products (BYP during the CORDIC, PHI
-    // at cd_zdone); x_K / y_K for the S / C corrections. b = bypass operand (BYP), narrowed residual z_K (PHI), or phi.
+    // Shared-multiply operand select. a = the pre-narrowed const2pi for the const products (BYP during the CORDIC,
+    // PHI at cd_zdone); x_K / y_K for the S / C corrections. b = bypass operand, residual z_K, or phi.
     wire                  issue_c   = (mphase == P_SC) && (sc_iss == 2'd1);
     wire signed [WA-1:0]  mul_a_sel = (mphase != P_SC) ? $signed({{(WA-CWB){1'b0}}, const2pi})
                                     : issue_c          ? $signed({{(WA-WXC){yc[WXC-1]}}, yc})
@@ -519,11 +519,11 @@ module zkf_sincos #(
     localparam signed [WEU-1:0] EONE_S_ZFT   = EONE_S - (WT + 2);  // TSA bypass: const2pi*t' at 2**-CONST2PI_S
     // verilator coverage_off
     wire signed [WEU-1:0] e_ext = $signed({{(WEU-WE){e_o[WE-1]}}, e_o});
-    wire [WMAG-1:0] sin_tp_mag = sa_o ? (tzero_o ? {WMAG{1'b0}} : b2_sa)        : {{(WMAG-XF-1){1'b0}}, b2_sin[XF:0]};
+    wire [WMAG-1:0] sin_tp_mag = sa_o ? b2_sa                                   : {{(WMAG-XF-1){1'b0}}, b2_sin[XF:0]};
     wire [WMAG-1:0] cos_tp_mag = sa_o ? {{(WMAG-XF-1){1'b0}}, 1'b1, {XF{1'b0}}} : {{(WMAG-XF-1){1'b0}}, b2_cos[XF:0]};
-    wire signed [WEU-1:0] sin_tp_exp = (!sa_o | tzero_o) ? EONE_XF_S
-                                     : tiny_o            ? (e_ext + EONE_S_WFRAC)
-                                     :                     EONE_S_ZFT;
+    wire signed [WEU-1:0] sin_tp_exp = !sa_o  ? EONE_XF_S
+                                     : tiny_o ? (e_ext + EONE_S_WFRAC)
+                                     :          EONE_S_ZFT;
     // verilator coverage_on
 
     wire [WMAG-1:0]       sin_loc_mag = oct_o ? cos_tp_mag : sin_tp_mag;
@@ -541,53 +541,47 @@ module zkf_sincos #(
                         : tzero_o ? (2'd0 - quad_o)
                         :           (2'd3 - quad_o);
 
-    // Stage B3: register the merged magnitude/exponent/sign/quadrant so the wide octant + quadrant magnitude muxing
-    // (WMAG-bit 4:1 trees) is its own stage.
-    wire                  m_valid, m_inf, m_sin_sgn, m_cos_sgn;
-    wire [WMAG-1:0]       m_sin_mag, m_cos_mag;
-    wire signed [WEU-1:0] m_sin_exp, m_cos_exp;
-    wire [1:0]            m_quad;
-    reg                  b3_valid, b3_inf, b3_sin_sgn, b3_cos_sgn;
-    reg [WMAG-1:0]       b3_sin_mag, b3_cos_mag;
-    reg signed [WEU-1:0] b3_sin_exp, b3_cos_exp;
-    reg [1:0]            b3_quad;
+    // Stage B3: register one merged payload at a time so the wide octant + quadrant magnitude muxing (WMAG-bit 4:1
+    // trees) is its own stage. SIN is captured from the b2 state first; COS is captured one cycle later from the same
+    // stable b2 state (single transaction in flight). This preserves the f2f issue timing while avoiding a second
+    // WMAG-wide payload register bank.
+    reg                  sh_valid, sh_is_cos, sh_inf, sh_sgn;
+    reg [WMAG-1:0]       sh_mag;
+    reg signed [WEU-1:0] sh_exp;
+    reg [1:0]            sh_quad;
     always @(posedge clk) begin
-        if (rst) b3_valid <= 1'b0;
-        else     b3_valid <= b2_valid;
-        b3_inf <= inf_o; b3_sin_sgn <= sin_sgn; b3_cos_sgn <= cos_sgn;
-        b3_sin_mag <= sin_mag; b3_cos_mag <= cos_mag;
-        b3_sin_exp <= sin_exp; b3_cos_exp <= cos_exp; b3_quad <= quad_out;
-    end
-    assign m_valid = b3_valid; assign m_inf = b3_inf;
-    assign m_sin_sgn = b3_sin_sgn; assign m_cos_sgn = b3_cos_sgn;
-    assign m_sin_mag = b3_sin_mag; assign m_cos_mag = b3_cos_mag;
-    assign m_sin_exp = b3_sin_exp; assign m_cos_exp = b3_cos_exp; assign m_quad = b3_quad;
+        if (rst)                         sh_valid <= 1'b0;
+        else if (b2_valid)               sh_valid <= 1'b1;
+        else if (sh_valid && !sh_is_cos) sh_valid <= 1'b1;
+        else                             sh_valid <= 1'b0;
 
-    // One shared _zkf_fixed_to_float back-end. SIN is issued on m_valid, COS is issued one cycle later from the
-    // registered COS payload below. The back-end output is tagged; packed SIN and quadrant are latched when the SIN
-    // pass emerges, then paired with the packed COS when the COS pass emerges one cycle later.
-    reg                  c_valid, c_inf, c_sgn;
-    reg [WMAG-1:0]       c_mag;
-    reg signed [WEU-1:0] c_exp;
-    always @(posedge clk) begin
-        if (rst) c_valid <= 1'b0;
-        else     c_valid <= m_valid;
-        c_inf <= m_inf; c_sgn <= m_cos_sgn; c_mag <= m_cos_mag; c_exp <= m_cos_exp;
+        if (b2_valid) begin
+            sh_is_cos <= 1'b0;
+            sh_inf    <= inf_o;
+            sh_sgn    <= sin_sgn;
+            sh_mag    <= sin_mag;
+            sh_exp    <= sin_exp;
+            sh_quad   <= quad_out;
+        end else if (sh_valid && !sh_is_cos) begin
+            sh_is_cos <= 1'b1;
+            sh_inf    <= inf_o;
+            sh_sgn    <= cos_sgn;
+            sh_mag    <= cos_mag;
+            sh_exp    <= cos_exp;
+            sh_quad   <= 2'b00;
+        end
     end
 
-    wire                  sh_is_cos = c_valid;
-    wire                  sh_valid  = m_valid | c_valid;
-    wire                  sh_inf    = sh_is_cos ? c_inf     : m_inf;
-    wire                  sh_sgn    = sh_is_cos ? c_sgn     : m_sin_sgn;
-    wire [WMAG-1:0]       sh_mag    = sh_is_cos ? c_mag     : m_sin_mag;
-    wire signed [WEU-1:0] sh_exp    = sh_is_cos ? c_exp     : m_sin_exp;
+    // One shared _zkf_fixed_to_float back-end. The registered B3 payload issues SIN, then COS one cycle later. The
+    // back-end output is tagged; packed SIN and quadrant are latched when the SIN pass emerges, then paired with the
+    // packed COS when the COS pass emerges one cycle later.
     localparam integer WSB2 = 3;                         // {is_cos, quadrant}; quadrant is meaningful on the SIN pass
-    wire [WSB2-1:0]       sh_sb     = {sh_is_cos, sh_is_cos ? 2'b00 : m_quad};
+    wire [WSB2-1:0]       sh_sb     = {sh_is_cos, sh_quad};
 
 `ifdef SIMULATION
     always @(posedge clk) begin
-        if (!rst && m_valid && c_valid)
-            $fatal(1, "zkf_sincos: shared back-end collision -- sin and cos issued on the same cycle");
+        if (!rst && b2_valid && sh_valid)
+            $fatal(1, "zkf_sincos: shared back-end collision -- new payload before prior pair issued");
     end
 `endif
 

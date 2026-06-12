@@ -117,42 +117,23 @@ module zkf_atan2 #(
     localparam integer WQUO  = F + 1;                   // quotient: integer bit (bypass) + F fractional bits
     localparam integer WCNT  = $clog2(STEPS + 1);
 
-    // The shared _zkf_fixed_to_float back-end uses one magnitude width sized to the widest pre-narrowed product:
-    // the MAG product x_K*kinv_mag (WX + KINV_MAG bits), the residual/bypass product Q*inv_tau (WQUO + ITWB bits),
-    // and the residual theta_mag container (WZ + 2 bits). With the WMAN+5-bit narrowed operands this is the minimal
-    // width (103 vs the full-precision 2*XF+4 == 124 at WMAN=36).
-    localparam integer WMAG_MAG = WX + KINV_MAG;
+    // The shared _zkf_fixed_to_float back-end uses one magnitude width sized to the widest pre-narrowed product.
+    // The MAG product drops the CORDIC x_K sign bit because finite vectoring outputs are strictly positive; the QT
+    // product still keeps WQUO bits. With the WMAN+5-bit narrowed operands this is the minimal width (102 vs the
+    // full-precision 2*XF+4 == 124 at WMAN=36).
+    localparam integer WA_MAG   = WX - 1;
+    localparam integer WA_MUL   = (WA_MAG > WQUO) ? WA_MAG : WQUO;
+    localparam integer WMAG_MAG = WA_MAG + KINV_MAG;
     localparam integer WMAG_QT  = WQUO + ITWB;
     localparam integer WMAG_TH  = WZ + 2;
     localparam integer WMAG_AB  = (WMAG_MAG > WMAG_QT) ? WMAG_MAG : WMAG_QT;
     localparam integer WMAG     = (WMAG_AB > WMAG_TH) ? WMAG_AB : WMAG_TH;
     localparam integer WEU   = WEXP + $clog2(WMAG + 1) + 3;
 
-    // Engine sideband layout. Everything carried is a function of the INPUTS only, decoded once at the front-end and
-    // held start->done by the engine, so the cd_done->divide cone is a short operand mux (not a re-decode + multiply).
-    // The special-case theta is carried as the NARROW {sp_sign, spk[2:0]} descriptor, not the assembled WFULL value:
-    // turn8() (a biased-exponent add with a carry chain) is deferred to the OUTPUT stage so its carry never sits on
-    // the front-end's D1->D register cone -- it only needs to read 3 bits there. The special-case mag has no such
-    // carry chain (it is a plain field assembly), so it is carried assembled as WFULL bits.
-    localparam integer SBO_BYPASS  = 0;
-    localparam integer SBO_SPECIAL = SBO_BYPASS + 1;
-    localparam integer SBO_SY      = SBO_SPECIAL + 1;
-    localparam integer SBO_SX      = SBO_SY + 1;
-    localparam integer SBO_SWAP    = SBO_SX + 1;
-    localparam integer SBO_EYDIFF  = SBO_SWAP + 1;         // WE+1 bits (ey - ex)
-    localparam integer SBO_EDEN    = SBO_EYDIFF + (WE + 1);// WE bits (den binade; BIASED exponent of larger operand)
-    localparam integer SBO_SIGX    = SBO_EDEN + WE;        // WMAN bits (bypass divisor sig_x)
-    // The bypass initial remainder and integer bit (sig_y vs sig_x) are precomputed at the FRONTEND (where there is
-    // ample slack -- the engine runs for many cycles afterward) and carried here, instead of carrying the raw bypass
-    // dividend sig_y and doing the compare+subtract at the divider's one-shot setup cone (a wide reg->reg subtract
-    // that is the Diamond/LSE limiter on the wide config). The divider then just selects between this and the
-    // residual |y_K|.
-    localparam integer SBO_BYPIREM = SBO_SIGX + WMAN;      // WMAN bits (precomputed bypass initial remainder)
-    localparam integer SBO_BYPIBIT = SBO_BYPIREM + WMAN;   // 1 bit (precomputed bypass integer quotient bit)
-    localparam integer SBO_SPMAG   = SBO_BYPIBIT + 1;      // WFULL bits (special-case mag)
-    localparam integer SBO_SPK     = SBO_SPMAG + WFULL;    // 3 bits (special octant code k, fed to turn8 at output)
-    localparam integer SBO_SPSIGN  = SBO_SPK + 3;          // 1 bit (special theta sign, fed to turn8 at output)
-    localparam integer WSB         = SBO_SPSIGN + 1;
+    // The CORDIC sideband is only a dummy bit. Input-derived metadata is captured into hd_* for the whole single
+    // in-flight transaction (busy blocks the next accept until output retirement), so the back-end can read it directly
+    // when cd_done arms the divider instead of replicating it through every CORDIC stage.
+    localparam integer WSB         = 1;
 
     // Octant-local turns constants (scale 2**-ZF) for the quadrant unmap, in a WZ+2 signed container.
     localparam signed [WZ+1:0] QUARTER = {{(WZ+2-(ZF-1)){1'b0}}, 1'b1, {(ZF-2){1'b0}}}; // 1/4 turn
@@ -239,7 +220,7 @@ module zkf_atan2 #(
 
     // ================================================================================================================
     // Front-end: accept and decode ONCE; derive the seed, the bypass operands (sig_y, sig_x), and the special-case
-    // results -- all functions of the inputs -- and carry them to the back-end on the engine sideband.
+    // results -- all functions of the inputs -- then capture that metadata into hd_* for the back-end.
     // ================================================================================================================
     reg  busy;
     wire accept = in_valid & in_ready;
@@ -332,14 +313,14 @@ module zkf_atan2 #(
     // late mux instead of feeding the subtract's operands, taking the WCMP carry chain off the swap->subtract->compare
     // cone that set the D1 critical path. The selected difference is |ey-ex| (swap=>ye>=xe, ~swap=>xe>=ye, each >= 0).
     // The bypass uses the ~swap ordering directly (xe-ye, valid since ~swap => xe>=ye). f1_eydiff (the SIGNED ey-ex,
-    // needed only on the sideband for the bypass exponent) is computed in parallel, off this critical cone.
+    // needed only for the bypass exponent) is computed in parallel, off this critical cone.
     wire [WEXP-1:0] f1_xe = d0_x[WFULL-2:WFRAC];
     wire [WEXP-1:0] f1_ye = d0_y[WFULL-2:WFRAC];
     localparam integer WSH  = $clog2(WX + XF + 1);
     localparam integer WCMP = (((WE + 1) > (WSH + 1)) ? (WE + 1) : (WSH + 1)) + 1;
     localparam signed [WCMP-1:0] CLAMP_C = WX + XF;
     localparam signed [WCMP-1:0] TINY_C  = ZF - WMAN - GUARD_DIV;
-    wire signed [WE:0]     f1_eydiff = $signed({2'b00, f1_ye}) - $signed({2'b00, f1_xe});   // ey-ex (biased; sideband)
+    wire signed [WE:0]     f1_eydiff = $signed({2'b00, f1_ye}) - $signed({2'b00, f1_xe});   // ey-ex (biased)
     // Both orderings of |ey-ex| in an unsigned WCMP container; only the one selected by swap is nonnegative/meaningful.
     wire [WCMP-1:0]        f1_xe_c     = {{(WCMP - WEXP){1'b0}}, f1_xe};
     wire [WCMP-1:0]        f1_ye_c     = {{(WCMP - WEXP){1'b0}}, f1_ye};
@@ -351,9 +332,9 @@ module zkf_atan2 #(
     wire [WSH-1:0] f1_shamt    = f1_swap ? f1_shamt_yx : f1_shamt_xy;                  // == clamp(|ey-ex|)
     wire           f1_bypass   = (~f1_swap) & (~d0_sx) & (~f1_special) & (f1_shift_xy > TINY_C);
     // Bypass initial remainder / integer bit, precomputed here (the bypass only fires when ~swap, where the ordered
-    // significands ARE sig_y/sig_x) and registered into D, so neither the divider's one-shot arm cone nor the F2 seed
-    // cone carries this WMAN compare+subtract -- it sits in parallel with the other D1 subtracts (slack-matched), then
-    // rides the sideband to the divider. One subtract yields both the compare (borrow == sig_y < sig_x) and difference.
+    // significands ARE sig_y/sig_x), registered into D, then captured into hd_* at the seed boundary. Neither the
+    // divider's one-shot arm cone nor the F2 seed cone carries this WMAN compare+subtract. One subtract yields both the
+    // compare (borrow == sig_y < sig_x) and difference.
     // The bypass divides SIGNIFICANDS sig_y/sig_x (the exponent difference is applied later via the texp offset), and
     // sig_y can exceed sig_x (both are in [2**WFRAC, 2**WMAN)), so the integer quotient bit is genuinely 1 when
     // sig_y >= sig_x -- it is NOT structurally 0 (the small VALUE ratio |y|/|x| << 1 lives in the exponent, not here).
@@ -361,10 +342,9 @@ module zkf_atan2 #(
     wire             f1_byp_ibit = ~f1_byp_diff[WMAN];                                 // sig_y >= sig_x
     wire [WMAN-1:0]  f1_byp_irem = f1_byp_ibit ? f1_byp_diff[WMAN-1:0] : f1_num_sig;   // bypass initial remainder
 
-    // Special-case theta / mag, built from the NARROW registered descriptor: turn8 reads only the 3-bit class
-    // code spk (no wide operand read), and the magnitude REUSES the already-ordered denominator -- for the axis
-    // specials the nonzero operand IS the denominator (den = max(|x|,|y|)), so |x|/|y| is {den_exp, den_sig}
-    // with no second wide mux.
+    // Special-case theta / mag, built from narrow descriptors: turn8 reads only the 3-bit class code spk (no wide
+    // operand read), and the magnitude REUSES the already-ordered denominator -- for the axis specials the nonzero
+    // operand IS the denominator (den = max(|x|,|y|)), so |x|/|y| is {den_exp, den_sig} with no second wide mux.
     wire [2:0]       f1_spk = (d0_xi & d0_yi) ? (d0_sx ? 3'd3 : 3'd1)   // (inf,inf): 3/8 (x<0) or 1/8 (x>0)
                             : d0_yi           ? 3'd2                     // |y|=inf -> 1/4
                             : d0_xi           ? (d0_sx ? 3'd4 : 3'd0)    // x=-inf -> 1/2 ; x=+inf -> +0
@@ -403,10 +383,39 @@ module zkf_atan2 #(
         d_byp_irem <= f1_byp_irem; d_byp_ibit <= f1_byp_ibit;
     end
 
+    // Held input-derived metadata for the single in-flight transaction. The D-stage payload free-runs after d_valid,
+    // while the CORDIC runs for many cycles, so capture the fields once at the seed boundary instead of carrying them
+    // through every CORDIC stage.
+    reg                  hd_swap, hd_sx, hd_sy, hd_special, hd_bypass;
+    reg signed [WE-1:0]  hd_eden;
+    reg signed [WE:0]    hd_eydiff;
+    reg [WFULL-1:0]      hd_sp_mag;
+    reg [2:0]            hd_spk;
+    reg                  hd_sp_sign;
+    reg [WMAN-1:0]       hd_den_sig, hd_byp_irem;
+    reg                  hd_byp_ibit;
+    always @(posedge clk) begin
+        if (d_valid) begin
+            hd_den_sig  <= d_den_sig;
+            hd_swap     <= d_swap;
+            hd_sx       <= d_sx;
+            hd_sy       <= d_sy;
+            hd_special  <= d_special;
+            hd_bypass   <= d_bypass;
+            hd_eden     <= d_eden;
+            hd_eydiff   <= d_eydiff;
+            hd_spk      <= d_spk;
+            hd_sp_sign  <= d_sp_sign;
+            hd_sp_mag   <= d_sp_mag;
+            hd_byp_irem <= d_byp_irem;
+            hd_byp_ibit <= d_byp_ibit;
+        end
+    end
+
     // -- Stage F2: the engine seed (den pre-scaled by 1/4 to [0.25,0.5)*2**XF; num aligned down to den's binade by the
-    // wide variable shift) and the engine sideband. SBO_SIGX carries d_den_sig (== sig_x, the bypass divisor);
-    // the bypass initial remainder/integer bit were precomputed in D1 (d_byp_irem / d_byp_ibit) and ride the
-    // sideband from here. f2_num_up is the 1/4-pre-scaled numerator significand before the alignment right-shift.
+    // wide variable shift). The input-derived metadata is captured into hd_* alongside this seed; single-in-flight
+    // operation keeps that bank stable until cd_done arms the divider. f2_num_up is the 1/4-pre-scaled numerator
+    // significand before the alignment right-shift.
     // d_num_sig (WMAN bits, top at WFRAC) shifted up by (XF-WFRAC-2) tops out at bit XF-2, so it fits in
     // WX (== XF+2) bits with room to spare; the former WX+XF width carried XF dead high bits
     // (only the low WX were ever read). Sizing it to WX drops them.
@@ -417,21 +426,18 @@ module zkf_atan2 #(
     // verilator coverage_on
     reg                  f2_valid;
     reg signed [WX-1:0]  f2_x0, f2_y0;
-    reg [WSB-1:0]        f2_sb;                           // decoded control + bypass operands + specials (input-fixed)
     always @(posedge clk) begin
         if (rst) f2_valid <= 1'b0; else f2_valid <= d_valid;
         f2_x0 <= $signed({1'b0, f2_den_fix});
         f2_y0 <= $signed({1'b0, f2_num_fix});
-        f2_sb <= {d_sp_sign, d_spk, d_sp_mag, d_byp_ibit, d_byp_irem, d_den_sig, d_eden, d_eydiff,
-                  d_swap, d_sx, d_sy, d_special, d_bypass};
     end
     wire eng_start = f2_valid;
 
     // ================================================================================================================
-    // Vectoring CORDIC engine (MODE=1), per-WMAN table. Carries the decoded sideband (f2_sb) from start to done.
+    // Vectoring CORDIC engine (MODE=1), per-WMAN table.
     // ================================================================================================================
     wire                 cd_done;
-    wire [WSB-1:0]       cd_sb;
+    wire [WSB-1:0]       cd_sb_unused;
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
@@ -443,9 +449,9 @@ module zkf_atan2 #(
             .EXPECT_INVTAU_W(ITWB), .EXPECT_INVTAU_S(INVTAU_S), \
             .EXPECT_KINV_MAG_W(KINV_MAG), .EXPECT_KINV_S(KINV_S) \
         ) u_cordic ( \
-            .clk(clk), .rst(rst), .start(eng_start), .sb_in(f2_sb), \
+            .clk(clk), .rst(rst), .start(eng_start), .sb_in({WSB{1'b0}}), \
             .x0(f2_x0), .y0(f2_y0), .z0({WZ{1'b0}}), \
-            .busy(), .done(cd_done), .z_done(), .sb_out(cd_sb), \
+            .busy(), .done(cd_done), .z_done(), .sb_out(cd_sb_unused), \
             .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(), .inv_tau(eng_inv_tau), .kinv_mag(eng_kinv_mag), .kinv());
     // A WMAN without a pre-generated table names a missing module and fails loudly. We still list every possible WMAN.
     generate
@@ -500,29 +506,29 @@ module zkf_atan2 #(
     `undef ZKF_ATAN2_CORE
 
     // ================================================================================================================
-    // Back-end: unpack the input-derived sideband; mux the divide operands; run the folded radix-4 divider.
+    // Back-end: read the held input-derived metadata, mux the divide operands, and run the folded radix-4 divider.
     // ================================================================================================================
-    wire             be_bypass   = cd_sb[SBO_BYPASS];
-    wire             be_special  = cd_sb[SBO_SPECIAL];
-    wire             be_sy       = cd_sb[SBO_SY];
-    wire             be_sx       = cd_sb[SBO_SX];
-    wire             be_swap     = cd_sb[SBO_SWAP];
-    wire signed [WE:0]   be_eydiff = cd_sb[SBO_EYDIFF +: (WE+1)];
-    wire signed [WE-1:0] be_eden   = cd_sb[SBO_EDEN +: WE];
-    wire [WMAN-1:0]  be_sigx     = cd_sb[SBO_SIGX +: WMAN];
-    wire [WMAN-1:0]  be_byp_irem = cd_sb[SBO_BYPIREM +: WMAN];   // precomputed bypass initial remainder (front-end)
-    wire             be_byp_ibit = cd_sb[SBO_BYPIBIT];           // precomputed bypass integer quotient bit
-    wire [WFULL-1:0] be_sp_mag   = cd_sb[SBO_SPMAG +: WFULL];
-    wire [2:0]       be_spk      = cd_sb[SBO_SPK +: 3];
-    wire             be_sp_sign  = cd_sb[SBO_SPSIGN];
+    wire             be_bypass   = hd_bypass;
+    wire             be_special  = hd_special;
+    wire             be_sy       = hd_sy;
+    wire             be_sx       = hd_sx;
+    wire             be_swap     = hd_swap;
+    wire signed [WE:0]   be_eydiff = hd_eydiff;
+    wire signed [WE-1:0] be_eden   = hd_eden;
+    wire [WMAN-1:0]  be_sigx     = hd_den_sig;
+    wire [WMAN-1:0]  be_byp_irem = hd_byp_irem;   // precomputed bypass initial remainder (front-end)
+    wire             be_byp_ibit = hd_byp_ibit;   // precomputed bypass integer quotient bit
+    wire [WFULL-1:0] be_sp_mag   = hd_sp_mag;
+    wire [2:0]       be_spk      = hd_spk;
+    wire             be_sp_sign  = hd_sp_sign;
 
     // Operand mux: residual (|y_K|, x_K) or bypass (sig_y, sig_x). Q = floor(num*2**F/den) (fractional radix-4) + the
     // sticky from the final remainder. den is guarded against 0 (specials run on garbage, masked at the output).
     //
     // Timing: the initial remainder / integer bit feed the arm with NO carry chain. The residual remainder is just
     // |y_K| (one negate off cd_yn) and its integer bit is structurally 0 (|y_K| < x_K always).
-    // The bypass remainder and integer bit are PRECOMPUTED at the front-end (be_byp_irem / be_byp_ibit, slack-rich)
-    // and carried on the sideband, so neither the cd_yn negate nor the divisor mux sits behind a compare+subtract here.
+    // The bypass remainder and integer bit are PRECOMPUTED at the front-end and captured into hd_* (slack-rich), so
+    // neither the cd_yn negate nor the divisor mux sits behind a compare+subtract here.
     // verilator coverage_off
     wire signed [WX-1:0] be_ykabs = cd_yn[WX-1] ? -cd_yn : cd_yn;                    // |y_K| (the only cd_yn-dep work)
     // The divisor is just selected here (bypass vs residual); 3*den is formed one cycle later in the divider's setup
@@ -627,7 +633,9 @@ module zkf_atan2 #(
     // is discarded.)
 `ifdef SIMULATION
     always @(posedge clk) begin
-        if (!rst && cd_done && !be_special && !(cd_xn > 0))
+        if (!rst && cd_done && !be_special && cd_xn[WX-1])
+            $fatal(1, "zkf_atan2: residual divisor cd_xn sign bit set for a non-special transaction");
+        if (!rst && cd_done && !be_special && (cd_xn == {WX{1'b0}}))
             $fatal(1, "zkf_atan2: residual divisor cd_xn == 0 for a non-special transaction");
     end
 `endif
@@ -654,18 +662,20 @@ module zkf_atan2 #(
     // eng_kinv_mag (scale 2**-KINV_S) for MAG, eng_inv_tau (scale 2**-INVTAU_S) for QT -- both already WMAN+5 bits.
     // The post-product scaling below derives its shift / exp-offset from those native scales, so no fold-back remains.
     // verilator coverage_off
-    wire [WX-1:0]      pmul_a = qt_issue ? {{(WX-WQUO){1'b0}}, dv_quo} : $unsigned(dv_xn);
+    wire [WA_MUL-1:0]  pmul_a = qt_issue ? {{(WA_MUL-WQUO){1'b0}}, dv_quo} : dv_xn[WA_MUL-1:0];
     wire [KINV_MAG-1:0] pmul_b = qt_issue ? eng_inv_tau : eng_kinv_mag;       // narrowed inv_tau (QT) / kinv_mag (MAG)
     // verilator coverage_on
     wire             pmul_ov;
     wire [0:0]       pmul_tag_out;
-    wire [WMAG-1:0]  pmul_p;                                    // WX + KINV_MAG == WMAG bits (the dominant product)
+    localparam integer WPMUL = WA_MUL + KINV_MAG;
+    wire [WPMUL-1:0] pmul_p_raw;                                           // widest shared-mult product
+    wire [WMAG-1:0]  pmul_p = {{(WMAG-WPMUL){1'b0}}, pmul_p_raw};          // pad only if theta magnitude dominates
     _zkf_pmul #(
-        .WA(WX), .WB(KINV_MAG), .A_SIGNED(0), .B_SIGNED(0), .WSB(1),
+        .WA(WA_MUL), .WB(KINV_MAG), .A_SIGNED(0), .B_SIGNED(0), .WSB(1),
         .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(pmul_iv), .sb_in(pmul_tag_in),
-        .a(pmul_a), .b(pmul_b), .out_valid(pmul_ov), .sb_out(pmul_tag_out), .p(pmul_p)
+        .a(pmul_a), .b(pmul_b), .out_valid(pmul_ov), .sb_out(pmul_tag_out), .p(pmul_p_raw)
     );
     wire mag_ov = pmul_ov && (pmul_tag_out == TAG_MAG);        // MAG product valid -> issue it to the shared back-end
     wire qt_ov  = pmul_ov && (pmul_tag_out == TAG_QT);         // QT product valid -> form theta this cycle
@@ -680,14 +690,15 @@ module zkf_atan2 #(
     //   B2 (next stage): performs the ONE remaining signed add un_tmag = un_base +/- res_delta and assembles the packer
     //       inputs. So the P2->B2 cone is exactly one add; the pmul_p->P2 cone is the shift wires. +1 latency cycle
     //       (folded into `ZKF_ATAN2_BASE / atan2_latency()).
-    // The special-case descriptor {special, sp_sign, spk, sp_mag} is NOT re-registered through P2/B2: it is read
-    // DIRECTLY from the held dv_* regs at the output (latched at cd_done, held for the whole single in-flight
-    // transaction -- earlier and longer-lived than any p2_*/b2_* copy), so only the numeric theta payload flows here.
+    // The special-case descriptor {special, sp_sign, spk, sp_mag} is NOT re-registered through P2/B2:
+    // it is read DIRECTLY from the held dv_* regs at the output (latched at cd_done, held for the whole single
+    // in-flight transaction -- earlier and longer-lived than any p2_*/b2_* copy), so only the numeric theta payload
+    // flows here.
     // The unmap algebra (bit-exact to the former single-stage form): un_tmag = unmap_const +/- res_a0, res_a0 =
     // z_K +/- res_delta, with res_a0 negated iff swap^sx and res_delta negated iff y_K<0. Folding gives un_base =
     // unmap_const +/- z_K (negate z_K iff swap^sx) and res_delta subtracted iff (swap^sx) ^ y_K<0.
     // verilator coverage_off
-    wire [WMAG-1:0]      qt_full   = pmul_p[WMAG-1:0];                          // Q * inv_tau (WX+KINV_MAG == WMAG)
+    wire [WMAG-1:0]      qt_full   = pmul_p[WMAG-1:0];                 // Q * inv_tau (WA_MUL+KINV_MAG, padded to WMAG)
     // qt_full = Q * inv_tau is at scale 2**-(F + INVTAU_S); the right-shift to the angle scale 2**-ZF is the difference
     // F + INVTAU_S - ZF (>= 0 for every supported WMAN). inv_tau is the pre-narrowed operand, so no fold-back.
     wire [WZ+1:0]        res_delta = qt_full >> (F + INVTAU_S - ZF);
@@ -750,10 +761,10 @@ module zkf_atan2 #(
     // exactly as the former theta back-end was, so it emerges on the SAME output cycle as before -- the share is
     // latency-flat. The two issues are mutually exclusive (>= STEPS+2 cycles apart) and tagged (the only thing the f2f
     // sideband carries -- WSB2 == 1) so the output stage knows which result a cycle carries. The special-case
-    // descriptor {special, sp_sign, spk, sp_mag} does NOT ride the f2f delay: it is read directly from the held dv_*
-    // regs at the output (single-in-flight keeps them stable through the THETA emergence), and drives the special-case
-    // override for BOTH outputs (the engine/divide ran on garbage during specials); turn8(sp_sign, spk) is assembled
-    // AFTER the back-end (off every register cone) so its biased-add carry lands with huge slack.
+    // descriptor {special, sp_sign, spk, sp_mag} does NOT ride the f2f delay: it is read directly from the
+    // held dv_* regs at the output (single-in-flight keeps them stable through the THETA emergence), and drives the
+    // special-case override for BOTH outputs (the engine/divide ran on garbage during specials); turn8(sp_sign, spk)
+    // is assembled AFTER the back-end (off every register cone) so its biased-add carry lands with huge slack.
     // ================================================================================================================
     // Magnitude exponent, formed at MAG-issue from the cd_done-latched den binade (dv_eden, BIASED). value = M *
     // 2**(e_den + 2 - (XF+KINV_S)): M = x_K*kinv_mag at scale 2**-(XF+KINV_S), the 1/4 pre-scale undone (+2). No +BIAS
@@ -776,8 +787,9 @@ module zkf_atan2 #(
 `endif
     // Input mux: (mag, exp_offset, sign) = (x_K*kinv_mag product, mag_be_exp, 0) for MAG vs
     // (b2_tmag, b2_texp, b2_tsign) for theta. Only the TAG (MAG vs THETA) needs the f2f back-end's delay alignment;
-    // the special descriptor {special, sp_sign, spk, sp_mag} is read DIRECTLY from the held dv_* regs at the output
-    // (see below), so it is not carried through the f2f pipe -- shrinking the sideband from WFULL+5 to a single bit.
+    // the special descriptor {special, sp_sign, spk, sp_mag} is read DIRECTLY from the held dv_* regs at the
+    // output (see below), so it is not carried through the f2f pipe -- shrinking the sideband from WFULL+5 to a single
+    // bit.
     // verilator coverage_off
     wire [WMAG-1:0]       share_mag = share_is_th ? b2_tmag  : pmul_p;
     wire signed [WEU-1:0] share_exp = share_is_th ? b2_texp  : mag_be_exp;
@@ -800,12 +812,12 @@ module zkf_atan2 #(
     );
 
     wire             out_tag      = be_sbo[WSB2-1];         // 1 => this cycle carries theta
-    // The special-case descriptor (special / sp_sign / spk / sp_mag) is read DIRECTLY from the held dv_* regs rather
-    // than from the f2f-delayed sideband: the module runs a single transaction in flight (in_ready is held low while
-    // busy, which clears no earlier than the THETA emergence below), so dv_* still hold THIS transaction's descriptor
-    // at the THETA output cycle -- they are latched at cd_done and held until retire (busy clears only at out_valid &
-    // out_ready, i.e. no earlier than the THETA emergence), strictly outliving the former b2_* copies, and no later
-    // transaction's cd_done can have overwritten them. This drives the override for BOTH outputs
+    // The special-case descriptor (special / sp_sign / spk / sp_mag) is read DIRECTLY from the held dv_*
+    // regs rather than from the f2f-delayed sideband: the module runs a single transaction in flight (in_ready is held
+    // low while busy, which clears no earlier than the THETA emergence below), so dv_* still hold THIS transaction's
+    // descriptor at the THETA output cycle -- they are latched at cd_done and held until retire (busy clears only at
+    // out_valid & out_ready, i.e. no earlier than the THETA emergence), strictly outliving the former b2_* copies, and
+    // no later transaction's cd_done can have overwritten them. This drives the override for BOTH outputs
     // (the f2f numeric output is garbage for specials, since the engine/divide ran on it).
     // The redundant p2_*/b2_* copies are therefore dropped.
     wire             out_special  = dv_special;
