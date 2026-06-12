@@ -102,6 +102,14 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_atan2`           | ⇻ |latency| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
 | `zkf_pipe`            |   | 1     | Delay line of N register stages, W bits each.                  | No-op                       |
 
+#### Notably absent functions
+
+The transcendental/trigonometric functions offer high accuracy ≤1 ULP. This is desirable for many applications,
+but often one would accept a lower accuracy (common in control systems) to save fabric and/or cycle latency.
+There is interest in extending the module set with approximate trans/trig functions built on a simple
+piecewise function approximation kernel that offer II=1, low cycle latency, and low fabric usage:
+`zkf_exp2_approx`, `zkf_sincos_approx`, etc.
+
 ### Derived functions
 
 The basic modules available enable simple computation of a huge variety of derived functions; some of them are:

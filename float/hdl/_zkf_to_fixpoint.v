@@ -10,7 +10,7 @@
 /// "magnitude won't fit in WI signed bits" predicate and `is_inf`. Default is (1 << WEXP) which sits above the
 /// max value `exp_in` can take, so the extrinsic predicate resolves to constant 0 at elaboration; this is what
 /// zkf_to_int wants. zkf_exp2 sets OOR_EXP_THRESHOLD = BIAS+WEXP-1 so the result's integer part is guaranteed
-/// to fit in WEXP+1 unbiased bits (the value's exponent is already out of representable range above that point).
+/// to fit in WEXP signed bits (the value's exponent is already out of representable range above that point).
 ///
 /// Output semantics:
 ///

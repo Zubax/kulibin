@@ -77,7 +77,7 @@ module zkf_exp2 #(
     localparam WFRAC = WMAN - 1;
     // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
     localparam FF   = WMAN + 12;
-    localparam WEU  = WEXP + 2;            // signed unbiased exponent fed to _zkf_pack
+    localparam WEU  = WEXP;                // signed unbiased exponent fed to _zkf_pack
     localparam SBW  = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
 
     localparam integer BIAS    = (1 << (WEXP - 1)) - 1;
@@ -88,8 +88,7 @@ module zkf_exp2 #(
     // predicates (left/right shift selection, left/right overflow clamps), the radix-4 right shifter, the raw left
     // shifter, and the two internal register stages (S1 decode+clamps; S2 post-shift magnitude+sticky+specials).
     // WI=WEU and FF=WMAN+12 give the (i, f) layout we need; OOR_EXP_THRESHOLD=OOR_THRESHOLD makes the helper
-    // saturate the magnitude when the integer part of x would not fit in WEU unbiased bits (the result exponent
-    // range), matching the OOR semantics today's hand-rolled front-end implements.
+    // saturate the magnitude before the integer part of x can exceed WEXP signed bits (the result exponent range).
     wire             rb_valid;
     // verilator coverage_off
     // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
@@ -139,7 +138,7 @@ module zkf_exp2 #(
     wire signed [WEU:0]      i_full   = v_signed[WEU+FF:FF];
     wire [FF-1:0]            f_bits   = v_signed[FF-1:0];
     // verilator coverage_on
-    wire signed [WEU-1:0]    i_clamped     = i_full[WEU-1:0];   // |i| < 2^(WEXP-1) for in-range inputs (oor=0)
+    wire signed [WEU-1:0]    i_clamped     = i_full[WEU-1:0];   // i fits in WEXP signed bits when oor=0
     wire                     force_inf_in  = rb_oor & ~rb_sign; // +inf / positive overflow
     wire                     force_zero_in = rb_oor &  rb_sign; // -inf / negative underflow
 
