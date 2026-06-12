@@ -1,4 +1,4 @@
-# Zubax Kuibin floating point
+# Zubax Kulibin floating point
 
 A small and FPGA-friendly floating point format that is similar to IEEE 754 but intentionally omits support for NaN,
 subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even (RNTE).
@@ -88,17 +88,17 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_sort`            | ⇻ | 1     | Min and max of two values.                                     |                             |
 | `zkf_add`             | ⇻ | 1     | `a + b`.                                                       |                             |
 | `zkf_addsub`          | ⇻ | 1     | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
-| `zkf_mul`             | ⇻ | 1     | `a × b`.                                                       |                             |
-| `zkf_mul_ilog2_const` | ⇻ | 1     | `a × 2^K` for a elaboration-time signed integer `K`.           |                             |
+| `zkf_mul`             | ⇻ | 1     | `a⋅b`.                                                         |                             |
+| `zkf_mul_ilog2_const` | ⇻ | 1     | `a⋅2^K` for an elaboration-time signed integer `K`.            |                             |
 | `zkf_div`             | ⇻ | 1     | `a ÷ b`; flags divide-by-zero.                                 |                             |
-| `zkf_fma`             | ⇻ | 1     | `(a × b) + c` fused multiply-add, high precision, rounded once.| Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf_fma`             | ⇻ | 1     | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | 1     | Cast signed two's-complement integer to float.                 |                             |
 | `zkf_to_int`          | ⇻ | 1     | Cast float to signed two's-complement integer with saturation. | RNTE                        |
 | `zkf_resize`          |   | 1     | Cast between different float formats.                          |                             |
 | `zkf_round`           |   | 1     | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
-| `zkf_exp2`            | ⇻ | 1     | `2**x`                                                         | Faithful rounding, see below|
+| `zkf_exp2`            | ⇻ | 1     | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | 1     | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_sincos`          | ⇻ |latency| `sin(2πx)`, `cos(2πx)` for `x` in turns; exposes `quadrant`.   | Faithful rounding, see below|
+| `zkf_sincos`          | ⇻ |latency| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
 | `zkf_atan2`           | ⇻ |latency| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
 | `zkf_pipe`            |   | 1     | Delay line of N register stages, W bits each.                  | No-op                       |
 
@@ -112,22 +112,84 @@ piecewise function approximation kernel that offer II=1, low cycle latency, and 
 
 ### Derived functions
 
-The basic modules available enable simple computation of a huge variety of derived functions; some of them are:
+The basic modules available enable simple computation of a huge variety of derived functions; examples follow.
+Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
+representation.
 
-    exp(x)      = exp2(x * log2(e))
-    log_b(x)    = log2(x) / log2(b)
-    pow(a,b)    = exp2(b * log2(a))     ; Complex generalization for arbitrary base is accessible as well
-    sqrt(x)     = exp2(log2(x) * 2^-1)  ; See zkf_mul_ilog2_const
+    sin_turns(x), cos_turns(x)  = zkf_sincos(x)                     ; x in turns
+    atan2_turns(y,x)            = zkf_atan2(y, x)                   ; angle in turns ∈ (−0.5,0.5]
+    atan_turns(x)               = atan2_turns(x, 1)
 
-    tan(x)      = sin(x) / cos(x)
-    atan(x)     = atan2(x, 1)
-    asin(x)     = atan2(x, sqrt(1 - x*x))
-    acos(x)     = atan2(sqrt(1 - x*x), x)
-
-    normalize_angle(x) = x - 2π × floor((x+π)/(2π))                         ; [-π,+π)
+    normalize_angle(x)          = x − 2π⋅floor((x + π) / (2π))      ; [-π,+π)
+    normalize_angle_turns(t)    = t − floor(t + 0.5)                ; [-0.5,+0.5)
 
     INV_TAU = 1 / (2π)
-    normalize_angle_turns(x) = y - floor(y + 0.5); where y = x * INV_TAU    ; [-0.5,+0.5)
+    radians_to_turns(x) = x⋅INV_TAU
+
+    sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
+    atan2(y,x)          = 2π⋅atan2_turns(y, x)
+
+    exp(x)              = exp2(x⋅log2(e))
+    ln(x)               = log2(x) / log2(e)
+    log10(x)            = log2(x) / log2(10)
+    log_b(x)            = log2(x) / log2(b)     ; x>0, b>0, b≠1
+    pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
+    recip(x)            = 1 / x
+    sqrt(x)             = exp2(log2(x)⋅2^-1)    ; x≥0; see zkf_mul_ilog2_const
+    rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
+    cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
+
+    tan(x)              = sin(x) / cos(x)
+    atan(x)             = atan2(x, 1)
+    asin(x)             = atan2(x, sqrt(1 − x⋅x))      ; x ∈ [-1,+1]
+    acos(x)             = atan2(sqrt(1 − x⋅x), x)      ; x ∈ [-1,+1]
+    h                   = max(abs(x), abs(y))
+    hypot(x,y)          = h=0 ? 0 : !is_finite(h) ? +∞ : h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))
+
+    min(a,b), max(a,b)  = sort(a,b)
+    clamp(x, lo, hi)    = min(max(x, lo), hi)
+    lerp(a,b,t)         = fma(t, b − a, a)
+    deadzone(x,d)       = sign(x)⋅max(abs(x) − d, 0)
+    smoothstep(t)       = t⋅t⋅(3 − 2⋅t); where t is clamped to [0,1]
+
+    dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf_fma chains
+    norm2(x)            = dot(x, x)
+    norm(x)             = sqrt(norm2(x))
+    normalize(x)        = x⋅rsqrt(norm2(x) + ε)
+    distance(a,b)       = norm(a − b)
+    distance_2d(a,b)    = hypot(a.x − b.x, a.y − b.y)
+
+    db_power(x)         = 10⋅log10(x)                                   ; x>0
+    db_amplitude(x)     = 20⋅log10(abs(x))                              ; x≠0
+    power_from_db(x)    = exp2(x⋅log2(10) / 10)
+    amp_from_db(x)      = exp2(x⋅log2(10) / 20)
+
+    sinc(x)             = sin(π⋅x) / (π⋅x)                              ; normalized, sinc(0)=1
+    rms(x)              = sqrt(mean(x⋅x))
+    ema(y,x,a)          = fma(a, x − y, y)
+
+    complex_abs(re,im)  = hypot(re, im)
+    arg(re,im)          = atan2(im, re)
+    arg_turns(re,im)    = atan2_turns(im, re)
+    unit_complex(t)     = (cos(t), sin(t))                              ; principal counterpart of arg()
+    polar(r,t)          = (r⋅cos(t), r⋅sin(t))                          ; r≥0
+    complex_mul((ar,ai),(br,bi)) = (ar⋅br − ai⋅bi, ar⋅bi + ai⋅br)
+    rotate2(x,y,t)      = (x⋅cos(t) − y⋅sin(t), x⋅sin(t) + y⋅cos(t))
+
+    relu(x)             = max(x, 0)
+    leaky_relu(x)       = x ≥ 0 ? x : α⋅x
+    hard_sigmoid(x)     = clamp(α⋅x + β, 0, 1)
+    hard_swish(x)       = x⋅hard_sigmoid(x)
+
+    sigmoid(x)          = 1 / (1 + exp2(−x⋅log2(e)))
+    tanh(x)             = 2⋅sigmoid(2⋅x) − 1
+    softplus(x)         = max(x, 0) + log2(1 + exp2(−abs(x)⋅log2(e))) / log2(e)
+    silu(x)             = x⋅sigmoid(x)
+
+    m                   = max_i x[i]
+    logsumexp(x[])      = m + log2(sum_i exp2((x[i] − m)⋅log2(e))) / log2(e)
+    softmax_i(x[])      = exp2((x[i] − m)⋅log2(e)) / sum_j exp2((x[j] − m)⋅log2(e))
+    layer_norm(x)       = (x − mean(x))⋅rsqrt(var(x) + ε)
 
 And so on.
 
@@ -146,7 +208,7 @@ Infinity cases that would be NaN in IEEE 754:
 | Expression          | Result                         |
 |---------------------|--------------------------------|
 | +∞ + −∞             | +0                             |
-| 0 · ±∞              | +0                             |
+| 0⋅±∞                | +0                             |
 | 0 ÷ 0               | +0                             |
 | ±∞ ÷ ±∞             | +0                             |
 
@@ -154,11 +216,11 @@ Non-NaN infinity cases (same intent as IEEE 754):
 
 | Expression          | Result                         |
 |---------------------|--------------------------------|
-| finite ÷ 0          | ±∞  (sign = sign of dividend)  |
+| finite≠0 ÷ 0        | ±∞  (sign = sign of dividend)  |
 | ±∞ ÷ 0              | ±∞  (sign = sign of dividend)  |
 | finite ÷ ±∞         | +0                             |
-| ±∞ · ±∞             | ±∞  (sign = signs XOR)         |
-| finite≠0 · ±∞       | ±∞  (sign = signs XOR)         |
+| ±∞⋅±∞               | ±∞  (sign = signs XOR)         |
+| finite≠0⋅±∞         | ±∞  (sign = signs XOR)         |
 
 The subnormal round-to-nearest behavior is illustrated below, compared against the basic flush to zero for any value
 below the min normal. The timing/area cost of both approaches is approximately equivalent while the rounding method
