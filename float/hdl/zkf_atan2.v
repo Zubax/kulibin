@@ -212,7 +212,9 @@ module zkf_atan2 #(
                 3'd2:    begin body = TURN8_K2;  zero = TURN8_Z2; end
                 3'd3:    begin body = TURN8_K3;  zero = TURN8_Z3; end
                 3'd4:    begin body = TURN8_K4;  zero = TURN8_Z4; end
+                // verilator coverage_off
                 default: begin body = TURN8_KNZ; zero = 1'b0;     end       // unused k >= 5 (mirrors old eunb 0)
+                // verilator coverage_on
             endcase
             turn8 = zero ? {WFULL{1'b0}} : {s, body};
         end
@@ -437,7 +439,9 @@ module zkf_atan2 #(
     // Vectoring CORDIC engine (MODE=1), per-WMAN table.
     // ================================================================================================================
     wire                 cd_done;
+    // verilator coverage_off
     wire [WSB-1:0]       cd_sb_unused;
+    // verilator coverage_on
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
@@ -842,7 +846,9 @@ module zkf_atan2 #(
     // Output handshake with back-pressure. One transaction in flight; the result waits for out_ready.
     // ================================================================================================================
     reg              pending;
+    // verilator coverage_off
     reg [WFULL-1:0]  hold_theta, hold_mag;
+    // verilator coverage_on
     always @(posedge clk) begin
         if (rst) pending <= 1'b0;
         else if (be_valid & ~out_ready) begin

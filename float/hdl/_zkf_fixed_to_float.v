@@ -109,7 +109,6 @@ module _zkf_fixed_to_float #(
     // matches that latency, so GRS/exponent combine can consume the aligned normalizer outputs directly.
     wire                  c_valid        = sb_valid;
     wire                  c_sign         = sign_d;
-    wire                  c_force_zero   = force_zero_d;
     wire                  c_force_inf    = force_inf_d;
     wire signed [WEU-1:0] c_exp_offset   = exp_offset_d;
     wire [WSB-1:0]        c_sb           = sb_d;
@@ -135,7 +134,7 @@ module _zkf_fixed_to_float #(
     // verilator coverage_on
 
     wire pre_force_inf  = c_force_inf;
-    wire pre_force_zero = c_force_zero || (~c_force_inf & c_norm_zero);
+    wire pre_force_zero = force_zero_d || (~c_force_inf & c_norm_zero);
 
     // -- The packer owns its optional input register (STAGE_INPUT=STAGE_PACK) and its optional output
     // register (STAGE_OUTPUT). When STAGE_PACK=1, the rounder is insulated from the wide normshift output
