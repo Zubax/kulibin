@@ -194,10 +194,11 @@ def sincos_latency(
 ) -> int:
     # Iterative (folded) CORDIC initiation interval = latency, measured accept -> out_valid. The cocotb testbench
     # asserts the RTL matches this exactly, and the RTL LATENCY parameter (zkf_sincos.v) is the same closed form.
-    # Constant 10 = 1 (R1 decode) + 1 (R2 barrel shift) + 1 (engine start) + 1 (engine done)
+    # Constant 11 = 1 (R1 decode) + 1 (R2 barrel shift) + 1 (engine start) + 1 (engine done)
     #   + 4 (shared-multiply micro-sequence at STAGE_PRODUCT=0: PHI (issued on the cd_zdone cycle off cd_zn) + S/C
     #        pipelined two-deep, the C product folding straight into sin/cos; no separate PACK cycle)
-    #   + 2 (always-on wide-datapath stages: octant-fold + merge-B3). The exponent decode is combinational.
+    #   + 2 (always-on wide-datapath stages: octant-fold + merge-B3)
+    #   + 1 (shared fixed-to-float back-end issues cos one cycle after sin). The exponent decode is combinational.
     # Each STAGE_PRODUCT unit adds one cycle to PHI and one across the pipelined S/C pair = 2*STAGE_PRODUCT.
     # Then: rotation cycles = ceil(K*100/UNROLL100) (UNROLL100 = iterations/cycle x100: 50 = half-rate 2-cycle engine,
     # 100 = 1/cycle, 200/300/400 = 2/3/4 per cycle); the optional STAGE_INPUT / STAGE_OUTPUT register stages (+1 each);
@@ -217,7 +218,7 @@ def sincos_latency(
         pmul_l = 1 + _count(stage_product)
         saved = min(pmul_l, zgap)
     return (
-        10 + 2 * _count(stage_product) + iter_cycles - saved
+        11 + 2 * _count(stage_product) + iter_cycles - saved
         + _count(stage_input) + _count(stage_output)
         + _count(stage_normalize) + _count(stage_pack)
     )
@@ -246,7 +247,7 @@ def atan2_latency(
     # cycles (data-independent: the same divide runs for the bypass and the residual, F = 2*STEPS >= XF quotient bits);
     # STAGE_PRODUCT extra cycles in the shared _zkf_pmul (on the post-divide QT product, the only one on the critical
     # path); the optional STAGE_INPUT register (+1); plus STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT forwarded to the
-    # two _zkf_fixed_to_float back-ends. Mirrors `ZKF_ATAN2_LATENCY exactly.
+    # shared _zkf_fixed_to_float back-end. Mirrors `ZKF_ATAN2_LATENCY exactly.
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
     spec = TRIG_SPECS[wman]

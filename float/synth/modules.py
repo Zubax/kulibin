@@ -46,8 +46,10 @@ class ModuleSpec:
     stage_pack: int = 0      # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
-    parallel: int = -1       # zkf_sincos: run z ahead of x/y. -1 = auto (the RTL default, = UNROLL100 < 100); 0/1 force.
-    wmultiplier: int = 0     # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric; >=8 -> slice grid).
+    parallel: int = -1       # zkf_sincos: run z ahead of x/y. -1 = auto (the RTL default, = UNROLL100 < 100);
+                             #   0/1 force.
+    wmultiplier: int = 0     # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric;
+                             #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
 
 
@@ -606,9 +608,9 @@ MODULES = [
         emit_schematic=False,
     ),
     # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the
-    # tiny-input bypass multiply, and two _zkf_fixed_to_float back ends. The rotation array is pure logic; the only DSPs
-    # are the shared 2*pi linear-correction multiply. STAGE_DECODE=1 splits the input exponent-decode cone and
-    # STAGE_NORMALIZE=2 + STAGE_PACK=1 keep the two pre-pack cones under the 100 MHz gate across PNR seeds.
+    # tiny-input bypass multiply, and one shared _zkf_fixed_to_float back end. The rotation array is pure logic; the
+    # only DSPs are the shared 2*pi linear-correction multiply. STAGE_NORMALIZE=2 + STAGE_PACK=1 keep the shared
+    # fixed-to-float pre-pack cone under the 100 MHz gate across PNR seeds.
     ModuleSpec(
         name="zkf_sincos",
         label="zkf_sincos (sin/cos of x turns, iterative folded CORDIC; one datapath reused over ceil(K*100/UNROLL100) "
@@ -622,8 +624,9 @@ MODULES = [
         unroll100=100,    # one CORDIC iteration per engine cycle (shortest combinational path).
                           # PARALLEL auto-resolves to 0 here: a full-rate z-chain can't get ahead of a full-rate x/y, so
                           # the engine stays lock-step (forcing it would need a 2-deep z-chain that misses 100 MHz).
-        stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz. (Post-narrowing
-                          #   SP=1 native multiply was tried: Yosys 87 MHz -- the unregistered DSP cascade limits; reverted.)
+        stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz.
+                          #   (Post-narrowing SP=1 native multiply was tried: Yosys 87 MHz -- the unregistered DSP
+                          #   cascade limits; reverted.)
         stage_normalize=2,  # both normshift barriers load-bearing (SN=1 reproducibly drops M18 to 99.5 MHz).
         stage_pack=1,     # rounder pack register; both it and the 2x2 product split are needed for 100 MHz.
     ),
@@ -633,19 +636,19 @@ MODULES = [
         name="zkf_sincos_w8m36",
         label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 + PARALLEL (auto: the decoupled "
               "full-rate z-path runs ahead so the PHI correction overlaps the CORDIC, -4 cycles) + STAGE_PRODUCT=3 "
-              "(4x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
+              "(3x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
         top="zkf_sincos_w8m36_synth_top",
         kind="sincos",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        unroll100=50,     # half-rate 2-cycle engine: the wide (XW=64) shift+add recurrence misses 100 MHz single-cycle.
+        unroll100=50,     # half-rate 2-cycle engine: the wide (WX=62) shift+add recurrence misses 100 MHz single-cycle.
                           # PARALLEL auto-resolves to 1: the full-rate z-path (1 iter/cycle) laps the half-rate x/y so
                           # the PHI correction overlaps the CORDIC, -4 cycles, with no Fmax or DSP cost.
-        stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz. (Post-
-                          #   narrowing SP=2 flat 3x3 sum tried: Diamond 56 / Yosys 93 MHz -- the flat sum limits; reverted.)
-        wmultiplier=18,   # 18-bit tile hint -> the 66x41 product derives a 4x3 single-tile grid (12 DSP) instead of
-                          #   the symmetric 3x3's 18; latency-neutral.
+        stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz.
+                          #   (Post-narrowing SP=2 flat 3x3 sum tried: Diamond 56 / Yosys 93 MHz -- the flat sum
+                          #   limits; reverted.)
+        wmultiplier=18,   # 18-bit tile hint keeps the narrowed 42x45 product in a 3x3 grid (9 DSP); latency-neutral.
         stage_normalize=2,
         stage_pack=1,
         emit_schematic=False,
@@ -659,7 +662,7 @@ MODULES = [
         label="zkf_atan2 (atan2(y, x) in turns + hypot(y, x), iterative vectoring CORDIC; one datapath reused over "
               "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide, II = latency; UNROLL100=50 "
               "half-rate + shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + "
-              "STAGE_PACK + STAGE_OUTPUT)",
+              "STAGE_PACK)",
         top="zkf_atan2_synth_top",
         kind="atan2",
         wexp=6,
@@ -668,12 +671,14 @@ MODULES = [
         unroll100=50,     # half-rate 2-cycle engine: the full-rate vectoring shift+add+angle-LUT recurrence is the
                           #   limiter on BOTH flows (Yosys ~100, Diamond ~75 -- 26 logic levels), insensitive to PAR;
                           #   g_pipe splits the shift-sample from the add, clearing the cone. 2 cycles/iteration.
-        stage_product=2,  # narrowed _zkf_pmul: now a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is trivial
+        stage_product=2,  # narrowed _zkf_pmul: now a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is
+                          #   trivial
                           #   and the row/column-sum split of SP=3 is no longer needed. Limiter is the radix-4 divider
                           #   (Yosys) / fixed-to-float normshift (Diamond), not the product.
         wmultiplier=18,   # 18-bit DSP-tile grid (MULT18X18D) for the magnitude / correction products.
         stage_normalize=2,  # split the fixed-to-float close-cancellation normshift (the Diamond back-end limiter).
-        stage_pack=1,     # rounder pack register in each fixed-to-float back-end (load-bearing: pack->output cone).
+        stage_pack=1,     # rounder pack register in the shared fixed-to-float back-end
+                          #   (load-bearing: pack->output cone).
         stage_output=0,   # LATENCY (-1): the wide back-end datapath is mildly over-pipelined here, so dropping the
                           #   packer output register relieves routing congestion (Yosys 112.6 MHz, Diamond >100).
     ),
@@ -682,19 +687,20 @@ MODULES = [
         name="zkf_atan2_w8m36",
         label="zkf_atan2 (WEXP=8, WMAN=36, vectoring CORDIC; UNROLL100=50 (half-rate) + stock 1-phase folded radix-4 "
               "divider (ceil(XF/2) steps + a one-cycle 3*den setup) + shared "
-              "_zkf_pmul (STAGE_PRODUCT=3, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 4x3 grid, 12 DSP) + "
+              "_zkf_pmul (STAGE_PRODUCT=3, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 62x41 product "
+              "in a 4x3 grid) + "
               "STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT; the same default LFE5U-25F as zkf_sincos_w8m36)",
         top="zkf_atan2_w8m36_synth_top",
         kind="atan2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        unroll100=50,     # half-rate 2-cycle engine for the wide (XW=64) shift+add recurrence.
-        stage_input=0,    # LATENCY EXPERIMENT (si 1->0, -1 cyc): Yosys-screened 112.7 MHz; confirming on Diamond.
-        stage_product=3,  # narrowed _zkf_pmul: 4x3 grid (KINV/INV_TAU->WMAN+5, WMAG 124->103). The 4-row column sum now
-                          #   fits in the registered row-sum + single column-sum (SP=3); the extra pairwise split of SP=4
-                          #   was for the old 4x4 wide grid and is no longer needed. Limiter is divider / normshift.
-        wmultiplier=18,   # 18-bit DSP-tile grid -> the 64x64 / ~45x60 products fit the default device.
+        unroll100=50,     # half-rate 2-cycle engine for the wide (WX=62) shift+add recurrence.
+        stage_input=0,    # LATENCY EXPERIMENT (si 1->0, -1 cyc): Yosys-screened 112.7 MHz; Diamond ECP5 confirmed.
+        stage_product=3,  # narrowed _zkf_pmul: 62x41 product in a 4x3 grid (KINV/INV_TAU->WMAN+5,
+                          #   WMAG 124->103). The row-sum staging keeps the product off the limiter; divider /
+                          #   normshift now dominate.
+        wmultiplier=18,   # 18-bit DSP-tile grid -> the 62x41 products fit the default device.
         stage_normalize=2,
         stage_pack=1,
         stage_output=1,
@@ -805,7 +811,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
     if spec.kind == "sincos":
         # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic) bound per WMAN
-        # (_zkf_cordic_m<WMAN>) + the shared correction multiply (_zkf_pmul) + two _zkf_fixed_to_float back ends.
+        # (_zkf_cordic_m<WMAN>) + the shared correction multiply (_zkf_pmul) + one shared _zkf_fixed_to_float back end.
         # Include both the default-WMAN (18) core and this spec's WMAN, deduped, so Yosys's hierarchy -check is
         # satisfied for the generic zkf_sincos too.
         def core(wman: int) -> Path:

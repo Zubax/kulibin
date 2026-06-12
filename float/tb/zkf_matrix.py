@@ -520,16 +520,16 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("atan2", sim, "pr", "w5_m11_full", 5, 11, "random", 256, si=1, sn=2, pa=1, so=1))
     # STAGE_PRODUCT / WMULTIPLIER: the shared _zkf_pmul (magnitude x_K*KINV and the residual/bypass Q*INV_TAU). Each
     # adds STAGE_PRODUCT cycles; bit-transparent. Exercise the native (sp=1) and the 2x2 (sp=2) tile-grid splits, plus
-    # the synthesised 6/18 operating point (half-rate engine + the staged DSP-tile-grid product + back-end stages).
+    # the synthesized 6/18 operating point (half-rate engine + the staged DSP-tile-grid product + back-end stages).
     out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
     out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2, wm=16))
     out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256,
-                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))
-    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=4, WMULTIPLIER=18, STAGE_NORMALIZE=2,
-    # STAGE_PACK=1, STAGE_OUTPUT=1 -- 115 cycles, 12 DSP) tested directly so its correctness + data-independent latency
+                      un=50, sp=2, wm=18, sn=2, pa=1))
+    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=3, WMULTIPLIER=18, STAGE_NORMALIZE=2,
+    # STAGE_PACK=1, STAGE_OUTPUT=1) tested directly so its correctness + data-independent latency
     # are checked, not just inferred from the knob sweeps.
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256,
-                      un=50, sp=4, wm=18, sn=2, pa=1, so=1))
+                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -652,16 +652,17 @@ def _deep_correctness(out: list) -> None:
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512,
                       si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
     # zkf_atan2 deep: a baseline per format, the UNROLL100 throughput sweep + full staging on the cheap 5/11 format,
-    # and the exact synthesized 8/36 operating point (half-rate engine + staged back-ends). Each asserts II == model.
+    # and the exact synthesized 6/18 + 8/36 operating points (half-rate engine + staged back-end).
+    # Each asserts II == model.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", s, "deep", f"atan2_{cfg}", w, m, k, c))
     for un in (50, 100, 200, 400):
         out.append(_trans("atan2", s, "deep", "atan2_w5m11_un", 5, 11, "random", 512, un=un))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11_stage", 5, 11, "random", 512, si=1, so=1, sn=2, pa=1))
     out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512,
-                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))        # the synthesised 6/18 operating point
+                      un=50, sp=2, wm=18, sn=2, pa=1))              # the synthesized 6/18 operating point
     out.append(_trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512,
-                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))  # the synthesised 8/36 operating point
+                      un=50, si=0, sp=3, wm=18, sn=2, pa=1, so=1))  # the synthesized 8/36 operating point
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
     # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
@@ -746,13 +747,14 @@ def _deep_coverage(out: list) -> None:
     # (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
     for w, m in [(2, 11), (3, 11)]:
         out.append(_trans("sincos", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
-    # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob and the
-    # fixed-to-float normshift-barrier / pack-register toggles (it has STAGE_DECODE in place of STAGE_PRODUCT).
+    # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob
+    # and the shared fixed-to-float normshift-barrier / pack-register toggles.
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
-    # zkf_atan2 coverage: random + the directed pair table at the cheap 5/11 format reach the small-ratio bypass, the
-    # residual divide, and every special/axis/diagonal pair; un=200 and sn/pa toggle the throughput and back-end staging.
+    # zkf_atan2 coverage: random + the directed pair table at the cheap 5/11 format reach the small-ratio bypass,
+    # the residual divide, and every special/axis/diagonal pair; un=200 and sn/pa toggle the throughput and back-end
+    # staging.
     # (Joint-exhaustive is infeasible for a two-input op even at the minimum WMAN, so coverage is random + directed.)
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 4000))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11_directed", 5, 11, "directed", 0))
@@ -867,7 +869,8 @@ _FAST = [
 def _fast(out: list) -> None:
     for name, module, vlog in _FAST:
         out.append(_run(module, "icarus", "fast", name, vlog, kind="exhaustive", count=0))
-    # zkf_atan2 is two-input, so joint-exhaustive is infeasible; the smoke uses the directed special/axis/diagonal pairs.
+    # zkf_atan2 is two-input, so joint-exhaustive is infeasible; the smoke uses the directed special/axis/diagonal
+    # pairs.
     out.append(_run("atan2", "icarus", "fast", "atan2",
                     [("WEXP", 5), ("WMAN", 11), ("UNROLL100", 50)], kind="directed", count=0))
 

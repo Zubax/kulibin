@@ -268,7 +268,20 @@ def _emit_consts(s: Spec) -> str:
     w("parameter integer MODE      = 0,")
     w("parameter integer UNROLL100 = 100,")
     w("parameter integer PARALLEL  = (UNROLL100 < 100) ? 1 : 0,")
-    w("parameter integer WSB       = 1")
+    w("parameter integer WSB       = 1,")
+    w(f"parameter integer EXPECT_WMAN       = {s.wman},")
+    w(f"parameter integer EXPECT_N          = {s.n},")
+    w(f"parameter integer EXPECT_XF         = {s.xf},")
+    w(f"parameter integer EXPECT_WX         = {s.xw},")
+    w(f"parameter integer EXPECT_WT         = {s.wt},")
+    w(f"parameter integer EXPECT_ZF         = {s.zf},")
+    w(f"parameter integer EXPECT_WZ         = {s.zw},")
+    w(f"parameter integer EXPECT_CONST2PI_W = {cwb},")
+    w(f"parameter integer EXPECT_CONST2PI_S = {s.const2pi_s},")
+    w(f"parameter integer EXPECT_INVTAU_W   = {itwb},")
+    w(f"parameter integer EXPECT_INVTAU_S   = {s.invtau_s},")
+    w(f"parameter integer EXPECT_KINV_MAG_W = {kmb},")
+    w(f"parameter integer EXPECT_KINV_S     = {s.kinv_s}")
     w.pop()
     w(") (")
     w.push()
@@ -299,14 +312,33 @@ def _emit_consts(s: Spec) -> str:
     w(f"localparam integer WX   = {s.xw};")
     w(f"localparam integer WZ   = {s.zw};")
     w(f"localparam integer XF   = {s.xf};   // x/y fractional scale")
+    w(f"localparam integer WT   = {s.wt};   // quadrant-local coordinate width used to derive ZF")
     w(f"localparam integer ZF   = {s.zf};   // angle (turns) fractional scale == WT + 2 + GUARD_ZF")
     w(f"localparam integer CWB  = {cwb};   // narrowed const2pi width (== WMAN+5)")
+    w(f"localparam integer ITWB = {itwb};   // narrowed inv_tau width (== WMAN+5)")
+    w(f"localparam integer KMW  = {kmb};   // narrowed kinv_mag width (== WMAN+5)")
     # Native fixed-point scales of the pre-narrowed multiplier constants. Each consumer derives its shift / exp-offset
     # from these directly: the constant's top WMAN+5 bits at scale 2**-S ARE the value to the kept precision.
     w(f"localparam integer CONST2PI_S = {s.const2pi_s};   // scale of const2pi (== WMAN+2)")
     w(f"localparam integer INVTAU_S   = {s.invtau_s};   // scale of inv_tau  (== WMAN+7)")
     w(f"localparam integer KINV_S     = {s.kinv_s};   // scale of kinv_mag (== WMAN+5)")
     w(f"localparam signed [WX-1:0] KINV = {s.xw}'sd{s.kinv};   // round(1/gain * 2**XF), the sin/cos seed")
+    w("")
+    w("""
+        // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
+        // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
+        // verilator coverage_off
+        generate
+            if ((EXPECT_WMAN       != %d) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
+                (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
+                (EXPECT_WZ         != WZ) || (EXPECT_CONST2PI_W != CWB)  || (EXPECT_CONST2PI_S != CONST2PI_S) ||
+                (EXPECT_INVTAU_W   != ITWB) || (EXPECT_INVTAU_S != INVTAU_S) ||
+                (EXPECT_KINV_MAG_W != KMW)  || (EXPECT_KINV_S   != KINV_S)) begin : g_invalid_geometry_contract
+                _zkf_invalid_cordic_geometry_contract u_invalid();
+            end
+        endgenerate
+        // verilator coverage_on
+    """ % s.wman)
     w("")
     w(f"assign const2pi = {cwb}'d{s.const2pi};")
     w(f"assign inv_tau  = {itwb}'d{s.inv_tau};")

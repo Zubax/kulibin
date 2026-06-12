@@ -24,7 +24,8 @@
 ///     correction multiplies (the operator's only ones) use the per-WMAN 2*pi constant. Tiny / below-TSA angles take
 ///     the linear small-angle bypass (sin = 2*pi*theta'_turns, cos = 1) from the same 2*pi constant.
 ///
-///  4. Unmap the octant and |x| quadrant; two _zkf_fixed_to_float back-ends renormalize and round.
+///  4. Unmap the octant and |x| quadrant; one shared _zkf_fixed_to_float back-end renormalizes and rounds sin first,
+///     then cos one cycle later. The packed sin is held until cos emerges so the outputs remain paired.
 ///
 /// Tuning knobs:
 ///
@@ -41,7 +42,7 @@
 /// STAGE_PRODUCT: Pipeline depth of the shared correction multiply and its default symmetric split.
 ///     See _zkf_pmul for details. Value = latency cycle cost.
 ///
-/// STAGE_NORMALIZE: Internal normshift barriers in each _zkf_fixed_to_float. Value = latency cycle cost.
+/// STAGE_NORMALIZE: Internal normshift barriers in the shared _zkf_fixed_to_float. Value = latency cycle cost.
 ///
 /// STAGE_PACK={0,1}: Register the _zkf_pack input (insulates the rounder from the normshift cone) (+1 cycle).
 ///
@@ -56,7 +57,7 @@
 `define ZKF_SINCOS_SAVED \
     ((PARALLEL == 0) ? 0 : ((`ZKF_SINCOS_ZGAP < `ZKF_SINCOS_PMUL_L) ? `ZKF_SINCOS_ZGAP : `ZKF_SINCOS_PMUL_L))
 `define ZKF_SINCOS_LATENCY \
-    (10 + (2 * STAGE_PRODUCT) + `ZKF_SINCOS_XYCYC - `ZKF_SINCOS_SAVED \
+    (11 + (2 * STAGE_PRODUCT) + `ZKF_SINCOS_XYCYC - `ZKF_SINCOS_SAVED \
         + STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT)
 
 module zkf_sincos #(
@@ -127,8 +128,8 @@ module zkf_sincos #(
     // its top WMAN+5 bits (round-to-nearest) at scale 2**-CONST2PI_S (CONST2PI_S = XF - the bits dropped in narrowing).
     // That already-narrowed WMAN+5-bit operand is what the grid sees, so the shared DSP column count is the narrowed
     // one, and every consumer derives its shift / exp-offset from CONST2PI_S directly --
-    // product-scale minus target-scale. Both the magnitude container and the two _zkf_fixed_to_float back-ends are
-    // sized on this narrowed CWB, so they shrink with it. Mirrors tb/zkf_model.py::sincos_reference.
+    // product-scale minus target-scale. The magnitude container and shared _zkf_fixed_to_float back-end are sized on
+    // this narrowed CWB, so they shrink with it. Mirrors tb/zkf_model.py::sincos_reference.
     localparam integer CWB  = WMAN + 5;                 // narrowed 2*pi width (== the table's const2pi port width)
     localparam integer TSA_BITS = (WT + 2) - ((WMAN + 1) / 2) - 3;  // small-angle handoff: t' < 2**TSA_BITS
     localparam integer WMAG = CWB + WT + 1;             // uniform magnitude width (small-angle full product is widest)
@@ -311,7 +312,12 @@ module zkf_sincos #(
     wire [CWB-1:0]     const2pi;
     // A WMAN without a pre-generated table names a missing module and fails loudly. We still list every possible WMAN.
     `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_cordic_m``W #(.MODE(0), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WSB(WSB)) u_cordic ( \
+        _zkf_cordic_m``W #( \
+            .MODE(0), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WSB(WSB), \
+            .EXPECT_WMAN(WMAN), .EXPECT_N(K), .EXPECT_XF(XF), .EXPECT_WX(WX), .EXPECT_WT(WT), \
+            .EXPECT_ZF(ZF), .EXPECT_WZ(WZ), \
+            .EXPECT_CONST2PI_W(CWB), .EXPECT_CONST2PI_S(CONST2PI_S) \
+        ) u_cordic ( \
             .clk(clk), .rst(rst), .start(eng_start), .sb_in(sb_red), \
             .x0({WX{1'b0}}), .y0({WX{1'b0}}), .z0(z0), \
             .busy(), .done(cd_done), .z_done(cd_zdone), .sb_out(cd_sb), \
@@ -495,7 +501,7 @@ module zkf_sincos #(
         end
     end
 
-    // Merge: octant + quadrant unmap, signs, exp_offset; then the two _zkf_fixed_to_float back-ends.
+    // Merge: octant + quadrant unmap, signs, exp_offset; then the shared _zkf_fixed_to_float back-end.
     wire signed [WE-1:0] e_o     = $signed(b2_sb[WSB-1 -: WE]);
     wire [1:0]           quad_o  = b2_sb[7 -: 2];
     wire                 oct_o   = b2_sb[5];
@@ -557,30 +563,63 @@ module zkf_sincos #(
     assign m_sin_mag = b3_sin_mag; assign m_cos_mag = b3_cos_mag;
     assign m_sin_exp = b3_sin_exp; assign m_cos_exp = b3_cos_exp; assign m_quad = b3_quad;
 
-    // The two _zkf_fixed_to_float back-ends pulse `be_valid` with the (sin, cos, quadrant) result.
-    wire             be_valid;
-    wire [WFULL-1:0] be_sin, be_cos;
-    wire [1:0]       be_quad;
+    // One shared _zkf_fixed_to_float back-end. SIN is issued on m_valid, COS is issued one cycle later from the
+    // registered COS payload below. The back-end output is tagged; packed SIN and quadrant are latched when the SIN
+    // pass emerges, then paired with the packed COS when the COS pass emerges one cycle later.
+    reg                  c_valid, c_inf, c_sgn;
+    reg [WMAG-1:0]       c_mag;
+    reg signed [WEU-1:0] c_exp;
+    always @(posedge clk) begin
+        if (rst) c_valid <= 1'b0;
+        else     c_valid <= m_valid;
+        c_inf <= m_inf; c_sgn <= m_cos_sgn; c_mag <= m_cos_mag; c_exp <= m_cos_exp;
+    end
+
+    wire                  sh_is_cos = c_valid;
+    wire                  sh_valid  = m_valid | c_valid;
+    wire                  sh_inf    = sh_is_cos ? c_inf     : m_inf;
+    wire                  sh_sgn    = sh_is_cos ? c_sgn     : m_sin_sgn;
+    wire [WMAG-1:0]       sh_mag    = sh_is_cos ? c_mag     : m_sin_mag;
+    wire signed [WEU-1:0] sh_exp    = sh_is_cos ? c_exp     : m_sin_exp;
+    localparam integer WSB2 = 3;                         // {is_cos, quadrant}; quadrant is meaningful on the SIN pass
+    wire [WSB2-1:0]       sh_sb     = {sh_is_cos, sh_is_cos ? 2'b00 : m_quad};
+
+`ifdef SIMULATION
+    always @(posedge clk) begin
+        if (!rst && m_valid && c_valid)
+            $fatal(1, "zkf_sincos: shared back-end collision -- sin and cos issued on the same cycle");
+    end
+`endif
+
+    wire             be_ov;
+    wire [WFULL-1:0] be_num;
+    wire [WSB2-1:0]  be_sbo;
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
-        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .WSB(2),
+        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .WSB(WSB2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
-    ) u_sin (
+    ) u_f2f (
         .clk(clk), .rst(rst),
-        .in_valid(m_valid), .sign(m_sin_sgn), .force_zero(1'b0), .force_inf(m_inf),
-        .exp_offset(m_sin_exp), .mag(m_sin_mag), .sb_in(m_quad),
-        .out_valid(be_valid), .y(be_sin), .sb_out(be_quad)
+        .in_valid(sh_valid), .sign(sh_sgn), .force_zero(1'b0), .force_inf(sh_inf),
+        .exp_offset(sh_exp), .mag(sh_mag), .sb_in(sh_sb),
+        .out_valid(be_ov), .y(be_num), .sb_out(be_sbo)
     );
-    _zkf_fixed_to_float #(
-        .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
-        .EXP_IS_BIASED(0), .ASSUME_NO_OVERFLOW(1), .WSB(2),
-        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
-    ) u_cos (
-        .clk(clk), .rst(rst),
-        .in_valid(m_valid), .sign(m_cos_sgn), .force_zero(1'b0), .force_inf(m_inf),
-        .exp_offset(m_cos_exp), .mag(m_cos_mag), .sb_in(2'b00),
-        .out_valid(), .y(be_cos), .sb_out()
-    );
+
+    wire             be_is_cos   = be_sbo[WSB2-1];
+    wire [1:0]       be_quad_sin = be_sbo[1:0];
+    reg [WFULL-1:0]  sin_num_r;
+    reg [1:0]        quad_r;
+    always @(posedge clk) begin
+        if (be_ov && !be_is_cos) begin
+            sin_num_r <= be_num;
+            quad_r    <= be_quad_sin;
+        end
+    end
+
+    wire             be_valid = be_ov & be_is_cos;
+    wire [WFULL-1:0] be_sin   = sin_num_r;
+    wire [WFULL-1:0] be_cos   = be_num;
+    wire [1:0]       be_quad  = quad_r;
 
     // Output handshake with back-pressure. Only one transaction is ever in flight (busy stalls the engine until the
     // finished result is taken), so the result simply waits for out_ready. STAGE_OUTPUT selects WHERE it is held:

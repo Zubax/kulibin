@@ -11,7 +11,20 @@ module _zkf_cordic_m53 #(
     parameter integer MODE      = 0,
     parameter integer UNROLL100 = 100,
     parameter integer PARALLEL  = (UNROLL100 < 100) ? 1 : 0,
-    parameter integer WSB       = 1
+    parameter integer WSB       = 1,
+    parameter integer EXPECT_WMAN       = 53,
+    parameter integer EXPECT_N          = 28,
+    parameter integer EXPECT_XF         = 86,
+    parameter integer EXPECT_WX         = 88,
+    parameter integer EXPECT_WT         = 79,
+    parameter integer EXPECT_ZF         = 87,
+    parameter integer EXPECT_WZ         = 90,
+    parameter integer EXPECT_CONST2PI_W = 58,
+    parameter integer EXPECT_CONST2PI_S = 55,
+    parameter integer EXPECT_INVTAU_W   = 58,
+    parameter integer EXPECT_INVTAU_S   = 60,
+    parameter integer EXPECT_KINV_MAG_W = 58,
+    parameter integer EXPECT_KINV_S     = 58
 ) (
     input  wire                clk,
     input  wire                rst,
@@ -36,12 +49,29 @@ module _zkf_cordic_m53 #(
     localparam integer WX   = 88;
     localparam integer WZ   = 90;
     localparam integer XF   = 86;   // x/y fractional scale
+    localparam integer WT   = 79;   // quadrant-local coordinate width used to derive ZF
     localparam integer ZF   = 87;   // angle (turns) fractional scale == WT + 2 + GUARD_ZF
     localparam integer CWB  = 58;   // narrowed const2pi width (== WMAN+5)
+    localparam integer ITWB = 58;   // narrowed inv_tau width (== WMAN+5)
+    localparam integer KMW  = 58;   // narrowed kinv_mag width (== WMAN+5)
     localparam integer CONST2PI_S = 55;   // scale of const2pi (== WMAN+2)
     localparam integer INVTAU_S   = 60;   // scale of inv_tau  (== WMAN+7)
     localparam integer KINV_S     = 58;   // scale of kinv_mag (== WMAN+5)
     localparam signed [WX-1:0] KINV = 88'sd46983920138816059005620361;   // round(1/gain * 2**XF), the sin/cos seed
+
+    // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
+    // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
+    // verilator coverage_off
+    generate
+        if ((EXPECT_WMAN       != 53) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
+            (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
+            (EXPECT_WZ         != WZ) || (EXPECT_CONST2PI_W != CWB)  || (EXPECT_CONST2PI_S != CONST2PI_S) ||
+            (EXPECT_INVTAU_W   != ITWB) || (EXPECT_INVTAU_S != INVTAU_S) ||
+            (EXPECT_KINV_MAG_W != KMW)  || (EXPECT_KINV_S   != KINV_S)) begin : g_invalid_geometry_contract
+            _zkf_invalid_cordic_geometry_contract u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
 
     assign const2pi = 58'd226375608064910089;
     assign inv_tau  = 58'd183493156455125077;

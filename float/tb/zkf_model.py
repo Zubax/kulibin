@@ -809,7 +809,7 @@ def sincos_reference(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
     ff = wt + 2
     zg = zf - (wt + 2)                                   # extra angle-accumulator fractional bits (GUARD_ZF)
     # Uniform magnitude width: the small-angle bypass product (const2pi * t') is the widest. With the narrowed const2pi
-    # (WMAN+5 bits) the magnitude container -- and both _zkf_fixed_to_float back-ends -- shrink accordingly. The CORDIC
+    # (WMAN+5 bits) the magnitude container and shared _zkf_fixed_to_float back-end shrink accordingly. The CORDIC
     # magnitudes sit at scale 2**-xf (read back by eone_xf); the bypass/tiny/TSA magnitudes are const2pi products at
     # scale 2**-const2pi_s (read back by eone_s minus the angle's own scale). RTL mirrors this width + exp convention.
     cwb = const2pi.bit_length()                          # narrowed 2*pi width == WMAN+5

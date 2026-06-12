@@ -11,7 +11,20 @@ module _zkf_cordic_m27 #(
     parameter integer MODE      = 0,
     parameter integer UNROLL100 = 100,
     parameter integer PARALLEL  = (UNROLL100 < 100) ? 1 : 0,
-    parameter integer WSB       = 1
+    parameter integer WSB       = 1,
+    parameter integer EXPECT_WMAN       = 27,
+    parameter integer EXPECT_N          = 15,
+    parameter integer EXPECT_XF         = 47,
+    parameter integer EXPECT_WX         = 49,
+    parameter integer EXPECT_WT         = 40,
+    parameter integer EXPECT_ZF         = 48,
+    parameter integer EXPECT_WZ         = 51,
+    parameter integer EXPECT_CONST2PI_W = 32,
+    parameter integer EXPECT_CONST2PI_S = 29,
+    parameter integer EXPECT_INVTAU_W   = 32,
+    parameter integer EXPECT_INVTAU_S   = 34,
+    parameter integer EXPECT_KINV_MAG_W = 32,
+    parameter integer EXPECT_KINV_S     = 32
 ) (
     input  wire                clk,
     input  wire                rst,
@@ -36,12 +49,29 @@ module _zkf_cordic_m27 #(
     localparam integer WX   = 49;
     localparam integer WZ   = 51;
     localparam integer XF   = 47;   // x/y fractional scale
+    localparam integer WT   = 40;   // quadrant-local coordinate width used to derive ZF
     localparam integer ZF   = 48;   // angle (turns) fractional scale == WT + 2 + GUARD_ZF
     localparam integer CWB  = 32;   // narrowed const2pi width (== WMAN+5)
+    localparam integer ITWB = 32;   // narrowed inv_tau width (== WMAN+5)
+    localparam integer KMW  = 32;   // narrowed kinv_mag width (== WMAN+5)
     localparam integer CONST2PI_S = 29;   // scale of const2pi (== WMAN+2)
     localparam integer INVTAU_S   = 34;   // scale of inv_tau  (== WMAN+7)
     localparam integer KINV_S     = 32;   // scale of kinv_mag (== WMAN+5)
     localparam signed [WX-1:0] KINV = 49'sd85463252922614;   // round(1/gain * 2**XF), the sin/cos seed
+
+    // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
+    // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
+    // verilator coverage_off
+    generate
+        if ((EXPECT_WMAN       != 27) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
+            (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
+            (EXPECT_WZ         != WZ) || (EXPECT_CONST2PI_W != CWB)  || (EXPECT_CONST2PI_S != CONST2PI_S) ||
+            (EXPECT_INVTAU_W   != ITWB) || (EXPECT_INVTAU_S != INVTAU_S) ||
+            (EXPECT_KINV_MAG_W != KMW)  || (EXPECT_KINV_S   != KINV_S)) begin : g_invalid_geometry_contract
+            _zkf_invalid_cordic_geometry_contract u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
 
     assign const2pi = 32'd3373259426;
     assign inv_tau  = 32'd2734261102;

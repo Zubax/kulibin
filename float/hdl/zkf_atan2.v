@@ -117,10 +117,10 @@ module zkf_atan2 #(
     localparam integer WQUO  = F + 1;                   // quotient: integer bit (bypass) + F fractional bits
     localparam integer WCNT  = $clog2(STEPS + 1);
 
-    // Both _zkf_fixed_to_float back-ends share one magnitude width sized to the widest pre-narrowed product: the MAG
-    // product x_K*kinv_mag (WX + KINV_MAG bits), the residual/bypass product Q*inv_tau (WQUO + ITWB bits), and the
-    // residual theta_mag container (WZ + 2 bits). With the WMAN+5-bit narrowed operands this is the minimal width
-    // (103 vs the full-precision 2*XF+4 == 124 at WMAN=36).
+    // The shared _zkf_fixed_to_float back-end uses one magnitude width sized to the widest pre-narrowed product:
+    // the MAG product x_K*kinv_mag (WX + KINV_MAG bits), the residual/bypass product Q*inv_tau (WQUO + ITWB bits),
+    // and the residual theta_mag container (WZ + 2 bits). With the WMAN+5-bit narrowed operands this is the minimal
+    // width (103 vs the full-precision 2*XF+4 == 124 at WMAN=36).
     localparam integer WMAG_MAG = WX + KINV_MAG;
     localparam integer WMAG_QT  = WQUO + ITWB;
     localparam integer WMAG_TH  = WZ + 2;
@@ -436,7 +436,13 @@ module zkf_atan2 #(
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
     `define ZKF_ATAN2_CORE(W) end else if (WMAN == W) begin : g_m``W \
-        _zkf_cordic_m``W #(.MODE(1), .UNROLL100(UNROLL100), .PARALLEL(0), .WSB(WSB)) u_cordic ( \
+        _zkf_cordic_m``W #( \
+            .MODE(1), .UNROLL100(UNROLL100), .PARALLEL(0), .WSB(WSB), \
+            .EXPECT_WMAN(WMAN), .EXPECT_N(N), .EXPECT_XF(XF), .EXPECT_WX(WX), .EXPECT_WT(WT), \
+            .EXPECT_ZF(ZF), .EXPECT_WZ(WZ), \
+            .EXPECT_INVTAU_W(ITWB), .EXPECT_INVTAU_S(INVTAU_S), \
+            .EXPECT_KINV_MAG_W(KINV_MAG), .EXPECT_KINV_S(KINV_S) \
+        ) u_cordic ( \
             .clk(clk), .rst(rst), .start(eng_start), .sb_in(f2_sb), \
             .x0(f2_x0), .y0(f2_y0), .z0({WZ{1'b0}}), \
             .busy(), .done(cd_done), .z_done(), .sb_out(cd_sb), \
@@ -615,9 +621,10 @@ module zkf_atan2 #(
     wire div_sticky = |dv_rem;                                   // remainder != 0 (jammed into the bypass mag sticky)
 
     // Sim-only invariant locked at arm time (cd_done): dropping the res_den zero-guard relies on the residual divisor
-    // x_K being > 0 for every finite (non-special) transaction. Synthesis never sees this block; the bring-up tb and the
-    // cocotb suites (icarus/verilator) run with SIMULATION=1, so it fires under exhaustive stimulus -- same convention as
-    // the shared-back-end mutex assertion below. (Specials may leave cd_xn == 0, but their divide output is discarded.)
+    // x_K being > 0 for every finite (non-special) transaction. Synthesis never sees this block; the bring-up tb and
+    // the cocotb suites (icarus/verilator) run with SIMULATION=1, so it fires under exhaustive stimulus -- same
+    // convention as the shared-back-end mutex assertion below. (Specials may leave cd_xn == 0, but their divide output
+    // is discarded.)
 `ifdef SIMULATION
     always @(posedge clk) begin
         if (!rst && cd_done && !be_special && !(cd_xn > 0))
@@ -767,10 +774,10 @@ module zkf_atan2 #(
             $fatal(1, "zkf_atan2: shared back-end collision -- mag_be_issue and b2_valid both high");
     end
 `endif
-    // Input mux: (mag, exp_offset, sign) = (x_K*kinv_mag product, mag_be_exp, 0) for MAG vs (b2_tmag, b2_texp, b2_tsign)
-    // for theta. Only the TAG (MAG vs THETA) needs the f2f back-end's delay alignment; the special descriptor
-    // {special, sp_sign, spk, sp_mag} is read DIRECTLY from the held dv_* regs at the output (see below), so it is not
-    // carried through the f2f pipe -- shrinking the sideband from WFULL+5 to a single bit.
+    // Input mux: (mag, exp_offset, sign) = (x_K*kinv_mag product, mag_be_exp, 0) for MAG vs
+    // (b2_tmag, b2_texp, b2_tsign) for theta. Only the TAG (MAG vs THETA) needs the f2f back-end's delay alignment;
+    // the special descriptor {special, sp_sign, spk, sp_mag} is read DIRECTLY from the held dv_* regs at the output
+    // (see below), so it is not carried through the f2f pipe -- shrinking the sideband from WFULL+5 to a single bit.
     // verilator coverage_off
     wire [WMAG-1:0]       share_mag = share_is_th ? b2_tmag  : pmul_p;
     wire signed [WEU-1:0] share_exp = share_is_th ? b2_texp  : mag_be_exp;
