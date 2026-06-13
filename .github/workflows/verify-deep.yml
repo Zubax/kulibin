@@ -42,7 +42,7 @@ jobs:
         run: make lint
 
       - name: Run maximum verification
-        run: make verify-deep
+        run: make verify-deep FLOAT_PRUNE_BUILDS=1
 
       - name: Upload formal verification report
         if: always()
@@ -60,7 +60,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: float-coverage-report
-          path: build/float/coverage/
+          path: |
+            build/float/coverage/
+            build/float/coverage-full/
           retention-days: 30
 
   # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis, in its own job so its multi-hour

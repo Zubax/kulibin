@@ -22,4 +22,4 @@ jobs:
         run: make lint
 
       - name: Run all testbenches
-        run: make verify
+        run: make verify FLOAT_PRUNE_BUILDS=1

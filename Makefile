@@ -12,6 +12,8 @@ FLOAT_PYTHONPATH = $(CURDIR)/float/tb$(if $(PYTHONPATH),:$(PYTHONPATH))
 # coverage.dat), so pytest-xdist fans them across cores. FLOAT_JOBS=auto uses every core; set FLOAT_JOBS=1 to serialize.
 # xdist is loaded explicitly with -p; if not installed the run silently falls back to serial.
 FLOAT_JOBS ?= auto
+# Set to 1 in disk-constrained CI to remove successful per-config build roots after preserving coverage data.
+FLOAT_PRUNE_BUILDS ?= 0
 ifeq ($(filter 0 1,$(FLOAT_JOBS)),)
   FLOAT_XDIST := $(shell $(PYTHON) -c "import xdist" >/dev/null 2>&1 && echo "-p xdist -n $(FLOAT_JOBS)")
 else
@@ -25,6 +27,7 @@ endif
 # rest of `verify`); append -m to pick a tier (see float/pytest.ini).
 FLOAT_PYTEST = PYTHONPATH="$(FLOAT_PYTHONPATH)" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_ADDOPTS= \
 	FUSESOC="$(FUSESOC)" PYTHON="$(PYTHON)" FLOAT_SEED="$(FLOAT_SEED)" \
+	FLOAT_PRUNE_BUILDS="$(FLOAT_PRUNE_BUILDS)" \
 	$(PYTHON) -m pytest -c float/pytest.ini float/tb/test_float_matrix.py -x -v $(FLOAT_XDIST)
 
 TARGETS = \
