@@ -9,7 +9,7 @@
 /// Behavior (no NaN, only +0; tiny negative results flush to +0):
 ///   theta = atan2(y, x) / (2*pi)   [turns]; mag = hypot(y, x). Axis/diagonal specials:
 ///     y=+0,x>0 -> +0 ; y=+0,x<0 -> 1/2 ; y>0,x=0 -> 1/4 ; y<0,x=0 -> -1/4 ; y=0,x=0 -> +0 (mag +0).
-///     |y|=inf,x finite -> +-1/4 ; x=+inf,y finite -> +-0 -> +0 ; x=-inf,y finite -> +-1/2 ;
+///     |y|=inf,x finite -> +-1/4 ; x=+inf,y finite -> +-0 -> +0 ; x=-inf,y finite -> +1/2 ;
 ///     (inf,inf) -> +-1/8 (x>0) / +-3/8 (x<0).  mag = +inf whenever any input is inf.
 ///
 /// Algorithm (vectoring mixed CORDIC; the engine is in _zkf_cordic):
@@ -157,8 +157,9 @@ module zkf_atan2 #(
     endgenerate
     // verilator coverage_on
 
-    // k/8 of a turn (k in {0:+0, 1:1/8, 2:1/4, 3:3/8, 4:1/2}) with sign s, correctly rounded to ZKF. The constants are
-    // exact dyadics, but for very small WEXP they can underflow the normal range -- so this mirrors
+    // k/8 of a turn (k in {0:+0, 1:1/8, 2:1/4, 3:3/8, 4:+1/2}) with sign s, correctly rounded to ZKF. The half-turn
+    // endpoint is canonical +1/2; signed -1/2 is normalized there. The constants are exact dyadics, but for very small
+    // WEXP they can underflow the normal range -- so this mirrors
     // round_fraction_to_zkf / _zkf_pack: a normal result when the biased exponent is >= 1, else MIN_NORMAL when it is
     // exactly 0 (each k/8 is a normalized 1.f, so biased == 0 means the value is in [0.5*MIN_NORMAL, MIN_NORMAL)
     // and rounds up), else flush to +0. (For WEXP >= 4 all four constants are normal, so only the tiny WEXP {2,3}
@@ -197,10 +198,10 @@ module zkf_atan2 #(
     `undef TURN8_EB
     `undef TURN8_BODY
     `undef TURN8_ISZERO
-    // Pure 5-way select of the precomputed constant bodies; the runtime sign is ORed in. No runtime add/compare -> no
-    // carry chain on the evaluating cone. Bit-exact to the former arithmetic turn8 over the WHOLE (s, k) space: k == 0
-    // -> +0; k in 1..4 -> the octant body (or +0 when it underflowed, via TURN8_Z*); the unused k >= 5 codes mirror
-    // the former eunb == 0 fall-through (TURN8_KNZ, never +0 for WEXP >= 2), so no input maps differently.
+    // Pure 5-way select of the precomputed constant bodies; no runtime add/compare -> no carry chain on the evaluating
+    // cone. k == 0 -> +0; k in 1..4 -> the octant body (or +0 when it underflowed, via TURN8_Z*); k == 4 forces the
+    // sign clear because the half-turn endpoint is canonical +1/2; the unused k >= 5 codes mirror the former eunb == 0
+    // fall-through (TURN8_KNZ, never +0 for WEXP >= 2).
     function automatic [WFULL-1:0] turn8;
         input               s;
         input [2:0]         k;
@@ -217,7 +218,7 @@ module zkf_atan2 #(
                 default: begin body = TURN8_KNZ; zero = 1'b0;     end       // unused k >= 5 (mirrors old eunb 0)
                 // verilator coverage_on
             endcase
-            turn8 = zero ? {WFULL{1'b0}} : {s, body};
+            turn8 = zero ? {WFULL{1'b0}} : {(k == 3'd4) ? 1'b0 : s, body};
         end
     endfunction
 

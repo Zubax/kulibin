@@ -43,16 +43,19 @@ class RegisterStageScoreboard:
         register_stages: int,
         context: TestContext,
         outputs: dict[str, tuple[object, int]],
+        reset_passthrough: bool = False,
     ) -> None:
         if register_stages < 0:
             raise ValueError(f"register_stages must be non-negative, got {register_stages}")
+        if reset_passthrough and register_stages != 0:
+            raise ValueError("reset_passthrough is only valid for zero-register combinational paths")
         self._dut = dut
         # A combinational module (register_stages == 0) is observed exactly like a single-stage one: the driver holds
-        # the inputs across the sampling edge, so the held combinational output is still valid one edge after the
-        # drive. out_valid is gated by rst on such modules, so the reset/gap checks below behave identically.
+        # the inputs across the sampling edge, so the held combinational output is still valid one edge after the drive.
         self._queue_delay = max(0, register_stages - 1)
         self._context = context
         self._outputs = outputs
+        self._reset_passthrough = reset_passthrough
         self._queue: deque[tuple[dict[str, int], str] | None] = deque([None] * self._queue_delay)
         self.checked = 0
 
@@ -101,16 +104,33 @@ class RegisterStageScoreboard:
         if self._queue_delay > 0:
             self._queue.append(current)
 
-    async def reset(self, cycles: int, drive_during_reset: Callable[[], None] | None = None) -> None:
+    async def reset(
+        self,
+        cycles: int,
+        drive_during_reset: Callable[[], dict[str, int] | None] | None = None,
+    ) -> None:
         self._dut.rst.value = 1
         self.clear()
         for _ in range(cycles):
+            expected = None
             if drive_during_reset is not None:
-                drive_during_reset()
+                expected = drive_during_reset()
             await RisingEdge(self._dut.clk)
             await Timer(1, unit="ns")
             assert is_resolvable(self._dut.out_valid), self._message("out_valid is unresolved during reset")
-            assert int(self._dut.out_valid.value) == 0, self._message("out_valid asserted during reset")
+            observed_valid = int(self._dut.out_valid.value)
+            if self._reset_passthrough and expected is not None:
+                assert observed_valid == 1, self._message("expected out_valid=1 during reset")
+                for name, expected_value in expected.items():
+                    handle, width = self._outputs[name]
+                    assert is_resolvable(handle), self._message(f"{name} is unresolved during reset")
+                    observed_value = int(handle.value)
+                    assert observed_value == expected_value, self._message(
+                        f"{name} reset mismatch expected={hex_bits(expected_value, width)} "
+                        f"observed={hex_bits(observed_value, width)}"
+                    )
+            else:
+                assert observed_valid == 0, self._message("out_valid asserted during reset")
             self.clear()
         self._dut.rst.value = 0
         self.clear()
@@ -131,9 +151,9 @@ async def run_stream_cases(
             expected = drive_case(case)
             await scoreboard.tick(expected, describe_case(index, case))
 
-        def drive_reset_sample() -> None:
+        def drive_reset_sample() -> dict[str, int]:
             dut.in_valid.value = 1
-            drive_case(cases[0])
+            return drive_case(cases[0])
 
         await scoreboard.reset(2, drive_during_reset=drive_reset_sample)
         scoreboard.checked = 0

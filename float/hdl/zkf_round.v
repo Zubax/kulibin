@@ -206,7 +206,9 @@ module zkf_round #(
     // guard/round/sticky and a pre-biased exponent (EXP_IS_BIASED=1), so it only canonicalizes specials and
     // detects overflow. The biased exponent is exp_in + carry; the sub-one branch is exactly +-1.0 (exp == BIAS).
     // The overflow case still rides this exponent: max_finite (exp == 2^WEXP-2) + carry == 2^WEXP-1 == EXP_INF.
-    wire signed [WEU-1:0] exp_biased_a = $signed({{(WEU-WEXP){1'b0}},exp_biased_d}) + $signed({{(WEU-1){1'b0}},carry});
+    wire signed [WEU-1:0] exp_biased_base = $signed({{(WEU-WEXP){1'b0}}, exp_biased_d});
+    wire signed [WEU-1:0] exp_biased_inc  = exp_biased_base + $signed({{(WEU-1){1'b0}}, 1'b1});
+    wire signed [WEU-1:0] exp_biased_a    = carry ? exp_biased_inc : exp_biased_base;
     wire                  force_inf    = is_inf;
     wire                  force_zero   = is_zero | (sub_one & ~inc_c);
     wire [WMAN-1:0]       significand  = sub_one ? {1'b1, {WFRAC{1'b0}}} : sig_norm_a;

@@ -159,7 +159,13 @@ async def resize_runtime_cases(dut) -> None:
     drive_unsigned(dut.a, 0)
 
     register_stages = resize_latency(stage_input=context.stage_input, stage_output=context.stage_output)
-    scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt_out.wfull)})
+    scoreboard = RegisterStageScoreboard(
+        dut,
+        register_stages,
+        context,
+        {"y": (dut.y, fmt_out.wfull)},
+        reset_passthrough=register_stages == 0,
+    )
 
     def drive_case(case: ResizeCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
@@ -172,9 +178,9 @@ async def resize_runtime_cases(dut) -> None:
     def describe(index: int, case: ResizeCase) -> str:
         return f"case={index} {case.describe(fmt_in, fmt_out)}"
 
-    def drive_reset_sample() -> None:
+    def drive_reset_sample() -> dict[str, int]:
         dut.in_valid.value = 1
-        drive_case(cases[0])
+        return drive_case(cases[0])
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)

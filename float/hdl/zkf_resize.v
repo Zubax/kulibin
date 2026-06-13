@@ -136,8 +136,7 @@ module zkf_resize #(
                 assign out_valid = s_valid;
                 assign y         = s_y;
             end else begin : g_owc
-                // Combinational output: gate out_valid by rst so reset still suppresses output without a register.
-                assign out_valid = in_valid_q & ~rst;
+                assign out_valid = in_valid_q;
                 assign y         = y_widen;
             end
         end else begin : g_pack

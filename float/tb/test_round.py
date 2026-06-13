@@ -146,7 +146,13 @@ async def round_runtime_cases(dut) -> None:
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
     )
-    scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
+    scoreboard = RegisterStageScoreboard(
+        dut,
+        register_stages,
+        context,
+        {"y": (dut.y, fmt.wfull)},
+        reset_passthrough=register_stages == 0,
+    )
 
     def drive_case(case: RoundCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
@@ -161,9 +167,9 @@ async def round_runtime_cases(dut) -> None:
     def describe(index: int, case: RoundCase) -> str:
         return f"case={index} {case.describe(fmt)}"
 
-    def drive_reset_sample() -> None:
+    def drive_reset_sample() -> dict[str, int]:
         dut.in_valid.value = 1
-        drive_case(cases[0])
+        return drive_case(cases[0])
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)

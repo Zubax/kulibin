@@ -52,6 +52,7 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
         one, mone, two = nums["one"], nums["minus_one"], nums["two"]
         big = normal(fmt, 0, fmt.exp_max_finite, 0)
         tiny = normal(fmt, 0, 1, 0)
+        neginf = sgn | inf
         # Four sign quadrants and the octant diagonals (|y| == |x| -> +-1/8, +-3/8).
         for sy in (0, 1):
             for sx in (0, 1):
@@ -70,6 +71,8 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             out.append((f"xsmall_{s}", big | sb, tiny))
             out.append((f"ybig_xone_{s}", big | sb, one))
             out.append((f"yone_xbig_{s}", one | sb, big | sb))
+        out.append(("xneginf_ypos_finite", one, neginf))
+        out.append(("xneginf_yneg_finite", mone, neginf))
         # |y/x| straddling the small-ratio bypass boundary across the whole exponent range (x = +1).
         for e in range(1, fmt.exp_inf):
             out.append((f"sweep_y_{e}", normal(fmt, 0, e, fmt.frac_mask), one))
@@ -188,6 +191,11 @@ async def atan2_runtime_cases(dut) -> None:
             f"SO={context.stage_output})"
         )
         got = {"theta": int(dut.theta.value), "mag": int(dut.mag.value)}
+        if case.label == "xneginf_yneg_finite":
+            assert ((got["theta"] >> fmt.sign_shift) & 1) == 0, (
+                f"{context.prefix()} case={index} {case.describe(fmt)}: "
+                f"negative-y x=-inf endpoint returned a negative theta"
+            )
         exp = {"theta": case.theta, "mag": case.mag}
         assert got == exp, (
             f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"

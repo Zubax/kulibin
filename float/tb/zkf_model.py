@@ -975,7 +975,9 @@ def _cordic_vector(spec: dict, x0: int, y0: int, n: int) -> tuple[int, int, int]
 
 
 def _atan2_turn(fmt: ZkfFormat, sign: int, frac: Fraction) -> int:
-    """A signed exact-dyadic turn constant (e.g. 1/8, 1/4, 3/8, 1/2) as a ZKF float (round is exact for these)."""
+    """A signed exact-dyadic turn constant as a ZKF float; the half-turn endpoint canonicalizes to +1/2."""
+    if frac == Fraction(1, 2):
+        sign = 0
     return round_fraction_to_zkf(fmt, sign, frac)
 
 
@@ -991,7 +993,7 @@ def _atan2_special(fmt: ZkfFormat, y_bits: int, x_bits: int) -> tuple[int, int] 
             return _atan2_turn(fmt, dy.sign, Fraction(3, 8) if dx.sign else Fraction(1, 8)), mag
         if dy.is_inf:                                     # |y|=inf, x finite -> +-1/4 (vertical)
             return _atan2_turn(fmt, dy.sign, Fraction(1, 4)), mag
-        if dx.sign:                                       # x=-inf -> +-1/2 (y=0 -> +1/2: ZKF zeros canonicalize to +0)
+        if dx.sign:                                       # x=-inf -> half-turn endpoint, canonicalized to +1/2
             return _atan2_turn(fmt, 0 if dy.is_zero else dy.sign, Fraction(1, 2)), mag
         return zero(fmt), mag                             # x=+inf, y finite -> +-0 -> +0 (no -0)
     if dx.is_zero and dy.is_zero:

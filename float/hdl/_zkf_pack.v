@@ -209,9 +209,7 @@ module _zkf_pack #(
             assign out_valid = out_valid_r;
             assign y         = y_r;
         end else begin : g_out_comb
-            // Combinational output: out_valid is gated by rst so the stream-control contract (no output during reset)
-            // still holds without a register; the payload y is reset-independent, as on the registered path.
-            assign out_valid = i_valid & ~rst;
+            assign out_valid = i_valid;
             assign y         = {out_sign, out_exp, out_frac};
         end
     endgenerate

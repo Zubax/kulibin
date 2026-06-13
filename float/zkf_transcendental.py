@@ -71,8 +71,7 @@ ACC_MARGIN = 1  # extra accumulator bits above the measured maximum, guarding ag
 
 # Minimum supported WMAN for exp2/log2 generated tables. The K_CAP=11 geometry would fit a few narrower formats, but the
 # shipped exp2/log2 contract starts at WMAN=16 to keep the table family focused on useful precisions and avoid carrying
-# the old WMAN=11 area/accuracy tradeoff. The public hdl/zkf_<func>.v modules reject WMAN < 16 explicitly; a WMAN in
-# [16, 53] without a pre-generated table still fails elaboration loudly by naming an undefined table module.
+# the old WMAN=11 area/accuracy tradeoff.
 WMAN_MIN, WMAN_MAX = 16, 53
 
 # WMAN values shipped with pre-generated tables: FPGA-friendly significand sizes and the standard IEEE 754 ones. New
