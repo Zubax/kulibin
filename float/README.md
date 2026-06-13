@@ -85,7 +85,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_is_finite`       | ⇝ |       | True iff `x` is finite.                                        |                             |
 | `zkf_saturate`        | ⇝ |       | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
 | `zkf_cmp`             | ⇻ | 1     | Compare two values.                                            |                             |
-| `zkf_sort`            | ⇻ | 1     | Min and max of two values.                                     |                             |
+| `zkf_sort`            | ⇻ | 1     | Min and max of two values.                                     | Does not canonicalize       |
 | `zkf_add`             | ⇻ | 1     | `a + b`.                                                       |                             |
 | `zkf_addsub`          | ⇻ | 1     | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
 | `zkf_mul`             | ⇻ | 1     | `a⋅b`.                                                         |                             |
