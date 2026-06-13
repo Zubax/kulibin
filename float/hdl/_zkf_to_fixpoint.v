@@ -62,8 +62,10 @@ module _zkf_to_fixpoint #(
         if ((WEXP < 2) || (WMAN < 4) || (WI < 2)) begin : g_invalid_widths
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // BIAS / LEFT_SHIFT_BASE / MAG_OVER_BASE below use unsized integer shifts on WEXP; WEXP >= 31 overflows
-        // Verilog's 32-bit integer constant arithmetic and yields tool-dependent values.
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        // Shift by WEXP >= 31 overflows Verilog's 32-bit integer constant arithmetic and yields tool-dependent values.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_to_fixpoint_wexp_too_wide_unportable u_invalid();
         end

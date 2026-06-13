@@ -2,7 +2,7 @@
 ///   theta = atan2(y, x) in turns, range (-0.5, 0.5];   mag = hypot(y, x) = sqrt(x*x + y*y)
 ///
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
-/// fixed data-invariant latency and pulses `out_valid` with the result, accepting the next transaction afterward.
+/// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
 /// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
 ///
 /// Behavior (no NaN, only +0; tiny negative results flush to +0):

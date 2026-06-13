@@ -2,7 +2,7 @@
 ///   sin = sin(2*pi*x), cos = cos(2*pi*x)
 ///
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
-/// fixed data-invariant latency and pulses `out_valid` with the result, accepting the next transaction afterward.
+/// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
 /// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
 /// Behavior:
 ///

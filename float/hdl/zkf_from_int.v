@@ -39,8 +39,10 @@ module zkf_from_int #(
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
-        // STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT forward to _zkf_fixed_to_float's owners, which validate ranges.
+        // Shift by WEXP >= 32 would overflow Verilog's integer constant arithmetic and yield tool-dependent values.
+        if (WEXP >= 32) begin : g_invalid_wexp_too_wide
+            _zkf_invalid_from_int_wexp_too_wide_unportable u_invalid();
+        end
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end

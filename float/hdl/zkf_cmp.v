@@ -29,6 +29,9 @@ module zkf_cmp #(
 
     // verilator coverage_off
     generate
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
         if (LATENCY != `ZKF_CMP_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end

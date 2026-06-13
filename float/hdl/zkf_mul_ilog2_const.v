@@ -24,7 +24,7 @@ module zkf_mul_ilog2_const #(
     parameter         WMAN         = 18,    // significand precision including the hidden bit
     parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
     parameter         STAGE_INPUT  = 0,     // 0 = combinational input; 1 = latch input before logic (+1 cycle)
-    parameter         STAGE_DECODE = 0,     // 0 = single-cycle; >=1 = register decoded signals (+1 cycle)
+    parameter         STAGE_DECODE = 0,     // 0 = single-cycle; 1 = register decoded signals (+1 cycle)
     parameter         LATENCY      = `ZKF_MUL_ILOG2_CONST_LATENCY   // must equal register-stage count; checked below
 ) (
     input wire clk,
@@ -60,6 +60,12 @@ module zkf_mul_ilog2_const #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wm
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
+            _zkf_invalid_stage_decode u_invalid();
         end
         // K is an integer parameter, and the K bound checks below use 32-bit integer arithmetic.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide

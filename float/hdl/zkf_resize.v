@@ -42,6 +42,12 @@ module zkf_resize #(
         if ((WEXP_IN < 2) || (WMAN_IN < 4) || (WEXP_OUT < 2) || (WMAN_OUT < 4)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
+            _zkf_invalid_stage_output u_invalid();
+        end
         if (LATENCY != `ZKF_RESIZE_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end

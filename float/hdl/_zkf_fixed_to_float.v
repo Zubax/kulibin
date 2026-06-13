@@ -53,20 +53,24 @@ module _zkf_fixed_to_float #(
     output wire [WEXP+WMAN-1:0] y,
     output wire       [WSB-1:0] sb_out
 );
+    localparam WIDX = $clog2(WMAG);
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        if (WMAG < WMAN + 3) begin : g_invalid_wmag
+            _zkf_invalid_fixed_to_float_wmag_too_narrow_for_grs u_invalid();
+        end
         if (WEU < WEXP + 2) begin : g_invalid_weu
             _zkf_invalid_fixed_to_float_weu_too_narrow u_invalid();
         end
-        if (WEU < $clog2(WMAG)) begin : g_invalid_weu_count
+        if (WEU < WIDX + 1) begin : g_invalid_weu_count
             _zkf_invalid_fixed_to_float_weu_too_narrow_for_count u_invalid();
         end
     endgenerate
     // verilator coverage_on
 
-    localparam WIDX = $clog2(WMAG);
+    localparam WCOUNT_PAD = (WEU > WIDX) ? (WEU - WIDX) : 1;
 
     // -- Normalize the magnitude. STAGE_NORMALIZE/STAGE_NORMALIZE_OUTPUT forward to _zkf_normshift.STAGE_SPLIT/
     // STAGE_OUTPUT. norm_count is the left-shift amount; norm_zero asserts when mag == 0; norm_aligned has the leading
@@ -129,7 +133,7 @@ module _zkf_fixed_to_float #(
     // zkf_log2 and remquo it is the unbiased exponent.
     // verilator coverage_off
     // The pad bits below the active range are structurally zero; covered downstream through y.
-    wire        [WEU-1:0] norm_count_ext = {{(WEU-WIDX){1'b0}}, c_norm_count};
+    wire        [WEU-1:0] norm_count_ext = {{WCOUNT_PAD{1'b0}}, c_norm_count};
     wire signed [WEU-1:0] pre_exp        = c_exp_offset - $signed(norm_count_ext);
     // verilator coverage_on
 

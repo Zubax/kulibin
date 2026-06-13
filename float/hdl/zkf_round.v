@@ -55,6 +55,16 @@ module zkf_round #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
+        // Shift by WEXP >= 32 would overflow Verilog's integer constant arithmetic and yield tool-dependent values.
+        if (WEXP >= 32) begin : g_invalid_wexp_too_wide
+            _zkf_invalid_round_wexp_too_wide_unportable u_invalid();
+        end
+        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
+            _zkf_invalid_stage_input u_invalid();
+        end
+        if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
+            _zkf_invalid_stage_decode u_invalid();
+        end
         if (LATENCY != `ZKF_ROUND_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
