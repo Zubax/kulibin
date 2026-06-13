@@ -1,5 +1,7 @@
 /// Formal harness: zkf_div DUT vs zkf_div_ref.
-/// Pipeline depth = 4 + ((WMAN+2+((WMAN+2)%2))/2). For WMAN=6: QFRAC=8, QSTAGES=4, total=8. For WMAN=4: 4+3=7.
+/// Pipeline depth: PIPE_STAGES = 2 + QSTAGES + STAGE_OUTPUT, QSTAGES = ((WMAN+2) rounded up to even)/2; T_RESULT =
+/// 1 + PIPE_STAGES. For WMAN=6: QFRAC=8, QSTAGES=4, PIPE_STAGES=6, T_RESULT=7. For WMAN=4: QSTAGES=3, PIPE_STAGES=5,
+/// T_RESULT=6. (Matches div_core_latency = 2 + QSTAGES and the localparams below.)
 
 `default_nettype none
 

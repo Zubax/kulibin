@@ -84,6 +84,8 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
         ("zero_div_zero", v["zero"], v["zero"]),
         ("one_div_zero", v["one"], v["zero"]),
         ("minus_one_div_zero", v["minus_one"], v["zero"]),
+        ("pos_inf_div_zero", v["pos_inf"], v["zero"]),
+        ("neg_inf_div_zero", v["neg_inf"], v["zero"]),
         ("one_div_zero_payload", v["one"], v["neg_zero"]),
         ("one_div_one", v["one"], v["one"]),
         ("minus_one_div_one", v["minus_one"], v["one"]),

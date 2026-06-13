@@ -1,6 +1,9 @@
 /// Streamed cast from Zubax Kulibin float to signed two's-complement integer with saturation.
 /// +inf saturates to 2^(WINT-1)-1, -inf saturates to -2^(WINT-1), finite overflows saturate to the same bounds,
 /// zero produces zero, and finite in-range values are round-to-nearest, ties-to-even.
+/// The pipeline is a fixed 4 + STAGE_INPUT stages: to_int deliberately exposes no STAGE_NORMALIZE/PACK/OUTPUT tuning
+/// knobs (unlike zkf_from_int) because the cast is cheap, and it needs no wide-WEXP portability guard of its own --
+/// the underlying _zkf_to_fixpoint already rejects the unportable WEXP >= 31 range.
 
 `default_nettype none
 

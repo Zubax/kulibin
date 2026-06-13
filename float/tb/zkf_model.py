@@ -695,11 +695,14 @@ def exp2_true(fmt: ZkfFormat, bits: int) -> int:
     if e >= fmt.wexp - 1:                          # mirror the reference's out-of-range classification
         return canonical_inf(fmt, 0) if d.sign == 0 else zero(fmt)
     import mpmath as mp
-    sig = significand(fmt, bits)
-    x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
-    if d.sign:
-        x = -x
-    return round_fraction_to_zkf(fmt, 0, _mpf_to_fraction(mp.power(2, x)))
+    # Evaluate at generous working precision: the default (~53 bits) cannot correctly round a WMAN-bit result at large
+    # WMAN, which would make this "true" oracle wrong in its last bit. workprec is local and restores global state.
+    with mp.workprec(4 * fmt.wman + 80):
+        sig = significand(fmt, bits)
+        x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
+        if d.sign:
+            x = -x
+        return round_fraction_to_zkf(fmt, 0, _mpf_to_fraction(mp.power(2, x)))
 
 
 def log2_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
@@ -711,14 +714,16 @@ def log2_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
     if d.sign:
         return canonical_inf(fmt, 1), 1, 0
     import mpmath as mp
-    e = d.exp - fmt.bias
-    sig = significand(fmt, bits)
-    x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
-    val = mp.log(x, 2)
-    if val == 0:
-        return zero(fmt), 0, 0
-    sign_out = 1 if val < 0 else 0
-    return round_fraction_to_zkf(fmt, sign_out, abs(_mpf_to_fraction(val))), 0, 0
+    # Generous working precision so the last bit is correctly rounded at large WMAN (see exp2_true). Local; restored.
+    with mp.workprec(4 * fmt.wman + 80):
+        e = d.exp - fmt.bias
+        sig = significand(fmt, bits)
+        x = mp.mpf(sig) * mp.power(2, e - fmt.wfrac)
+        val = mp.log(x, 2)
+        if val == 0:
+            return zero(fmt), 0, 0
+        sign_out = 1 if val < 0 else 0
+        return round_fraction_to_zkf(fmt, sign_out, abs(_mpf_to_fraction(val))), 0, 0
 
 
 # --------------------------------------------------------------------------------------------------
@@ -915,17 +920,20 @@ def sincos_true(fmt: ZkfFormat, bits: int) -> tuple[int, int, int]:
     t_local = q4 - quadrant                               # in [0,1)
     # Reduce to the octant so mpmath only ever evaluates an angle <= pi/4: no cos-near-pi/2 cancellation (which would
     # need precision proportional to the exponent, e.g. ~1000 bits at WEXP=11), and tiny angles stay exact.
-    if t_local <= Fraction(1, 2):
-        theta = (mp.pi / 2) * mp.mpf(t_local.numerator) / mp.mpf(t_local.denominator)
-        s0, c0 = mp.sin(theta), mp.cos(theta)
-    else:
-        comp = 1 - t_local
-        theta = (mp.pi / 2) * mp.mpf(comp.numerator) / mp.mpf(comp.denominator)
-        s0, c0 = mp.cos(theta), mp.sin(theta)             # sin(pi/2-theta)=cos, cos(pi/2-theta)=sin
-    sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
-    sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
-    cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
-    return _round_mpf_to_zkf(fmt, sin_v), _round_mpf_to_zkf(fmt, cos_v), quadrant
+    # Generous working precision so sin/cos round correctly in the last bit at large WMAN (the default ~53 bits
+    # mis-rounds WMAN=53). Local; restores global state. The exact integer/Fraction reduction above is unaffected.
+    with mp.workprec(4 * fmt.wman + 80):
+        if t_local <= Fraction(1, 2):
+            theta = (mp.pi / 2) * mp.mpf(t_local.numerator) / mp.mpf(t_local.denominator)
+            s0, c0 = mp.sin(theta), mp.cos(theta)
+        else:
+            comp = 1 - t_local
+            theta = (mp.pi / 2) * mp.mpf(comp.numerator) / mp.mpf(comp.denominator)
+            s0, c0 = mp.cos(theta), mp.sin(theta)         # sin(pi/2-theta)=cos, cos(pi/2-theta)=sin
+        sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
+        sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
+        cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
+        return _round_mpf_to_zkf(fmt, sin_v), _round_mpf_to_zkf(fmt, cos_v), quadrant
 
 
 def _round_mpf_to_zkf(fmt: ZkfFormat, v) -> int:
@@ -979,6 +987,15 @@ def _atan2_turn(fmt: ZkfFormat, sign: int, frac: Fraction) -> int:
     if frac == Fraction(1, 2):
         sign = 0
     return round_fraction_to_zkf(fmt, sign, frac)
+
+
+def _atan2_canon_half(fmt: ZkfFormat, theta_bits: int) -> int:
+    """Fold the out-of-range -1/2-turn to the canonical +1/2. The generic atan2 path packs -1/2 (sign set) as the
+    negative-x-axis limit (finite x<0, |y|->0), but the documented output range is the half-open (-0.5, 0.5], which
+    excludes -1/2. This is the inverse of _atan2_turn's frac==1/2 -> sign 0 rule, mirrored in the RTL turn8 k==4 clamp.
+    -1/2 is the only out-of-range value the generic path (|theta| <= 1/2) can produce, so nothing else is affected."""
+    pos_half = _atan2_turn(fmt, 0, Fraction(1, 2))
+    return pos_half if theta_bits == (pos_half | (1 << fmt.sign_shift)) else theta_bits
 
 
 def _atan2_special(fmt: ZkfFormat, y_bits: int, x_bits: int) -> tuple[int, int] | None:
@@ -1112,28 +1129,34 @@ def atan2_reference(fmt: ZkfFormat, y_bits: int, x_bits: int) -> tuple[int, int]
     wmag_t = zf + 2
     exp_off_t = wmag_t - 1 - zf                            # reads theta_mag at scale 2**-zf back as itself
     theta_bits = _fixed_to_float_ref(fmt, sy, theta_mag, exp_off_t, wmag_t)
-    return theta_bits, mag_bits
+    return _atan2_canon_half(fmt, theta_bits), mag_bits   # fold the generic negative-x-axis limit -1/2 -> +1/2
 
 
 def atan2_true(fmt: ZkfFormat, y_bits: int, x_bits: int) -> tuple[int, int]:
     """Correctly-rounded (ties-to-even) theta = atan2(y, x) in turns and mag = hypot(y, x) via mpmath. Shares the exact
     special-case table with the reference; the generic path evaluates mpmath atan2/hypot at high precision (no
-    cancellation: the inputs are bounded ratios) and rounds. theta lands in (-0.5, 0.5) for the generic case (the +-1/2
-    and +-1/4 endpoints are axis specials), so no endpoint clamp is needed here."""
+    cancellation: the inputs are bounded ratios) and rounds. mpmath returns the principal angle in (-0.5, 0.5], but
+    near the negative-x axis the rounded magnitude can land on the 1/2-turn endpoint with sign sy; that -1/2
+    representative is canonicalized to +1/2 below (the half-open range excludes -1/2), matching _atan2_turn and the
+    RTL turn8 k==4 clamp."""
     sp = _atan2_special(fmt, y_bits, x_bits)
     if sp is not None:
         return sp
     import mpmath as mp
     dy = decode(fmt, y_bits)
     dx = decode(fmt, x_bits)
-    yv = mp.mpf(significand(fmt, y_bits)) * mp.power(2, (dy.exp - fmt.bias) - fmt.wfrac)
-    xv = mp.mpf(significand(fmt, x_bits)) * mp.power(2, (dx.exp - fmt.bias) - fmt.wfrac)
-    if dy.sign:
-        yv = -yv
-    if dx.sign:
-        xv = -xv
-    theta = mp.atan2(yv, xv) / (2 * mp.pi)                 # turns, (-0.5, 0.5)
-    return _round_mpf_to_zkf(fmt, theta), _round_mpf_to_zkf(fmt, mp.hypot(yv, xv))
+    # Generous working precision so atan2/hypot round correctly in the last bit at large WMAN (see exp2_true). Local.
+    with mp.workprec(4 * fmt.wman + 80):
+        yv = mp.mpf(significand(fmt, y_bits)) * mp.power(2, (dy.exp - fmt.bias) - fmt.wfrac)
+        xv = mp.mpf(significand(fmt, x_bits)) * mp.power(2, (dx.exp - fmt.bias) - fmt.wfrac)
+        if dy.sign:
+            yv = -yv
+        if dx.sign:
+            xv = -xv
+        theta = mp.atan2(yv, xv) / (2 * mp.pi)             # turns, (-0.5, 0.5]
+        theta_bits = _round_mpf_to_zkf(fmt, theta)
+        mag_bits = _round_mpf_to_zkf(fmt, mp.hypot(yv, xv))
+    return _atan2_canon_half(fmt, theta_bits), mag_bits
 
 
 def is_canonical_numpy_operand(fmt: ZkfFormat, bits: int) -> bool:
@@ -1277,15 +1300,6 @@ def numpy_fma_reference(fmt: ZkfFormat, a_bits: int, b_bits: int, c_bits: int) -
     if _ieee_underflowed_to_subnormal(fmt, raw):
         return None
     return _canonicalize_numpy_result(fmt, raw)
-
-
-def lod_reference(width: int, value: int) -> tuple[int, int]:
-    """Reference for _zkf_lod: returns (zero, shamt). shamt = (width-1) - leading_one_position, i.e. the
-    left-shift that brings the leading 1 to the MSB. shamt is don't-care when zero is asserted."""
-    value &= mask(width)
-    if value == 0:
-        return 1, 0
-    return 0, (width - 1) - (value.bit_length() - 1)
 
 
 def normshift_reference(width: int, value: int) -> tuple[int, int, int]:

@@ -69,6 +69,11 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             # |y| << |x| (theta -> 0 or near 1/4 after swap) and |x| << |y|.
             out.append((f"ysmall_{s}", tiny | sb, big))
             out.append((f"xsmall_{s}", big | sb, tiny))
+            # Finite x<0 with |y| -> 0: the generic theta rounds to the 1/2-turn endpoint and must canonicalize to the
+            # in-range +1/2, never the out-of-range -1/2 (regression guard for the negative-x-axis range fix; the
+            # y<0,x<0 case is the one that used to emit -0.5).
+            out.append((f"xnegbig_ytiny_{s}", tiny | sb, big | sgn))
+            out.append((f"xnegone_ytiny_{s}", tiny | sb, mone))
             out.append((f"ybig_xone_{s}", big | sb, one))
             out.append((f"yone_xbig_{s}", one | sb, big | sb))
         out.append(("xneginf_ypos_finite", one, neginf))

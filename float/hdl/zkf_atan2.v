@@ -11,6 +11,9 @@
 ///     y=+0,x>0 -> +0 ; y=+0,x<0 -> 1/2 ; y>0,x=0 -> 1/4 ; y<0,x=0 -> -1/4 ; y=0,x=0 -> +0 (mag +0).
 ///     |y|=inf,x finite -> +-1/4 ; x=+inf,y finite -> +-0 -> +0 ; x=-inf,y finite -> +1/2 ;
 ///     (inf,inf) -> +-1/8 (x>0) / +-3/8 (x<0).  mag = +inf whenever any input is inf.
+/// mag overflow is faithfully rounded, not hard-clamped: a finite-input hypot whose true value lands within 1 ULP of
+/// the overflow threshold may round to max-finite rather than +inf (the <= 1 ULP bound above). +inf is never produced
+/// for an in-range result, so the rounding only ever errs toward finite -- there is no spurious infinity.
 ///
 /// Algorithm (vectoring mixed CORDIC; the engine is in _zkf_cordic):
 ///
@@ -842,7 +845,19 @@ module zkf_atan2 #(
     // the exact special-case theta/mag for BOTH outputs.
     wire [WFULL-1:0] out_sp_theta = turn8(out_sp_sign, out_spk);
     wire             be_valid = be_ov & out_tag;            // theta emergence == the (unchanged) output-valid cycle
-    wire [WFULL-1:0] be_theta = out_special ? out_sp_theta : be_num;
+    // Canonicalize the generic half-turn. Near the negative-x axis (finite x<0, |y| -> 0) the generic magnitude rounds
+    // to 1/2 turn with sign = sy, packing the out-of-range -1/2. The documented range is the half-open (-0.5, +0.5],
+    // so -1/2 folds to the canonical +1/2 -- the convention turn8 applies at k==4 and the atan2(.,x=-inf) path uses.
+    // Two facts keep this off the critical output cone: (a) the fold flips ONLY the sign bit (-1/2 and +1/2 share the
+    // same magnitude), so the wide magnitude datapath into the registered output stays a plain mux; (b) the generic
+    // magnitude is <= 1/2, so its exponent field equals the 1/2-turn exponent ONLY for the exact 1/2-turn (any smaller
+    // magnitude has a strictly smaller exponent) -- a WEXP-wide exponent compare suffices, no full-width equality.
+    // turn8(0,4) is the config-correct +1/2 body (computed identically to the live k==4 special path; its TURN8_Z4
+    // underflow branch is unreachable for the legal WEXP>=2), so its exponent field is the correct reference.
+    wire [WFULL-1:0] half_pos     = turn8(1'b0, 3'd4);
+    wire             be_neg_half  = be_num[WFULL-1] & (be_num[WFULL-2:WFRAC] == half_pos[WFULL-2:WFRAC]);
+    wire [WFULL-1:0] be_num_canon = {be_num[WFULL-1] & ~be_neg_half, be_num[WFULL-2:0]};
+    wire [WFULL-1:0] be_theta = out_special ? out_sp_theta : be_num_canon;
     wire [WFULL-1:0] be_mag_o = out_special ? out_sp_mag   : mag_num_r;
 
     // ================================================================================================================

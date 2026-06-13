@@ -125,6 +125,23 @@ jobs:
       - name: Run algebraic properties
         run: make verify-float-properties FLOAT_PRUNE_BUILDS=1
 
+  float-accuracy:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enforce transcendental/trig <= 1 ULP faithful-rounding contract (reference vs mpmath _true oracle)
+        run: make verify-float-accuracy
+
   float-formal:
     if: |
       github.ref == 'refs/heads/main' ||
@@ -204,6 +221,7 @@ jobs:
       - float-extended-icarus
       - float-extended-verilator
       - float-properties
+      - float-accuracy
       - float-formal
     runs-on: ubuntu-latest
     steps:
@@ -213,4 +231,5 @@ jobs:
           test '${{ needs.float-extended-icarus.result }}' = 'success'
           test '${{ needs.float-extended-verilator.result }}' = 'success'
           test '${{ needs.float-properties.result }}' = 'success'
+          test '${{ needs.float-accuracy.result }}' = 'success'
           test '${{ needs.float-formal.result }}' = 'success'

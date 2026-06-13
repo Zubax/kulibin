@@ -123,6 +123,15 @@ coverage-float-gate-full:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator-toggle \
 		--output-dir build/float/coverage-full --full
 
+## Independent transcendental/trig accuracy gate: sweeps the fixed-point references (exp2/log2/sincos/atan2) against the
+## mpmath *_true oracle and asserts the <= 1 ULP faithful-rounding contract. The per-PR cocotb suite only checks
+## RTL == reference (a shared oracle), so a shared algorithmic regression would pass it silently; this is the only
+## target that closes that gap. Heavy (exhaustive small formats + 1M random samples at high precision) -> deep tier
+## only. Override ZKF_CHECK_SAMPLES to scale the random portion.
+verify-float-accuracy:
+	@PYTHONPATH="$(FLOAT_PYTHONPATH)" $(PYTHON) float/zkf_transcendental.py --check
+	@PYTHONPATH="$(FLOAT_PYTHONPATH)" $(PYTHON) float/zkf_trig.py --check
+
 ## Minimal smoke suite intended for interactive use between edits. Runs in well under a minute on a workstation.
 ## Compiles every public module under Icarus at its smallest exhaustive configuration; modules with a pipeline knob
 ## also run the same configuration with their knob set (STAGE_PRODUCT=1 for mul, STAGE_INPUT=1 for div/cast/resize)
@@ -138,17 +147,20 @@ verify-float-deep: library
 	@$(MAKE) verify-float-extended
 	@$(MAKE) coverage-float-gate-full
 	@$(MAKE) verify-float-properties
+	@$(MAKE) verify-float-accuracy
 	@$(MAKE) formal-float
 
-## Maximum verification: every module simulation, every float algebraic property, and every formal proof.
-## This is what runs in CI on the main branch and on commits whose message contains "#ci-float".
+## Maximum verification: every module simulation, every float algebraic property, the transcendental/trig accuracy
+## contract, and every formal proof. Mirrors the deep CI (verify-deep.yml), which runs these as parallel jobs on the
+## main branch and on commits whose message contains "#ci-float" (there the accuracy gate is the float-accuracy job).
 verify-deep: library
 	@$(MAKE) verify
 	@$(MAKE) verify-float-extended
 	@$(MAKE) coverage-float-gate-full
 	@$(MAKE) verify-float-properties
+	@$(MAKE) verify-float-accuracy
 	@$(MAKE) formal-float
-	@echo "Maximum-verification suite (project + float-properties + float-formal) passed."
+	@echo "Maximum-verification suite (project + float-properties + float-accuracy + float-formal) passed."
 
 verify-float-properties: library
 	@$(FLOAT_PYTEST) -m properties

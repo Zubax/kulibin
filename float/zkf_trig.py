@@ -516,6 +516,13 @@ def _stratified_inputs(fmt) -> list[int]:
 
 
 def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
+    # Linear signed-magnitude distance. Correct for the bounded codomains checked here -- sin/cos in [-1,1] and the
+    # non-negative hypot magnitude -- which do not wrap. CAVEAT for atan2 THETA only: turns wrap at the +-0.5 boundary
+    # (+0.5 and -0.5 are the same angle, 1 ULP apart on the circle) yet map to opposite ends of this linear index, so a
+    # 1-ULP straddle of that boundary would be amplified to ~full-scale and could spuriously trip the <=1 ULP gate.
+    # That straddle is currently unreachable: reference and oracle carry enough guard bits to round to the SAME side of
+    # the 1/2 boundary (verified by dense near-axis sweeps -> zero straddles), and the deterministic near-axis band in
+    # _check_atan2 sweeps x>0 only. If x<0 near-axis coverage is ever added, make the theta metric circular first.
     return 0 if a_bits == b_bits else abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
 
 

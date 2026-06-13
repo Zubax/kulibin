@@ -484,6 +484,9 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sp=1, sn=1))
     out.append(_trans("log2", sim, "pr", "w8_m24_sncheck", 8, 24, "random", 256, sn=2, pa=1))
+    # Exercise log2's STAGE_NORMALIZE_OUTPUT integration (the registered _zkf_normshift output + its pole/domain
+    # sideband alignment); no other matrix row drives sno, and no shipped synth config uses it.
+    out.append(_trans("log2", sim, "pr", "w6_m16_sno", 6, 16, "random", 256, sn=1, sno=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=2))
     # STAGE_PACK is a uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2/sincos. Exercise it on the
@@ -612,6 +615,8 @@ def _deep_correctness(out: list) -> None:
         for si in (0, 1):
             for so in (0, 1):
                 out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
+    # div at WMAN=48 (it uses no transcendental tables, so a wide format is cheap and otherwise untested in CI).
+    out.append(_binary("div", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("abs", "neg", "is_finite", "saturate"):
@@ -644,7 +649,8 @@ def _deep_correctness(out: list) -> None:
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3, wm=18))
     # The exact synthesized WEXP=8/WMAN=36 multiply-bearing operating points, end to end with WMULTIPLIER=18 (the
     # 18-bit DSP-tile grid the Diamond/LSE flow needs): mul at STAGE_PRODUCT=2, exp2 at STAGE_PRODUCT=3, log2 Horner
-    # and the wider final multiply at STAGE_PRODUCT=3, and log2's normalizer output register enabled. WMULTIPLIER is
+    # and the wider final multiply at STAGE_PRODUCT=3, and log2's normalize-shift split at STAGE_NORMALIZE=2 (the row
+    # sets sn=2; the normalizer output-register stage STAGE_NORMALIZE_OUTPUT is not used here). WMULTIPLIER is
     # bit-transparent, but pinning the shipped grid here exercises the full datapath at the operating point that
     # synthesis actually builds rather than only the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
@@ -680,6 +686,10 @@ def _deep_correctness(out: list) -> None:
             out.append(_cast("to_int", s, "deep", base, w, m, i, k, c, si))
             for so in (0, 1):
                 out.append(_cast("from_int", s, "deep", base, w, m, i, k, c, si, so=so))
+    # from_int at the widest WMAN and at STAGE_NORMALIZE=2: its WX/WEU sizing, carry-to-inf wiring, and the sn=2
+    # normalize-shift split are otherwise unexercised (the loop above tops out at WMAN=24 with sn<=1).
+    out.append(_cast("from_int", s, "deep", "w11m53i32", 11, 53, 32, "random", 384, 0))
+    out.append(_cast("from_int", s, "deep", "w6m18i32_sn2", 6, 18, 32, "random", 256, 0, sn=2))
     for wi, mi, wo, mo, k, c in [(4, 5, 4, 4, "exhaustive", 0), (4, 4, 4, 5, "exhaustive", 0),
                                  (2, 5, 4, 7, "exhaustive", 0), (4, 7, 2, 5, "exhaustive", 0),
                                  (5, 5, 3, 4, "exhaustive", 0), (3, 4, 5, 5, "exhaustive", 0),
@@ -688,6 +698,10 @@ def _deep_correctness(out: list) -> None:
         for si in (0, 1):
             for so in (0, 1):
                 out.append(_resize(s, "deep", base, wi, mi, wo, mo, k, c, si, so=so))
+    # resize across a wide WMAN=48 (narrow then widen): the WMAN-shrink GRS rounding and the WMAN-grow zero-fill at a
+    # wide format are otherwise untested in CI.
+    out.append(_resize(s, "deep", "w8m48_to_w8m24", 8, 48, 8, 24, "random", 384, 0))
+    out.append(_resize(s, "deep", "w8m24_to_w8m48", 8, 24, 8, 48, "random", 384, 0))
     # round: each unary deep format once for correctness, the full STAGE_INPUT x STAGE_PACK x STAGE_OUTPUT knob
     # cartesian on a small exhaustive format, and the WEXP=8/WMAN=36 wide format (shared with the synth gate).
     for w, m, k, c in UNARY_EXT:
@@ -699,6 +713,7 @@ def _deep_correctness(out: list) -> None:
                     out.append(_round(s, "deep", "w3m6_knobs", 3, 6, "exhaustive", 0, si=si, sd=sd, pa=pa, so=so))
     out.append(_round(s, "deep", "w8m36", 8, 36, "random", 768))
     out.append(_round(s, "deep", "w8m36_maxpipe", 8, 36, "random", 768, si=1, sd=1, pa=1, so=1))
+    out.append(_round(s, "deep", "w8m48", 8, 48, "random", 384))
 
 
 def _deep_coverage(out: list) -> None:
