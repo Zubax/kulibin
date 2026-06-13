@@ -58,6 +58,14 @@ module _zkf_horner #(
     // verilator coverage_on
 );
     // verilator coverage_off
+    generate
+        if (STAGE_PRODUCT < 0) begin : g_invalid_stage_product
+            _zkf_invalid_stage_product_out_of_range u_invalid();
+        end
+    endgenerate
+    // verilator coverage_on
+
+    // verilator coverage_off
     // a_*[s] is the state entering degree step s (s = 0..D); arrays sized for the max degree across configs and the
     // high accumulator bits are structural headroom proven not to wrap. Checked end to end via the eval cores.
     wire signed [WACC-1:0]    a_acc [0:D];

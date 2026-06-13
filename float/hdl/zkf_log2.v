@@ -285,7 +285,7 @@ module zkf_log2 #(
     // verilator coverage_on
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
-    // A WMAN without a pre-generated table fails elaboration through the unsupported-table sentinel.
+    // Intentional: unsupported in-range WMAN names missing _zkf_log2_m<WMAN>, prompting table generation.
     `define ZKF_LOG2_TABLE(W) end else if (WMAN == W) begin \
         _zkf_log2_m``W #( \
             .D(`ZKF_LOG2_DEGREE), .WSB(SBW), \

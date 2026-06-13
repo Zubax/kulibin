@@ -65,7 +65,7 @@ module _zkf_pmul #(
 
     // verilator coverage_off
     generate
-        if (STAGE_PRODUCT > 4) begin : g_invalid_stage_product
+        if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 4)) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
         end
         if ((WMULTIPLIER != 0) && (WMULTIPLIER < 8)) begin : g_invalid_wmultiplier

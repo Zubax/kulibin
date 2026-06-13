@@ -78,29 +78,29 @@ Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depen
 II - initiation interval (cycles between accepting new inputs, reciprocal of cycle throughput;
 1 for zero-bubble pipelined modules).
 
-| Module                |   | II    | Function                                                       | Remarks                     |
-|-----------------------|---|-------|----------------------------------------------------------------|-----------------------------|
-| `zkf_abs`             | ⇝ |       | Absolute value.                                                |                             |
-| `zkf_neg`             | ⇝ |       | Negation.                                                      | May produce -0 (non-canonical)|
-| `zkf_is_finite`       | ⇝ |       | True iff `x` is finite.                                        |                             |
-| `zkf_saturate`        | ⇝ |       | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
-| `zkf_cmp`             | ⇻ | 1     | Compare two values.                                            |                             |
-| `zkf_sort`            | ⇻ | 1     | Min and max of two values.                                     | Does not canonicalize       |
-| `zkf_add`             | ⇻ | 1     | `a + b`.                                                       |                             |
-| `zkf_addsub`          | ⇻ | 1     | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
-| `zkf_mul`             | ⇻ | 1     | `a⋅b`.                                                         |                             |
-| `zkf_mul_ilog2_const` | ⇻ | 1     | `a⋅2^K` for an elaboration-time signed integer `K`.            |                             |
-| `zkf_div`             | ⇻ | 1     | `a ÷ b`; flags divide-by-zero.                                 |                             |
-| `zkf_fma`             | ⇻ | 1     | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf_from_int`        | ⇻ | 1     | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | ⇻ | 1     | Cast float to signed two's-complement integer with saturation. | RNTE                        |
-| `zkf_resize`          |   | 1     | Cast between different float formats.                          |                             |
-| `zkf_round`           |   | 1     | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
-| `zkf_exp2`            | ⇻ | 1     | `2^x`                                                          | Faithful rounding, see below|
-| `zkf_log2`            | ⇻ | 1     | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_sincos`          | ⇻ |latency| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
-| `zkf_atan2`           | ⇻ |latency| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
-| `zkf_pipe`            |   | 1     | Delay line of N register stages, W bits each.                  | No-op                       |
+| Module                |   | II      | Function                                                       | Remarks                     |
+|-----------------------|---|---------|----------------------------------------------------------------|-----------------------------|
+| `zkf_abs`             | ⇝ |         | Absolute value.                                                |                             |
+| `zkf_neg`             | ⇝ |         | Negation.                                                      | May produce -0 (non-canonical)|
+| `zkf_is_finite`       | ⇝ |         | True iff `x` is finite.                                        |                             |
+| `zkf_saturate`        | ⇝ |         | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
+| `zkf_cmp`             | ⇻ | 1       | Compare two values.                                            |                             |
+| `zkf_sort`            | ⇻ | 1       | Min and max of two values.                                     | Does not canonicalize       |
+| `zkf_add`             | ⇻ | 1       | `a + b`.                                                       |                             |
+| `zkf_addsub`          | ⇻ | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_mul`             | ⇻ | 1       | `a⋅b`.                                                         |                             |
+| `zkf_mul_ilog2_const` | ⇻ | 1       | `a⋅2^K` for an elaboration-time signed integer `K`.            |                             |
+| `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
+| `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
+| `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE                        |
+| `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
+| `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
+| `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
+| `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
+| `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
+| `zkf_atan2`           | ⇻ |latency+1| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
+| `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions
 

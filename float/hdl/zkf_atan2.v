@@ -3,6 +3,7 @@
 ///
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
 /// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
+/// LATENCY is accept-to-out_valid latency; with out_ready high, in_ready reasserts one cycle after retirement.
 /// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
 ///
 /// Behavior (no NaN, only +0; tiny negative results flush to +0):
@@ -60,7 +61,7 @@ module zkf_atan2 #(
     parameter STAGE_NORMALIZE = 0,
     parameter STAGE_PACK      = 0,
     parameter STAGE_OUTPUT    = 0,
-    parameter LATENCY         = `ZKF_ATAN2_LATENCY  // II in cycles; must equal `ZKF_ATAN2_LATENCY, checked below
+    parameter LATENCY         = `ZKF_ATAN2_LATENCY  // accept-to-out_valid cycles; checked below
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -457,7 +458,7 @@ module zkf_atan2 #(
             .x0(f2_x0), .y0(f2_y0), .z0({WZ{1'b0}}), \
             .busy(), .done(cd_done), .z_done(), .sb_out(cd_sb_unused), \
             .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(), .inv_tau(eng_inv_tau), .kinv_mag(eng_kinv_mag), .kinv());
-    // A WMAN without a pre-generated table names a missing module and fails loudly. We still list every possible WMAN.
+    // Intentional: unsupported in-range WMAN names missing _zkf_cordic_m<WMAN>, prompting table generation.
     generate
         if (1'b0) begin : g_none
         `ZKF_ATAN2_CORE(11)
@@ -843,7 +844,8 @@ module zkf_atan2 #(
     wire [WFULL-1:0] be_mag_o = out_special ? out_sp_mag   : mag_num_r;
 
     // ================================================================================================================
-    // Output handshake with back-pressure. One transaction in flight; the result waits for out_ready.
+    // Output handshake with back-pressure. One transaction in flight; the result waits for out_ready. With out_ready
+    // high, in_ready reasserts on the cycle after out_valid is retired; LATENCY is not the initiation interval.
     // ================================================================================================================
     reg              pending;
     // verilator coverage_off

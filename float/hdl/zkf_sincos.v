@@ -3,6 +3,7 @@
 ///
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
 /// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
+/// LATENCY is accept-to-out_valid latency; with out_ready high, in_ready reasserts one cycle after retirement.
 /// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
 /// Behavior:
 ///
@@ -71,7 +72,7 @@ module zkf_sincos #(
     parameter STAGE_PACK      = 0,
     parameter STAGE_OUTPUT    = 0,
     parameter PARALLEL        = (UNROLL100 < 100) ? 1 : 0,  // Testing-only knob, DO NOT override.
-    parameter LATENCY         = `ZKF_SINCOS_LATENCY  // II in cycles; must equal `ZKF_SINCOS_LATENCY, checked below
+    parameter LATENCY         = `ZKF_SINCOS_LATENCY  // accept-to-out_valid cycles; checked below
 ) (
     input  wire                 clk,
     input  wire                 rst,
@@ -310,7 +311,7 @@ module zkf_sincos #(
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     wire [CWB-1:0]     const2pi;
-    // A WMAN without a pre-generated table names a missing module and fails loudly. We still list every possible WMAN.
+    // Intentional: unsupported in-range WMAN names missing _zkf_cordic_m<WMAN>, prompting table generation.
     `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_cordic_m``W #( \
             .MODE(0), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WSB(WSB), \
@@ -618,7 +619,7 @@ module zkf_sincos #(
     // Output handshake with back-pressure. Only one transaction is ever in flight (busy stalls the engine until the
     // finished result is taken), so the result simply waits for out_ready. STAGE_OUTPUT selects WHERE it is held:
     //   0: combinational output -- be_* is presented on its valid cycle; a hold register catches it while out_ready is
-    //      low (no added latency when out_ready is high, the common case the published II assumes).
+    //      low (no added output-register latency when out_ready is high).
     //   1: a hard output register drives sin/cos/quadrant DIRECTLY (no combinational logic after it); it captures the
     //      result and holds it until out_ready (+1 cycle). This is the clean version a downstream stage registers off.
     generate
@@ -657,7 +658,7 @@ module zkf_sincos #(
     endgenerate
 
     // busy: set on accept, cleared when the consumer takes the result (out_valid & out_ready). One transaction in
-    // flight at a time, so the engine/back-end stall while a finished result waits for out_ready (II = latency).
+    // flight at a time, so the engine/back-end stall while a finished result waits for out_ready.
     always @(posedge clk) begin
         if (rst)                        busy <= 1'b0;
         else if (accept)                busy <= 1'b1;
