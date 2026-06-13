@@ -229,18 +229,18 @@ module zkf_sincos #(
     end
 
     // Stage R2 combinational: the wide barrel shift -> quadrant / in-octant coordinate. The shift is the long cone,
-    // so its outputs are registered (R2) before the octant fold.
+    // so its outputs are registered (R2) before the octant fold. The exact-zero reduction is delayed until the fold
+    // stage; otherwise the variable-shift mux and wide OR-reduction share one timing cone.
     // verilator coverage_off
     wire [FF-1:0] frac_pos  = {{(FF-WMAN){1'b0}}, r1_sig} << r1_lshamt;
     wire [1:0]    quad_abs  = r1_is_inf ? 2'b00 : frac_pos[FF-1:FF-2];
     wire [WT-1:0] t_abs     = frac_pos[WT-1:0];
-    wire          tzero_c   = ~|t_abs;
     wire          tiny_c    = ~r1_is_left;
     // verilator coverage_on
 
     // Stage R2 register: hold the barrel-shift result so the octant fold below is a fresh combinational stage.
     reg              r2_valid;
-    reg              r2_sign, r2_is_inf, r2_tiny, r2_tzero;
+    reg              r2_sign, r2_is_inf, r2_tiny;
     reg [1:0]        r2_quad;
     reg [WT-1:0]     r2_t;
     reg [WMAN-1:0]   r2_sig;
@@ -251,7 +251,6 @@ module zkf_sincos #(
         r2_sign   <= r1_sign;
         r2_is_inf <= r1_is_inf;
         r2_tiny   <= tiny_c;
-        r2_tzero  <= tzero_c;
         r2_quad   <= quad_abs;
         r2_t      <= t_abs;
         r2_sig    <= r1_sig;
@@ -264,6 +263,7 @@ module zkf_sincos #(
     // verilator coverage_off
     wire          oct_flip_c = (~r2_tiny) & (r2_t > {1'b1, {(WT-1){1'b0}}});
     wire [WT-1:0] tp_w_c     = oct_flip_c ? (~r2_t + 1'b1) : r2_t;
+    wire          tzero_c    = ~|r2_t;
     // verilator coverage_on
 
     // Fold register stage: hold the folded coordinate so the WT-wide negate above is its own stage,
@@ -281,7 +281,7 @@ module zkf_sincos #(
     always @(posedge clk) begin
         if (rst) fr_valid <= 1'b0;
         else     fr_valid <= r2_valid;
-        fr_octflip <= oct_flip_c; fr_tpw <= tp_w_c; fr_tiny <= r2_tiny; fr_tzero <= r2_tzero;
+        fr_octflip <= oct_flip_c; fr_tpw <= tp_w_c; fr_tiny <= r2_tiny; fr_tzero <= tzero_c;
         fr_sign <= r2_sign; fr_inf <= r2_is_inf; fr_sig <= r2_sig; fr_quad <= r2_quad; fr_e <= r2_e;
     end
     assign f_valid = fr_valid; assign f_octflip = fr_octflip; assign f_tpw = fr_tpw;
