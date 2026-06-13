@@ -37,7 +37,8 @@
 ///
 /// Tuning knobs follow zkf_sincos. UNROLL100 is forwarded to _zkf_cordic. STAGE_INPUT latches the inputs (+1 cycle);
 /// STAGE_PRODUCT / WMULTIPLIER tune the shared _zkf_pmul (depth 1+STAGE_PRODUCT; WMULTIPLIER sizes the DSP-tile grid);
-/// STAGE_NORMALIZE / STAGE_PACK / STAGE_OUTPUT tune the one shared _zkf_fixed_to_float back-end.
+/// STAGE_NORMALIZE / STAGE_PACK tune the one shared _zkf_fixed_to_float back-end.
+/// STAGE_OUTPUT registers the public theta/mag/out_valid outputs.
 
 `default_nettype none
 
@@ -809,7 +810,7 @@ module zkf_atan2 #(
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
         .EXP_IS_BIASED(1), .ASSUME_NO_OVERFLOW(0), .WSB(WSB2),
-        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
+        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
     ) u_f2f (
         .clk(clk), .rst(rst),
         .in_valid(share_iv), .sign(share_sgn), .force_zero(1'b0), .force_inf(1'b0),
@@ -847,23 +848,46 @@ module zkf_atan2 #(
     // ================================================================================================================
     // Output handshake with back-pressure. One transaction in flight; the result waits for out_ready. With out_ready
     // high, in_ready reasserts on the cycle after out_valid is retired; LATENCY is not the initiation interval.
+    // STAGE_OUTPUT selects WHERE the paired output is held:
+    //   0: combinational output -- be_* is presented on its valid cycle; a hold register catches it while out_ready is
+    //      low (no added output-register latency when out_ready is high).
+    //   1: a hard output register drives theta/mag/out_valid DIRECTLY (no combinational logic after it); it captures
+    //      the result and holds it until out_ready (+1 cycle).
     // ================================================================================================================
-    reg              pending;
-    // verilator coverage_off
-    reg [WFULL-1:0]  hold_theta, hold_mag;
-    // verilator coverage_on
-    always @(posedge clk) begin
-        if (rst) pending <= 1'b0;
-        else if (be_valid & ~out_ready) begin
-            pending    <= 1'b1;
-            hold_theta <= be_theta; hold_mag <= be_mag_o;
-        end else if (pending & out_ready) begin
-            pending    <= 1'b0;
+    generate
+        if (STAGE_OUTPUT == 0) begin : g_out_comb
+            reg              pending;
+            // verilator coverage_off
+            reg [WFULL-1:0]  hold_theta, hold_mag;
+            // verilator coverage_on
+            always @(posedge clk) begin
+                if (rst) pending <= 1'b0;
+                else if (be_valid & ~out_ready) begin
+                    pending    <= 1'b1;
+                    hold_theta <= be_theta; hold_mag <= be_mag_o;
+                end else if (pending & out_ready) begin
+                    pending    <= 1'b0;
+                end
+            end
+            assign out_valid = be_valid | pending;
+            assign theta     = pending ? hold_theta : be_theta;
+            assign mag       = pending ? hold_mag   : be_mag_o;
+        end else begin : g_out_reg
+            reg              r_valid;
+            // verilator coverage_off
+            reg [WFULL-1:0]  r_theta, r_mag;
+            // verilator coverage_on
+            always @(posedge clk) begin
+                if (rst)            r_valid <= 1'b0;
+                else if (be_valid)  r_valid <= 1'b1;
+                else if (out_ready) r_valid <= 1'b0;
+                if (be_valid) begin r_theta <= be_theta; r_mag <= be_mag_o; end
+            end
+            assign out_valid = r_valid;
+            assign theta     = r_theta;
+            assign mag       = r_mag;
         end
-    end
-    assign out_valid = be_valid | pending;
-    assign theta     = pending ? hold_theta : be_theta;
-    assign mag       = pending ? hold_mag   : be_mag_o;
+    endgenerate
 
     always @(posedge clk) begin
         if (rst)                        busy <= 1'b0;

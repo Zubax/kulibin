@@ -525,11 +525,11 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2, wm=16))
     out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256,
                       un=50, sp=2, wm=18, sn=2, pa=1))
-    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=3, WMULTIPLIER=18, STAGE_NORMALIZE=2,
+    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=4, WMULTIPLIER=18, STAGE_NORMALIZE=2,
     # STAGE_PACK=1, STAGE_OUTPUT=1) tested directly so its correctness + data-independent latency
     # are checked, not just inferred from the knob sweeps.
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256,
-                      un=50, sp=3, wm=18, sn=2, pa=1, so=1))
+                      un=50, sp=4, wm=18, sn=2, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -662,7 +662,7 @@ def _deep_correctness(out: list) -> None:
     out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512,
                       un=50, sp=2, wm=18, sn=2, pa=1))              # the synthesized 6/18 operating point
     out.append(_trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512,
-                      un=50, si=0, sp=3, wm=18, sn=2, pa=1, so=1))  # the synthesized 8/36 operating point
+                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))  # the synthesized 8/36 operating point
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
     # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),

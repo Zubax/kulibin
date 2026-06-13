@@ -63,6 +63,7 @@ TARGETS = \
 
 .PHONY: \
 	verify verify-deep verify-float verify-float-fast verify-float-deep verify-float-extended \
+	verify-float-extended-icarus verify-float-extended-verilator \
 	verify-float-model verify-float-icarus verify-float-verilator verify-float-properties \
 	verify-synth coverage-float-report coverage-float-gate coverage-float-gate-full formal-float formal-float-clean \
 	lint library synth-float synth-float-yosys-ecp5 synth-float-yosys-spartan7 synth-float-diamond-ecp5 clean
@@ -106,6 +107,14 @@ coverage-float-gate:
 verify-float-extended: library
 	@rm -rf build/float/icarus-ext build/float/verilator-toggle
 	@$(FLOAT_PYTEST) -m deep
+
+verify-float-extended-icarus: library
+	@rm -rf build/float/icarus-ext
+	@$(FLOAT_PYTEST) -m "deep and icarus"
+
+verify-float-extended-verilator: library
+	@rm -rf build/float/verilator-toggle
+	@$(FLOAT_PYTEST) -m "deep and verilator"
 
 ## Full coverage gate over the exhaustive coverage set: every line, branch, and toggle must be covered.
 ## Genuinely-unreachable points are suppressed in the RTL with `// verilator coverage_off`/`coverage_on`

@@ -1,11 +1,10 @@
 ## Maximum-verification CI for float/: every simulation testbench, every algebraic property test, every
-## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure
-## (verify-float-extended + coverage-float-gate-full). Runs in the `verify-deep` job. The optional
-## Spartan-7 synthesis runs as a separate, non-fatal `spartan7-synth` job so its multi-hour openXC7
-## place-and-route can't consume verify-deep's budget (GitHub caps a job at 6h).
+## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure. Slow, so it runs only
+## on pushes that modify float/ AND are either on `main` or carry the "#ci-float" marker in the commit message. The
+## cheap `verify.yml` workflow gates every PR.
 ##
-## Slow, so it runs only on pushes that modify float/ AND are either on `main` or carry the "#ci-float"
-## marker in the commit message. The cheap `verify.yml` workflow gates every PR.
+## The maximum suite is split across jobs because GitHub caps a single job at 6h. The final `verify-deep` job aggregates
+## the split jobs, preserving one high-level check while keeping each shard under the timeout.
 
 name: verify-deep
 
@@ -20,7 +19,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  verify-deep:
+  verify-base:
     if: |
       github.ref == 'refs/heads/main' ||
       github.event_name == 'workflow_dispatch' ||
@@ -29,7 +28,7 @@ jobs:
     container:
       image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
       options: --user root      # See verify.yml for why root is needed.
-    timeout-minutes: 360        # This is a very long-running job so we need maximum timeout.
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v6
@@ -41,8 +40,107 @@ jobs:
       - name: Lint
         run: make lint
 
-      - name: Run maximum verification
-        run: make verify-deep FLOAT_PRUNE_BUILDS=1
+      - name: Run baseline verification
+        run: make verify FLOAT_PRUNE_BUILDS=1
+
+      - name: Upload baseline coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-baseline-coverage-report
+          path: build/float/coverage/
+          retention-days: 30
+
+  float-extended-icarus:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable parallel matrix (best-effort)
+        continue-on-error: true
+        run: python3 -m pip install --no-input --break-system-packages pytest-xdist || python3 -m pip install --no-input pytest-xdist
+
+      - name: Run extended Icarus sweep
+        run: make verify-float-extended-icarus FLOAT_PRUNE_BUILDS=1
+
+  float-extended-verilator:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable parallel matrix (best-effort)
+        continue-on-error: true
+        run: python3 -m pip install --no-input --break-system-packages pytest-xdist || python3 -m pip install --no-input pytest-xdist
+
+      - name: Run extended Verilator sweep
+        run: make verify-float-extended-verilator FLOAT_PRUNE_BUILDS=1
+
+      - name: Run full coverage gate
+        run: make coverage-float-gate-full
+
+      - name: Upload Verilator coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: float-coverage-report
+          path: build/float/coverage-full/
+          retention-days: 30
+
+  float-properties:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Enable parallel matrix (best-effort)
+        continue-on-error: true
+        run: python3 -m pip install --no-input --break-system-packages pytest-xdist || python3 -m pip install --no-input pytest-xdist
+
+      - name: Run algebraic properties
+        run: make verify-float-properties FLOAT_PRUNE_BUILDS=1
+
+  float-formal:
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '#ci-float')
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      options: --user root
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run formal proofs
+        run: make formal-float
 
       - name: Upload formal verification report
         if: always()
@@ -55,20 +153,8 @@ jobs:
             build/float/formal/**/trace.vcd
           retention-days: 30
 
-      - name: Upload Verilator coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: float-coverage-report
-          path: |
-            build/float/coverage/
-            build/float/coverage-full/
-          retention-days: 30
-
-  # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis, in its own job so its multi-hour
-  # openXC7 place-and-route can't eat the verify-deep job's 6h budget. Non-fatal by design
-  # (continue-on-error): it runs and uploads its report but never gates a push, and a failure here
-  # leaves verify-deep's result untouched.
+  # Optional Yosys + nextpnr-xilinx Spartan-7 (xc7s50) synthesis. Non-fatal by design
+  # (continue-on-error): it runs and uploads its report but never gates a push.
   spartan7-synth:
     if: |
       github.ref == 'refs/heads/main' ||
@@ -83,9 +169,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # The toolchain image bundles nextpnr-xilinx, bbasm, and the prjxray-db / nextpnr-xilinx-meta
-      # submodules, so the chip database builds with no extra checkout. That build takes a few minutes,
-      # so cache it; it is keyed on the image tag because the database is not portable across versions.
       - name: Cache Spartan-7 chip database
         uses: actions/cache@v4
         with:
@@ -94,10 +177,6 @@ jobs:
 
       - name: Run Spartan-7 synthesis (optional, non-fatal)
         continue-on-error: true
-        # Bound the step well under the 6h job ceiling: openXC7 nextpnr place-and-route runtime is
-        # non-deterministic and can diverge. Combined with continue-on-error, a cap means a slow run is
-        # killed and reported as a non-fatal step failure instead of cancelling the job at the ceiling.
-        # The flow also bounds each module's nextpnr individually (YOSYS_NEXTPNR_TIMEOUT_S).
         timeout-minutes: 120
         run: make synth-float-yosys-spartan7
 
@@ -112,3 +191,26 @@ jobs:
             build/float_synth_yosys_spartan7/**/yosys.log
             build/float_synth_yosys_spartan7/chipdb/*_build.log
           retention-days: 30
+
+  verify-deep:
+    if: |
+      always() && (
+        github.ref == 'refs/heads/main' ||
+        github.event_name == 'workflow_dispatch' ||
+        contains(github.event.head_commit.message, '#ci-float')
+      )
+    needs:
+      - verify-base
+      - float-extended-icarus
+      - float-extended-verilator
+      - float-properties
+      - float-formal
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check split deep verification jobs
+        run: |
+          test '${{ needs.verify-base.result }}' = 'success'
+          test '${{ needs.float-extended-icarus.result }}' = 'success'
+          test '${{ needs.float-extended-verilator.result }}' = 'success'
+          test '${{ needs.float-properties.result }}' = 'success'
+          test '${{ needs.float-formal.result }}' = 'success'

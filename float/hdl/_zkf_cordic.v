@@ -55,7 +55,7 @@ module _zkf_cordic #(
     input  wire signed [WX-1:0] x0,
     input  wire signed [WX-1:0] y0,
     input  wire signed [WZ-1:0] z0,
-    input  wire      [N*WZ-1:0] lut,      // L[i] (unsigned) at bits [i*WZ +: WZ]
+    input  wire [(((N > 0) ? N : 1)*WZ)-1:0] lut,  // L[i] (unsigned) at bits [i*WZ +: WZ]
     // verilator coverage_on
     output wire                 busy,
     output wire                 done,        // pulses with xn/yn (and sb_out) valid
@@ -65,15 +65,22 @@ module _zkf_cordic #(
     output wire signed [WX-1:0] yn,
     output wire signed [WZ-1:0] zn
 );
+    localparam integer N_EFF = (N > 0) ? N : 1;  // Keeps invalid N structurally well-formed until validation fires.
     localparam integer U    = (UNROLL100 < 100) ? 1 : (UNROLL100 / 100);
     localparam integer PIPE = (UNROLL100 < 100) ? 1 : 0;
     localparam integer DECOUPLE = ((MODE == 0) && (PARALLEL != 0)) ? 1 : 0;
-    localparam integer WI   = $clog2(N + U + 1);  // index width (holds i_r + U / zi_r + 1, no wrap)
+    localparam integer WI   = $clog2(N_EFF + U + 1);  // index width (holds i_r + U / zi_r + 1, no wrap)
 
     // verilator coverage_off
     generate
         if ((UNROLL100 != 50) && ((UNROLL100 < 100) || ((UNROLL100 % 100) != 0))) begin : g_invalid_unroll100
             _zkf_invalid_unroll100 u_invalid();
+        end
+        if (N <= 0) begin : g_invalid_n
+            _zkf_invalid_cordic_n_must_be_positive u_invalid();
+        end
+        if ((MODE != 0) && (MODE != 1)) begin : g_invalid_mode
+            _zkf_invalid_cordic_mode u_invalid();
         end
         if (DECOUPLE && (PIPE == 0)) begin : g_invalid_decouple
             _zkf_decouple_needs_half_rate u_invalid();
@@ -86,7 +93,7 @@ module _zkf_cordic #(
     reg        [WI-1:0] i_r;                   // base iteration index for this cycle
     reg                 run_r, done_r;
     reg       [WSB-1:0] sb_r;
-    reg         [N-1:0] sig_mem; // sigma replay: written by the decoupled z-engine, read by the rotator.
+    reg     [N_EFF-1:0] sig_mem; // sigma replay: written by the decoupled z-engine, read by the rotator.
     wire                z_done_int;
 
     // Unpack the flat L[] bus into an indexable array. Reading lut[idx*WZ +: WZ] with a runtime idx makes the synthesis
@@ -100,16 +107,16 @@ module _zkf_cordic #(
     // N + 2U - 2. The decoupled prefetch reads lut_a[zi_nxt] up to N. Sizing to N + 2U - 1 keeps EVERY read (including
     // the post-run idle reads for U > 1) in bounds with a one-entry margin, without an index clamp on the LUT read.
     // (For U == 1 this is N + 1, i.e. the single original sentinel plus the prefetch slot -- unchanged behaviour.)
-    localparam integer LUT_HI = N + 2*U - 1;
+    localparam integer LUT_HI = N_EFF + 2*U - 1;
     // verilator coverage_off
     wire [WZ-1:0] lut_a [0:LUT_HI];
     // verilator coverage_on
     genvar gl;
     generate
-        for (gl = 0; gl < N; gl = gl + 1) begin : g_lut_unpack
+        for (gl = 0; gl < N_EFF; gl = gl + 1) begin : g_lut_unpack
             assign lut_a[gl] = lut[gl*WZ +: WZ];   // constant (elaboration-time) offset -- no runtime multiply
         end
-        for (gl = N; gl <= LUT_HI; gl = gl + 1) begin : g_lut_sentinel
+        for (gl = N_EFF; gl <= LUT_HI; gl = gl + 1) begin : g_lut_sentinel
             assign lut_a[gl] = {WZ{1'b0}};         // don't-care sentinels for terminal (en=0 / prefetch) indices
         end
     endgenerate
@@ -134,7 +141,7 @@ module _zkf_cordic #(
             wire                 zsub = ~zneg;      // z subtracts L[i] when sigma = +1
             wire signed [WZ-1:0] gnz  = z_r + ($signed({1'b0, li_r}) ^ {WZ{zsub}}) + {{(WZ-1){1'b0}}, zsub};
             wire        [WI-1:0] zi_nxt = zi_r + 1'b1;
-            wire                 z_last = (zi_nxt >= N[WI-1:0]);
+            wire                 z_last = (zi_nxt >= N_EFF[WI-1:0]);
             // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) begin
@@ -148,8 +155,8 @@ module _zkf_cordic #(
                             zi_r       <= {WI{1'b0}};
                             sig_mem[0] <= z0[WZ-1];     // sigma_0 = sign(z0), read by the rotator at iteration 0
                             li_r       <= lut_a[0];     // pre-fetch L[0]
-                            z_run_r    <= (N != 0);
-                            z_dn_r     <= (N == 0);
+                            z_run_r    <= 1'b1;
+                            z_dn_r     <= 1'b0;
                         end
                     end else begin
                         z_r           <= gnz;
@@ -186,7 +193,7 @@ module _zkf_cordic #(
             genvar u;
             for (u = 0; u < U; u = u + 1) begin : g_unroll
                 wire [WI-1:0]        idx   = i_r + u[WI-1:0];
-                wire                 en    = (idx < N[WI-1:0]);
+                wire                 en    = (idx < N_EFF[WI-1:0]);
                 wire signed [WX-1:0] ysh   = cy[u] >>> idx;
                 wire signed [WX-1:0] xsh   = cx[u] >>> idx;
                 wire [WZ-1:0]        li    = lut_a[idx];
@@ -203,7 +210,7 @@ module _zkf_cordic #(
             end
 
             // i_r advances unconditionally so latency stays constant data-independent.
-            wire last = (i_r + U[WI-1:0]) >= N[WI-1:0];
+            wire last = (i_r + U[WI-1:0]) >= N_EFF[WI-1:0];
 
             always @(posedge clk) begin
                 if (rst) begin
@@ -215,8 +222,8 @@ module _zkf_cordic #(
                         if (start) begin
                             x_r <= x0; y_r <= y0; z_r <= z0; i_r <= {WI{1'b0}};
                             sb_r <= sb_in;
-                            run_r  <= (N != 0);             // N == 0 (no iterations) completes immediately
-                            done_r <= (N == 0);
+                            run_r  <= 1'b1;
+                            done_r <= 1'b0;
                         end
                     end else begin
                         x_r <= cx[U]; y_r <= cy[U]; z_r <= cz[U];
@@ -245,7 +252,7 @@ module _zkf_cordic #(
             wire                 sub_y =  neg_r;
             wire signed [WX-1:0] nx = x_r + (ysh_r ^ {WX{sub_x}}) + {{(WX-1){1'b0}}, sub_x};
             wire signed [WX-1:0] ny = y_r + (xsh_r ^ {WX{sub_y}}) + {{(WX-1){1'b0}}, sub_y};
-            wire last = (i_r + 1'b1) >= N[WI-1:0];
+            wire last = (i_r + 1'b1) >= N_EFF[WI-1:0];
             // verilator coverage_on
             if (DECOUPLE) begin : g_sig
                 assign neg = sig_mem[idx];                  // sigma replayed from the ahead-running z-engine
@@ -263,8 +270,8 @@ module _zkf_cordic #(
                         if (start) begin
                             x_r <= x0; y_r <= y0; i_r <= {WI{1'b0}};
                             sb_r <= sb_in; phase_r <= 1'b0;
-                            run_r  <= (N != 0);
-                            done_r <= (N == 0);
+                            run_r  <= 1'b1;
+                            done_r <= 1'b0;
                         end
                     end else if (phase_r == 1'b0) begin
                         xsh_r <= xsh; ysh_r <= ysh; neg_r <= neg;

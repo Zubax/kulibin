@@ -687,7 +687,7 @@ MODULES = [
         name="zkf_atan2_w8m36",
         label="zkf_atan2 (WEXP=8, WMAN=36, vectoring CORDIC; UNROLL100=50 (half-rate) + stock 1-phase folded radix-4 "
               "divider (ceil(XF/2) steps + a one-cycle 3*den setup) + shared "
-              "_zkf_pmul (STAGE_PRODUCT=3, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 61x41 product "
+              "_zkf_pmul (STAGE_PRODUCT=4, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 61x41 product "
               "in a 4x3 grid) + "
               "STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT; the same default LFE5U-25F as zkf_sincos_w8m36)",
         top="zkf_atan2_w8m36_synth_top",
@@ -697,9 +697,9 @@ MODULES = [
         wexp_unbiased=0,
         unroll100=50,     # half-rate 2-cycle engine for the wide (WX=62) shift+add recurrence.
         stage_input=0,    # LATENCY EXPERIMENT (si 1->0, -1 cyc): Yosys-screened 112.7 MHz; Diamond ECP5 confirmed.
-        stage_product=3,  # narrowed _zkf_pmul: 61x41 product in a 4x3 grid (KINV/INV_TAU->WMAN+5,
-                          #   WMAG 124->102). The row-sum staging keeps the product off the limiter; divider /
-                          #   normshift now dominate.
+        stage_product=4,  # narrowed _zkf_pmul: 61x41 product in a 4x3 grid (KINV/INV_TAU->WMAN+5,
+                          #   WMAG 124->102). The row-pair staging keeps the product off the limiter after the
+                          #   registered public output stage changes the wide design's placement pressure.
         wmultiplier=18,   # 18-bit DSP-tile grid -> the 61x41 products fit the default device.
         stage_normalize=2,
         stage_pack=1,

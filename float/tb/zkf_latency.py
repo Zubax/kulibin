@@ -246,8 +246,8 @@ def atan2_latency(
     # Then: rotation cycles = ceil(N*100/UNROLL100) (UNROLL100 as in sincos); STEPS = ceil(XF/2) folded radix-4 divider
     # cycles (data-independent: the same divide runs for the bypass and the residual, F = 2*STEPS >= XF quotient bits);
     # STAGE_PRODUCT extra cycles in the shared _zkf_pmul (on the post-divide QT product, the only one on the critical
-    # path); the optional STAGE_INPUT register (+1); plus STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT forwarded to the
-    # shared _zkf_fixed_to_float back-end. Mirrors `ZKF_ATAN2_LATENCY exactly.
+    # path); the optional STAGE_INPUT register (+1); STAGE_NORMALIZE + STAGE_PACK in the shared _zkf_fixed_to_float
+    # back-end; plus the public theta/mag/out_valid STAGE_OUTPUT register. Mirrors `ZKF_ATAN2_LATENCY exactly.
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
     spec = TRIG_SPECS[wman]
