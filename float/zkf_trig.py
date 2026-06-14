@@ -516,13 +516,9 @@ def _stratified_inputs(fmt) -> list[int]:
 
 
 def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
-    # Linear signed-magnitude distance. Correct for the bounded codomains checked here -- sin/cos in [-1,1] and the
-    # non-negative hypot magnitude -- which do not wrap. CAVEAT for atan2 THETA only: turns wrap at the +-0.5 boundary
-    # (+0.5 and -0.5 are the same angle, 1 ULP apart on the circle) yet map to opposite ends of this linear index, so a
-    # 1-ULP straddle of that boundary would be amplified to ~full-scale and could spuriously trip the <=1 ULP gate.
-    # That straddle is currently unreachable: reference and oracle carry enough guard bits to round to the SAME side of
-    # the 1/2 boundary (verified by dense near-axis sweeps -> zero straddles), and the deterministic near-axis band in
-    # _check_atan2 sweeps x>0 only. If x<0 near-axis coverage is ever added, make the theta metric circular first.
+    # Linear signed-magnitude distance. Correct for the bounded, non-wrapping codomains -- sin/cos in [-1,1] and the
+    # non-negative hypot magnitude. NOT used for atan2 THETA, whose turns wrap at the +-0.5 boundary (+0.5 == -0.5 as
+    # an angle): use _theta_ulp_diff there.
     return 0 if a_bits == b_bits else abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
 
 
@@ -532,6 +528,21 @@ def _ordered_index(fmt, bits: int) -> int:
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
     return -mag if sign else mag
+
+
+def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
+    # Circular ULP distance for the atan2 THETA output (turns). +0.5 and -0.5 are the same angle and adjacent on the
+    # circle, so a 1-ULP straddle of that boundary -- reference rounds the magnitude to exactly 1/2 and canonicalizes
+    # to +0.5 while the oracle keeps -0.5+1ULP (or vice versa) -- must measure 1, not ~full-scale via the linear index.
+    # Both reference and oracle canonicalize -0.5 to +0.5, so the representable theta values form a contiguous ring of
+    # 2*index(+0.5) angles over (-0.5, +0.5]; take the short way around it. A genuine >1-ULP error at the boundary
+    # still measures its true (small) circular distance, so this collapses only the spurious wrap, not real misses.
+    # Assumes 1/2 is representable (WEXP >= 3) -- true for every supported trig format.
+    if a_bits == b_bits:
+        return 0
+    d = abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
+    ring = 2 * ((fmt.bias - 1) << fmt.wfrac)           # 2 * ordered index of +0.5 turns (sign 0, exp BIAS-1, frac 0)
+    return min(d, ring - d)
 
 
 def _atan2_pairs(fmt) -> list[tuple[int, int]]:
@@ -628,7 +639,7 @@ def _check_atan2(all_specs: dict[int, Spec]) -> None:
         for yb, xb in pairs:
             tr, mr = atan2_reference(fmt, yb, xb)
             tt, mt = atan2_true(fmt, yb, xb)
-            dt, dm = _ulp_diff(fmt, tr, tt), _ulp_diff(fmt, mr, mt)
+            dt, dm = _theta_ulp_diff(fmt, tr, tt), _ulp_diff(fmt, mr, mt)
             if (dt > 1 or dm > 1) and bad is None:
                 bad = (hex(yb), hex(xb), dt, dm)
             worst_t, worst_m = max(worst_t, dt), max(worst_m, dm)

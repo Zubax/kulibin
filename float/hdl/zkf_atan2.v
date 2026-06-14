@@ -854,7 +854,11 @@ module zkf_atan2 #(
     // magnitude has a strictly smaller exponent) -- a WEXP-wide exponent compare suffices, no full-width equality.
     // turn8(0,4) is the config-correct +1/2 body (computed identically to the live k==4 special path; its TURN8_Z4
     // underflow branch is unreachable for the legal WEXP>=2), so its exponent field is the correct reference.
+    // verilator coverage_off
+    // half_pos is a compile-time constant (turn8 of the fixed k==4 body), so its bits never toggle -- suppress its
+    // toggle coverage like the other constant cones in this module. be_neg_half / be_num_canon below DO toggle.
     wire [WFULL-1:0] half_pos     = turn8(1'b0, 3'd4);
+    // verilator coverage_on
     wire             be_neg_half  = be_num[WFULL-1] & (be_num[WFULL-2:WFRAC] == half_pos[WFULL-2:WFRAC]);
     wire [WFULL-1:0] be_num_canon = {be_num[WFULL-1] & ~be_neg_half, be_num[WFULL-2:0]};
     wire [WFULL-1:0] be_theta = out_special ? out_sp_theta : be_num_canon;
