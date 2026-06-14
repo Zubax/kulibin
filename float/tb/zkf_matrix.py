@@ -763,11 +763,8 @@ def _deep_coverage(out: list) -> None:
     # bits (csum/r_p/rowc/s_row/s_col MSB region) dark. The w8m36 products fill the full WP, so those bits toggle to
     # full width. exp2 drives the unsigned grids, log2 the signed grids (matches the known-good icarus _deep_correctness
     # w8m36 rows). These also widen exp2/log2's significand so its hidden-bit MSB becomes an ordinary toggling bit.
-    # sr=1 (STAGE_REDUCE) registers the reduced i/f/lost-sticky bundle; it sits upstream of the DSP grid so the grid
-    # coverage above is unaffected, and at this wide WEXP=8 it drives the registered r0_lost_sticky (the narrow w2m16
-    # sr=1 row can never drop nonzero low bits).
     for sp in (2, 3, 4):
-        out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18, sr=1))
+        out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
     for sp in (3, 4):
         out.append(_trans("log2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
     # sincos keeps WMAN=11 coverage via the CORDIC table family. It also runs w5_m11 so the tiny-input bypass

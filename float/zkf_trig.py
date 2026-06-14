@@ -528,7 +528,14 @@ def _ordered_index(fmt, bits: int) -> int:
     bits = zkf_model.canonicalize_special(fmt, bits)
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
-    return -mag if sign else mag
+    # ZKF has no subnormals: the magnitude encoding jumps straight from 0 (zero) to 1<<wfrac (the smallest normal),
+    # leaving (1<<wfrac)-1 non-existent codes in between. Collapse that gap so every pair of adjacent representable
+    # values is exactly one apart (a dense rank). Otherwise a 1-ULP straddle of the zero/underflow boundary -- e.g. a
+    # tiny atan2 angle that one side rounds to +-MIN_NORMAL and the other to 0 -- would measure a full binade (1<<wfrac)
+    # instead of 1. The shift is identical for both operands of any same-sign comparison, so non-boundary distances
+    # (and the mag/sincos checks, whose values never underflow to zero) are unchanged.
+    dense = 0 if mag == 0 else mag - ((1 << fmt.wfrac) - 1)
+    return -dense if sign else dense
 
 
 def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
@@ -542,7 +549,7 @@ def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
     if a_bits == b_bits:
         return 0
     d = abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
-    ring = 2 * ((fmt.bias - 1) << fmt.wfrac)           # 2 * ordered index of +0.5 turns (sign 0, exp BIAS-1, frac 0)
+    ring = 2 * _ordered_index(fmt, (fmt.bias - 1) << fmt.wfrac)   # 2 * (dense) ordered index of +0.5 turns
     return min(d, ring - d)
 
 
