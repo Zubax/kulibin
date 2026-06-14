@@ -7,6 +7,7 @@
 
 `default_nettype none
 
+// verilator coverage_off
 module _zkf_cordic_m32 #(
     parameter integer MODE      = 0,
     parameter integer UNROLL100 = 100,
@@ -61,7 +62,6 @@ module _zkf_cordic_m32 #(
 
     // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
     // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
-    // verilator coverage_off
     generate
         if ((EXPECT_WMAN       != 32) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
             (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
@@ -71,7 +71,6 @@ module _zkf_cordic_m32 #(
             _zkf_invalid_cordic_geometry_contract u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     assign const2pi = 37'd107944301636;
     assign inv_tau  = 37'd87496355274;
@@ -111,5 +110,7 @@ module _zkf_cordic_m32 #(
         .busy(busy), .done(done), .z_done(z_done), .sb_out(sb_out), .xn(xn), .yn(yn), .zn(zn)
     );
 endmodule
+
+// verilator coverage_on
 
 `default_nettype wire

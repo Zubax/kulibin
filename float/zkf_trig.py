@@ -263,6 +263,7 @@ def _emit_consts(s: Spec) -> str:
     w("")
     w("`default_nettype none")
     w("")
+    w("// verilator coverage_off")
     w(f"module {mod} #(")
     w.push()
     w("parameter integer MODE      = 0,")
@@ -327,7 +328,6 @@ def _emit_consts(s: Spec) -> str:
     w("""
         // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
         // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
-        // verilator coverage_off
         generate
             if ((EXPECT_WMAN       != %d) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
                 (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
@@ -337,7 +337,6 @@ def _emit_consts(s: Spec) -> str:
                 _zkf_invalid_cordic_geometry_contract u_invalid();
             end
         endgenerate
-        // verilator coverage_on
     """ % s.wman)
     w("")
     w(f"assign const2pi = {cwb}'d{s.const2pi};")
@@ -370,6 +369,8 @@ def _emit_consts(s: Spec) -> str:
     """)
     w.pop()
     w("endmodule")
+    w("")
+    w("// verilator coverage_on")
     w("")
     w("`default_nettype wire")
     return w.render()
