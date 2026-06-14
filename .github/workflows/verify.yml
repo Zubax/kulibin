@@ -7,7 +7,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-15
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       # The image's default user is `ubuntu` (UID 1000) but the GHA runner mounts /__w as UID 1001, which makes
       # actions/checkout fail on EACCES. Run as root so the workspace and toolchain paths are both writable.
       options: --user root

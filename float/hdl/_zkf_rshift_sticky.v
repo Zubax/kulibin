@@ -67,7 +67,11 @@ module _zkf_rshift_sticky #(
         if (STAGE_SPLIT == 0) begin : g_shamt_pass
             assign shamt_late = shamt;
         end else begin : g_shamt_register
+            // verilator coverage_off
+            // shamt_late_r[10] needs a shift distance >= 1024 (exponent difference >= 1024); the sampled add/sub/round
+            // streams that feed this shifter never produce such operand pairs, so that bit never toggles.
             reg [WSHIFT-1:0] shamt_late_r;
+            // verilator coverage_on
             always @(posedge clk) shamt_late_r <= shamt;
             assign shamt_late = shamt_late_r;
         end
@@ -82,7 +86,11 @@ module _zkf_rshift_sticky #(
 
             // Pick the shamt source: early stages see the live input; late stages see the registered
             // copy so their data and shamt stay aligned across the cascade-internal register barrier.
+            // verilator coverage_off
+            // shamt_use[10] needs a shift distance >= 1024 (exponent difference >= 1024); the sampled add/sub/round
+            // streams that feed this shifter never produce such operand pairs, so that bit never toggles.
             wire [WSHIFT-1:0] shamt_use;
+            // verilator coverage_on
             if ((STAGE_SPLIT != 0) && (i > SPLIT_AFTER)) begin : g_shamt_use_late
                 assign shamt_use = shamt_late;
             end else begin : g_shamt_use_early

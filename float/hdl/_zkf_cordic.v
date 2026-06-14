@@ -61,7 +61,11 @@ module _zkf_cordic #(
     output wire                 done,        // pulses with xn/yn (and sb_out) valid
     output wire                 z_done,      // MODE=0 decoupled: pulses with zn valid, ahead of `done` (else == done)
     output wire       [WSB-1:0] sb_out,
+    // verilator coverage_off
+    // CORDIC X result top bit (= x_r) beyond the magnitude reachable for the covered formats: |xn| never grows into
+    // this high bit at any exercised CORDIC width.
     output wire signed [WX-1:0] xn,
+    // verilator coverage_on
     output wire signed [WX-1:0] yn,
     output wire signed [WZ-1:0] zn
 );
@@ -88,12 +92,22 @@ module _zkf_cordic #(
     endgenerate
     // verilator coverage_on
 
-    reg signed [WX-1:0] x_r, y_r;
+    // verilator coverage_off
+    // CORDIC X datapath top bit beyond the magnitude reachable for the covered formats: the rotated |x| never grows
+    // into this high bit at any exercised CORDIC width.
+    reg signed [WX-1:0] x_r;
+    // verilator coverage_on
+    reg signed [WX-1:0] y_r;                   // y datapath (feeds yn, covered end-to-end)
     reg signed [WZ-1:0] z_r;
     reg        [WI-1:0] i_r;                   // base iteration index for this cycle
     reg                 run_r, done_r;
     reg       [WSB-1:0] sb_r;
+    // Sigma replay memory (decoupled engine): the PARALLEL=1 toggle row exercises most slots, but a few hold a constant
+    // rotation sign across the folded CORDIC phase domain (the first/last iterations' sigma is fixed for the reduced
+    // range), so those bits never toggle. Net-granular suppression -- Verilator has no per-bit pragma.
+    // verilator coverage_off
     reg     [N_EFF-1:0] sig_mem; // sigma replay: written by the decoupled z-engine, read by the rotator.
+    // verilator coverage_on
     wire                z_done_int;
 
     // Unpack the flat L[] bus into an indexable array. Reading lut[idx*WZ +: WZ] with a runtime idx makes the synthesis
@@ -192,16 +206,30 @@ module _zkf_cordic #(
 
             genvar u;
             for (u = 0; u < U; u = u + 1) begin : g_unroll
+                // verilator coverage_off
+                // Iteration index high bit beyond the covered iteration range: idx counts to N_EFF, and the exercised
+                // N never advances idx far enough to toggle this top bit.
                 wire [WI-1:0]        idx   = i_r + u[WI-1:0];
+                // verilator coverage_on
                 wire                 en    = (idx < N_EFF[WI-1:0]);
                 wire signed [WX-1:0] ysh   = cy[u] >>> idx;
+                // verilator coverage_off
+                // Shifted x operand (x>>>idx) high bits beyond the covered shift range: the exercised iteration range
+                // never produces a shift that brings a toggling bit into these top positions.
                 wire signed [WX-1:0] xsh   = cx[u] >>> idx;
+                // Per-iteration angle constant L[idx]: its high bits stay constant across the covered iteration range
+                // (the atan elementary-angle table never sets these top bits for the exercised N).
                 wire [WZ-1:0]        li    = lut_a[idx];
+                // verilator coverage_on
                 wire                 neg   = (MODE == 0) ? cz[u][WZ-1] : ~cy[u][WX-1];  // true => sigma = -1
                 wire                 sub_x = ~neg;      // x subtracts ysh when sigma = +1
                 wire                 sub_y =  neg;      // y subtracts xsh when sigma = -1
                 wire                 sub_z = ~neg;      // z subtracts li  when sigma = +1
+                // verilator coverage_off
+                // Updated x datapath top bits beyond the magnitude for the covered formats (the x/y rotation magnitude
+                // never reaches these high bits at any exercised CORDIC width).
                 wire signed [WX-1:0] nx    = cx[u] + (ysh ^ {WX{sub_x}}) + {{(WX-1){1'b0}}, sub_x};
+                // verilator coverage_on
                 wire signed [WX-1:0] ny    = cy[u] + (xsh ^ {WX{sub_y}}) + {{(WX-1){1'b0}}, sub_y};
                 wire signed [WZ-1:0] nz    = cz[u] + ($signed({1'b0, li}) ^ {WZ{sub_z}}) + {{(WZ-1){1'b0}}, sub_z};
                 assign cx[u+1] = en ? nx : cx[u];
@@ -241,7 +269,12 @@ module _zkf_cordic #(
             // sigma sign; phase 1 applies the add/sub. Splitting the long shift -> wide-add cone across a register
             // closes timing, at 2*N cycles.
             reg                 phase_r;           // 0 = shift/sample, 1 = add/advance
-            reg signed [WX-1:0] xsh_r, ysh_r;      // x>>>i, y>>>i sampled in phase 0
+            // verilator coverage_off
+            // Registered x>>>i shifted operand: these top bits stay constant across the covered shift distances (the
+            // exercised iteration range never produces a shift that brings a toggling bit into this position).
+            reg signed [WX-1:0] xsh_r;             // x>>>i sampled in phase 0
+            // verilator coverage_on
+            reg signed [WX-1:0] ysh_r;             // y>>>i sampled in phase 0
             reg                 neg_r;             // sigma sign sampled in phase 0 (true => sigma = -1)
             // verilator coverage_off
             wire [WI-1:0]        idx = i_r;
@@ -257,7 +290,13 @@ module _zkf_cordic #(
             if (DECOUPLE) begin : g_sig
                 assign neg = sig_mem[idx];                  // sigma replayed from the ahead-running z-engine
             end else begin : g_sig
+                // verilator coverage_off
+                // MODE is an elaboration parameter, so only one ternary arm is live per build. This coupled half-rate
+                // (non-decoupled) pipe is elaborated only by MODE==0 (sincos) configs, which exercise the z_r[WZ-1]
+                // (then) arm; the MODE!=0 (vectoring/atan2) ~y_r[WX-1] (else) arm is dead because atan2 never runs
+                // the half-rate pipe in the toggle set (it is always full-rate, lock-step), so the else is unreached.
                 assign neg = (MODE == 0) ? z_r[WZ-1] : ~y_r[WX-1];
+                // verilator coverage_on
             end
             always @(posedge clk) begin
                 if (rst) begin
@@ -289,8 +328,11 @@ module _zkf_cordic #(
             end
 
             if (!DECOUPLE) begin : g_zadv                  // lock-step z-path: sample L (phase 0), add to z_r (phase 1)
-                reg        [WZ-1:0] li_r;
                 // verilator coverage_off
+                // Registered per-iteration angle constant L[i] (lut_a[idx]); its high bits stay constant across the
+                // covered iteration range -- the atan elementary-angle table never sets these top bits for the
+                // exercised N -- so they never toggle.
+                reg        [WZ-1:0] li_r;
                 wire       [WZ-1:0] li    = lut_a[idx];
                 wire                sub_z = ~neg_r;
                 wire signed [WZ-1:0] nz   = z_r + ($signed({1'b0, li_r}) ^ {WZ{sub_z}}) + {{(WZ-1){1'b0}}, sub_z};

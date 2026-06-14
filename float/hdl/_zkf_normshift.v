@@ -171,7 +171,11 @@ module _zkf_normshift #(
                 always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
                 assign cnt[2*k +: 2] = dig_r;
             end else if ((STAGE_SPLIT == 2) && (k == NL4 - 1)) begin : g_count_delay2
+                // verilator coverage_off
+                // Top radix-4 normalize digit delay: this is the highest digit place (k == NL4-1), which the covered
+                // shift distances never reach, so its high bit never toggles.
                 reg [1:0] dig_r1, dig_r2;
+                // verilator coverage_on
                 always @(posedge clk) begin
                     dig_r1 <= dig_pre[2*k +: 2];
                     dig_r2 <= dig_r1;
@@ -254,7 +258,11 @@ module _zkf_normshift #(
         if (STAGE_OUTPUT) begin : g_output_reg
             reg              zero_r;
             reg [WSHAMT-1:0] count_r;
+            // verilator coverage_off
+            // Normalized output MSB: normalization brings the leading one to bit W-1 for every nonzero input (and the
+            // value is don't-care for zero input), so the MSB is always 1 and never toggles.
             reg      [W-1:0] y_r;
+            // verilator coverage_on
             reg  [WSB-1:0]   sb_r;
             reg              valid_r;
             always @(posedge clk) begin

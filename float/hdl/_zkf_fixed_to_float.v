@@ -87,7 +87,10 @@ module _zkf_fixed_to_float #(
     wire [WMAG-1:0]   norm_aligned;
     // verilator coverage_on
     wire              sb_valid;
+    // verilator coverage_off
+    // Sideband pipe high bits (exp_offset / force flags) are caller-dependent; not every bit toggles for every f2f user.
     wire [PIPE_W-1:0] sb_pipe_out;
+    // verilator coverage_on
     _zkf_normshift #(
         .W(WMAG), .STAGE_SPLIT(STAGE_NORMALIZE), .STAGE_OUTPUT(STAGE_NORMALIZE_OUTPUT), .WSB(PIPE_W)
     ) u_norm (

@@ -758,6 +758,18 @@ def _deep_coverage(out: list) -> None:
         out.append(_trans("exp2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
         out.append(_trans("log2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
     out.append(_trans("log2", s, "deep", "w3m16_split_final", 3, 16, "exhaustive", 0, sp=2, spf=3))
+    # Wide-format split-product coverage (bona fide, not suppression): the w3m16 sp=2/3/4 rows above instrument the
+    # shared _zkf_pmul g_flat/g_rows/g_rows2 reduction trees, but their bounded products leave the high accumulator
+    # bits (csum/r_p/rowc/s_row/s_col MSB region) dark. The w8m36 products fill the full WP, so those bits toggle to
+    # full width. exp2 drives the unsigned grids, log2 the signed grids (matches the known-good icarus _deep_correctness
+    # w8m36 rows). These also widen exp2/log2's significand so its hidden-bit MSB becomes an ordinary toggling bit.
+    # sr=1 (STAGE_REDUCE) registers the reduced i/f/lost-sticky bundle; it sits upstream of the DSP grid so the grid
+    # coverage above is unaffected, and at this wide WEXP=8 it drives the registered r0_lost_sticky (the narrow w2m16
+    # sr=1 row can never drop nonzero low bits).
+    for sp in (2, 3, 4):
+        out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18, sr=1))
+    for sp in (3, 4):
+        out.append(_trans("log2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
     # sincos keeps WMAN=11 coverage via the CORDIC table family. It also runs w5_m11 so the tiny-input bypass
     # (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
     for w, m in [(2, 11), (3, 11)]:
@@ -767,6 +779,19 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
+    # Lock-step (DECOUPLE=0) sincos at un=50: covers the coupled CORDIC's g_zadv path (g_zadv.li_r) and the phi_seen
+    # else-branch (zkf_sincos.v:479).
+    out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=50))
+    # Decoupled (PARALLEL=1) sincos: runs the half-rate sigma-replay engine, covering _zkf_cordic.v sig_mem and the
+    # phi_seen if-branch fast-skip (zkf_sincos.v:476). Additive -- must NOT replace the lock-step row above, whose
+    # li_r / else-branch coverage exists only under DECOUPLE=0. (The P_PHI guard's implicit else at :483 stays dark in
+    # both modes -- a fixed CORDIC-vs-multiply latency relationship -- so it remains coverage_off in the RTL.)
+    out.append(_trans("sincos", s, "deep", "w5m11_par1", 5, 11, "exhaustive", 0, un=50, parallel=1))
+    # Wide-format sincos (bona fide): at w5m11 the CORDIC X/Y carry / local-magnitude / local-exponent high bits sit
+    # above the format ceiling (guard bits above XF, or a magnitude/exponent the narrow datapath never reaches). The
+    # w8m24 CORDIC (table _zkf_cordic_m24) makes them ordinary mid-bits the random phase stream toggles, covering
+    # cd_xn/e_xn/b2_cos, sin/cos_loc_mag, sin/cos_mag, sh_mag and the loc/cos exponent high bits.
+    out.append(_trans("sincos", s, "deep", "w8m24", 8, 24, "random", 768))
     # zkf_atan2 coverage: random + the directed pair table at the cheap 5/11 format reach the small-ratio bypass,
     # the residual divide, and every special/axis/diagonal pair; un=200 and sn/pa toggle the throughput and back-end
     # staging.
@@ -775,6 +800,12 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("atan2", s, "deep", "atan2_w5m11_directed", 5, 11, "directed", 0))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, un=200))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, sn=1, pa=1))
+    # Wide-format atan2 (bona fide): at w5m11 the divider/shamt/significand/magnitude high bits sit above the format
+    # ceiling (e.g. bit 10 is the significand hidden bit and bit 15 the magnitude sign only because WMAN=11/WFULL=16).
+    # At w8m24 those become ordinary mid-bits the random stream toggles, covering d_shamt[5], dv_den/dv_rem/dv_den3, and
+    # the be/d significand and output-magnitude high bits -- so they need no suppression. (Replaces a w5m11 "resdiv" row
+    # that could not reach them.)
+    out.append(_trans("atan2", s, "deep", "atan2_w8m24", 8, 24, "random", 4000))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
     # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the

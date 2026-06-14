@@ -115,7 +115,11 @@ module _zkf_horner #(
             // verilator coverage_off
             wire _unused_prod_sb_valid = &{1'b0, prod_sb_valid, 1'b0};
             // verilator coverage_on
+            // verilator coverage_off
+            // Live-coefficient bus headroom: these top bits exceed the maximum live coefficient magnitude carried at
+            // any input, even at the widest log2 coverage (w8m36), so they never toggle.
             wire [COW-1:0]   p_co = prod_sb[WSB_H-1 -: COW];
+            // verilator coverage_on
             wire [WRARG-1:0] p_w  = prod_sb[WSB+WRARG-1 -: WRARG];
             wire [WSB-1:0]   p_sb = prod_sb[WSB-1:0];
 
@@ -123,9 +127,14 @@ module _zkf_horner #(
             // right shift floors toward minus infinity, matching the truncating-Horner reference exactly. With
             // ACC_SIGNED=0 (exp2) prod_p is a non-negative unsigned product whose top bits are structurally 0, so the
             // arithmetic `>>>` behaves identically to a logical shift -- keep it as-is; do not specialize on ACC_SIGNED.
+            // verilator coverage_off
+            // Horner accumulator headroom (next_acc/r_acc) and registered live-coefficient bus headroom (r_co): these
+            // top bits exceed the maximum partial-sum / live-coefficient magnitude for any input, even at the widest
+            // log2 coverage (w8m36), so they never toggle.
             wire signed [WACC-1:0] next_acc = $signed(p_co[J*WCOEF +: WCOEF]) + $signed($signed(prod_p) >>> WRARG);
             reg signed [WACC-1:0] r_acc;
             reg [COW-1:0]         r_co;
+            // verilator coverage_on
             reg [WRARG-1:0]       r_w;
             reg                   r_val;
             reg [WSB-1:0]         r_sb;

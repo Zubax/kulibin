@@ -26,7 +26,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root      # See verify.yml for why root is needed.
     timeout-minutes: 360
 
@@ -58,7 +58,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 
@@ -79,7 +79,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 
@@ -111,7 +111,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 
@@ -132,7 +132,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 
@@ -149,7 +149,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 
@@ -179,7 +179,7 @@ jobs:
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-05-20
+      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
     timeout-minutes: 360
 

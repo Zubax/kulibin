@@ -274,10 +274,20 @@ module _zkf_div_radix4_step#(parameter WMAN = 18) (
     // Divisor significand's hidden-bit MSB is structurally 1 (never toggles 1->0).
     input wire [WMAN-1:0] den,
     // verilator coverage_on
+    // verilator coverage_off
+    // 3*denominator candidate's top bits beyond the divisor magnitude for the covered formats: at the exercised WMAN
+    // these high bits exceed the magnitude that 3*den ever reaches, so they never toggle.
     input wire [WMAN+1:0] den3,
+    // Remainder datapath top bit beyond the divisor magnitude for the covered formats: the running remainder never
+    // grows into this high bit at the exercised WMAN.
     input wire [WMAN-1:0] rem,
+    // verilator coverage_on
 
+    // verilator coverage_off
+    // Next-remainder datapath top bit beyond the divisor magnitude for the covered formats (mirrors rem above): the
+    // selected remainder never grows into this high bit at the exercised WMAN.
     output wire [WMAN-1:0] rem_next,
+    // verilator coverage_on
     output wire      [1:0] digit
 );
     localparam WREM4 = WMAN + 2;

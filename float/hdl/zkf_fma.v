@@ -144,8 +144,12 @@ module zkf_fma #(
 
     // Shared multiplier: a_sig*b_sig (both unsigned) through _zkf_pmul.
     localparam WSB_FMA = WEU + WMAN + WEXP + 6;
+    // verilator coverage_off
+    // The c_sig field packed into mul_sb_in/out carries the operand-c significand hidden bit at bit 46; that bit is
+    // always 1 for a normalized operand, so the 1->0 toggle of mul_sb_in[46]/mul_sb_out[46] can never occur.
     wire [WSB_FMA-1:0] mul_sb_in = {p_sign, p_zero, p_inf, p_exp_base, c_sig, c_exp, c_sign, c_zero, c_inf};
     wire [WSB_FMA-1:0] mul_sb_out;
+    // verilator coverage_on
 
     wire                  pr_valid;
     wire       [WMAG-1:0] pr_product_raw;
@@ -153,7 +157,11 @@ module zkf_fma #(
     wire                  pr_p_zero  = mul_sb_out[WSB_FMA-2];
     wire                  pr_p_inf   = mul_sb_out[WSB_FMA-3];
     wire signed [WEU-1:0] pr_ep_base = $signed(mul_sb_out[WSB_FMA-4 -: WEU]);
+    // verilator coverage_off
+    // pr_c_sig's MSB (bit 35) is the operand-c significand hidden bit extracted from the sideband; it is always 1
+    // for a normalized operand, so its 1->0 toggle can never occur.
     wire       [WMAN-1:0] pr_c_sig   = mul_sb_out[WSB_FMA-4-WEU -: WMAN];
+    // verilator coverage_on
     wire       [WEXP-1:0] pr_c_exp   = mul_sb_out[WSB_FMA-4-WEU-WMAN -: WEXP];
     wire                  pr_c_sign  = mul_sb_out[2];
     wire                  pr_c_zero  = mul_sb_out[1];

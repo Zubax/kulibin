@@ -171,7 +171,11 @@ module zkf_log2 #(
     // only sets bit WFRAC, which never collides with the low bits of 2*frac in the branch that selects them
     // (m < sqrt(2) keeps frac < 2^(WFRAC-1)). The two's-complement identity {1'b1, frac} (= sig) read as signed is
     // exactly frac - 2^WFRAC, the re-center branch's f.
+    // verilator coverage_off
+    // Significand hidden bit (WMAN-1, bit 35 at the widest log2 coverage format w8m36): sig = {1'b1, frac_in}, so the
+    // top bit is the structural hidden 1 and is always set, never toggling.
     wire [WFRAC:0]   sig_in    = {1'b1, frac_in};                  // WMAN-bit significand, m = sig / 2^WFRAC
+    // verilator coverage_on
     wire             recenter  = sig_in >= THR;                    // m >= sqrt(2)
 
     // For special/noncanonical transactions, clamp v to the exact x=1 reduced argument (v=1/2, f=0) so compact log2
