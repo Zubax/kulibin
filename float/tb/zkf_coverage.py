@@ -11,9 +11,10 @@ explicit branch metric; ``--coverage-toggle`` gives per-net-bit toggle coverage)
 
 Gating modes:
 
-  * ``--gate``  : fail on any uncovered executable LINE (historical behaviour, used by per-PR CI).
-  * ``--full``  : fail on any uncovered line, branch, OR toggle point. Used by the deep tier
-                  (``coverage-float-gate-full``).
+  * ``--gate``  : per-PR tier (used by ``coverage-float-gate``) - fail on any uncovered LINE point only.
+                  Branch is gated by ``--full``; toggle coverage is advisory and never gated here.
+  * ``--full``  : deep tier (used by ``coverage-float-gate-full``) - fail on any uncovered LINE or BRANCH
+                  point. TOGGLE coverage is reported as advisory but is never fatal.
 
 Verilator coverage points are keyed per parameterisation AND per hierarchy instance, but the *net
 name* (``o`` field) is parameter- and instance-independent. We merge points by
@@ -232,7 +233,7 @@ def write_report(output_dir: Path, summary: dict[str, dict[str, Stats]], genhtml
     detail = (
         "<h2>Uncovered points</h2><table><thead><tr><th>Source</th><th>Kind</th><th>Line</th>"
         "<th>Net / block</th></tr></thead><tbody>" + "\n".join(detail_rows) + "</tbody></table>"
-        if detail_rows else "<h2>Uncovered points</h2><p class='good'>None — every line, branch, and toggle covered.</p>"
+        if detail_rows else "<h2>Uncovered points</h2><p class='good'>None — every line and branch covered (toggle advisory).</p>"
     )
 
     genhtml_link = ("<p><a href='lcov/index.html'>Detailed line drill-down (genhtml) &rarr;</a></p>"

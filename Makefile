@@ -103,7 +103,7 @@ coverage-float-gate:
 
 ## Deep-tier-only extended sweep: fills the parity/relation/WINT parameter gaps (correctness, Icarus) and
 ## drives a curated set of exhaustive small-format Verilator runs into build/float/verilator-toggle for
-## full line+branch+toggle coverage closure. Per-PR verify/verify-float never invoke this.
+## line+branch coverage closure (toggle reported advisory). Per-PR verify/verify-float never invoke this.
 verify-float-extended: library
 	@rm -rf build/float/icarus-ext build/float/verilator-toggle
 	@$(FLOAT_PYTEST) -m deep
