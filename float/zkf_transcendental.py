@@ -443,7 +443,6 @@ def _emit_table(s: Spec) -> str:
     w("`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
     w("`endif")
     w("")
-    w("// verilator coverage_off")
     if s.func == "exp2":
         w(f"module {mod} #(")
         w.push()
@@ -493,8 +492,6 @@ def _emit_table(s: Spec) -> str:
     w.pop()
     w(");")
     w.push()
-    # Blanket coverage_off over the generated module: these are pure data tables, exhaustively checked against the
-    # mpmath model by --check, not through HDL line/toggle coverage.
     # Degree contract (mirrors the LATENCY parameter): D defaults to this ROM's fitted degree and zkf_<func>.v drives
     # it with its own closed-form degree; a mismatch fails elaboration, so the Horner pipeline depth -- hence the
     # operator latency -- cannot silently drift from the degree the ROM was actually fitted for.
@@ -589,7 +586,6 @@ def _emit_table(s: Spec) -> str:
         """)
     w.pop()
     w("endmodule")
-    w("// verilator coverage_on")
     w("")
     w("`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
     w("`undef ZKF_ATTRIBUTE_ROM_PRE")

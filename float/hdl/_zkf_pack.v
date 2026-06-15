@@ -58,7 +58,6 @@ module _zkf_pack #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -73,7 +72,6 @@ module _zkf_pack #(
             _zkf_invalid_stage_output u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -143,9 +141,7 @@ module _zkf_pack #(
     // Input combinational exponent classification. Values exactly one exponent below the normal range are at or above
     // the zero/MIN_NORMAL midpoint, so they round directly to MIN_NORMAL. Lower exponents round to canonical zero.
     // bias_ext is a compile-time-constant bias widened with constant padding.
-    // verilator coverage_off
     wire signed [WEXP_BIASED_EXT-1:0] bias_ext         = {{(WEXP_BIASED_EXT-WEXP){1'b0}}, EXP_BIAS};
-    // verilator coverage_on
     wire signed [WEXP_BIASED_EXT-1:0] exp_unbiased_ext = {i_exp_unbiased[WEXP_UNBIASED-1], i_exp_unbiased};
     // EXP_IS_BIASED callers pass the signed biased exponent directly (already sign-extended by the wider field), so the
     // bias add is skipped; the parameter is constant so this is a compile-time select, not a runtime mux.

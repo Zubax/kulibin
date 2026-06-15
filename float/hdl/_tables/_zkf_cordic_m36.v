@@ -7,7 +7,6 @@
 
 `default_nettype none
 
-// verilator coverage_off
 module _zkf_cordic_m36 #(
     parameter integer MODE      = 0,
     parameter integer UNROLL100 = 100,
@@ -112,7 +111,5 @@ module _zkf_cordic_m36 #(
         .busy(busy), .done(done), .z_done(z_done), .sb_out(sb_out), .xn(xn), .yn(yn), .zn(zn)
     );
 endmodule
-
-// verilator coverage_on
 
 `default_nettype wire

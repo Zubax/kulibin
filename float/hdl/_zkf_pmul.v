@@ -46,19 +46,11 @@ module _zkf_pmul #(
     input  wire             clk,
     input  wire             rst,        // resets only the valid pipe (control); datapath regs free-run
     input  wire             in_valid,
-    // verilator coverage_off
-    // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does not
-    // toggle.
     input  wire   [WSB-1:0] sb_in,
-    // verilator coverage_on
     input  wire    [WA-1:0] a,
     input  wire    [WB-1:0] b,
     output wire             out_valid,
-    // verilator coverage_off
-    // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does not
-    // toggle.
     output wire   [WSB-1:0] sb_out,
-    // verilator coverage_on
     output wire [WA+WB-1:0] p           // exact a*b (raw bits; caller assigns signedness)
 );
     localparam integer WP  = WA + WB;
@@ -71,7 +63,6 @@ module _zkf_pmul #(
     localparam integer GA          = (WMULTIPLIER == 0) ? SYM : ((WA + P - 1) / P);   // ceil(WA/P)
     localparam integer GB          = (WMULTIPLIER == 0) ? SYM : ((WB + P - 1) / P);   // ceil(WB/P)
 
-    // verilator coverage_off
     generate
         if ((STAGE_PRODUCT < 0) || (STAGE_PRODUCT > 4)) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
@@ -83,13 +74,11 @@ module _zkf_pmul #(
             _zkf_invalid_pmul_split u_invalid();   // need >= 1 bit per slice
         end
     endgenerate
-    // verilator coverage_on
 
     // Even split helpers: slice k of an N-way split of a w-bit operand. Low slices (small k) absorb the remainder,
     // so widths are ceil(w/N) down to floor(w/N) and sum to w; offsets are the running prefix sum.
+    // Constant functions evaluated only at elaboration (slice widths/offsets); no runtime line coverage.
     // verilator coverage_off
-    // Constant functions evaluated only at elaboration (every call site below is a localparam), so they carry no
-    // runtime line coverage; suppress them from the line gate.
     function automatic integer slc_w(input integer w, input integer n, input integer k);
         slc_w = (w + n - 1 - k) / n;
     endfunction
@@ -104,32 +93,16 @@ module _zkf_pmul #(
 
     // Operand-capture stage (STAGE_PRODUCT >= 1): register the free-floating operands right before the product so
     // the placer can sit a latch at the DSP inputs.
-    // verilator coverage_off
-    // Operand-capture high bits exceed the operand significand width of the covered pmul users (sign/zero-extension
-    // headroom), so they are never set and never toggle.
     wire [WA-1:0]  c_a;
     wire [WB-1:0]  c_b;
-    // verilator coverage_on
     wire           c_v;
-    // verilator coverage_off
-    // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does not
-    // toggle.
     wire [WSB-1:0] c_sb;
-    // verilator coverage_on
     generate
         if (STAGE_PRODUCT != 0) begin : g_capture
-            // verilator coverage_off
-            // Operand-capture high bits exceed the operand significand width of the covered pmul users
-            // (sign/zero-extension headroom), so they are never set and never toggle.
             reg [WA-1:0]  x_a;
             reg [WB-1:0]  x_b;
-            // verilator coverage_on
             reg           x_v;
-            // verilator coverage_off
-            // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does
-            // not toggle.
             reg [WSB-1:0] x_sb;
-            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) x_v <= 1'b0;
                 else     x_v <= in_valid;
@@ -145,7 +118,6 @@ module _zkf_pmul #(
 
     generate
         if (STAGE_PRODUCT <= 1) begin : g_single
-            // verilator coverage_off
             wire [WP-1:0] prod;
             if ((A_SIGNED != 0) && (B_SIGNED != 0)) begin : g_ss
                 assign prod = $signed(c_a) * $signed(c_b);
@@ -156,14 +128,9 @@ module _zkf_pmul #(
             end else begin : g_us
                 assign prod = $signed({1'b0, c_a}) * $signed(c_b);
             end
-            // verilator coverage_on
             reg [WP-1:0]  r_p;
             reg           r_v;
-            // verilator coverage_off
-            // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does
-            // not toggle.
             reg [WSB-1:0] r_sb;
-            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) r_v <= 1'b0;
                 else     r_v <= c_v;
@@ -175,11 +142,9 @@ module _zkf_pmul #(
             localparam integer MAXSA = ((WA + GA - 1) / GA) + 1;  // widest a-slice + sign bit
             localparam integer MAXSB = ((WB + GB - 1) / GB) + 1;
             localparam integer WSP   = MAXSA + MAXSB;             // signed slice-product width
-            // verilator coverage_off
             wire signed [MAXSA-1:0] a_s [0:GA-1];
             wire signed [MAXSB-1:0] b_s [0:GB-1];
             wire signed [WSP-1:0]   pp  [0:GA*GB-1];
-            // verilator coverage_on
             genvar gi, gj;
             for (gi = 0; gi < GA; gi = gi + 1) begin : g_aslice
                 localparam integer WI = slc_w(WA, GA, gi);
@@ -200,15 +165,9 @@ module _zkf_pmul #(
             end
 
             // -- Register the GA*GB slice products. --
-            // verilator coverage_off
             reg signed [WSP-1:0] m_pp [0:GA*GB-1];
-            // verilator coverage_on
             reg           m_v;
-            // verilator coverage_off
-            // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it does
-            // not toggle.
             reg [WSB-1:0] m_sb;
-            // verilator coverage_on
             integer mi;
             always @(posedge clk) begin
                 if (rst) m_v <= 1'b0;
@@ -218,9 +177,7 @@ module _zkf_pmul #(
             end
 
             if (STAGE_PRODUCT == 2) begin : g_flat
-                // verilator coverage_off
                 wire signed [WP-1:0] term [0:GA*GB-1];
-                // verilator coverage_on
                 genvar ti, tj;
                 for (ti = 0; ti < GA; ti = ti + 1) begin : g_term_row
                     for (tj = 0; tj < GB; tj = tj + 1) begin : g_term_col
@@ -236,11 +193,7 @@ module _zkf_pmul #(
                 end
                 reg [WP-1:0]  r_p;
                 reg           r_v;
-                // verilator coverage_off
-                // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it
-                // does not toggle.
                 reg [WSB-1:0] r_sb;
-                // verilator coverage_on
                 always @(posedge clk) begin
                     if (rst) r_v <= 1'b0;
                     else     r_v <= m_v;
@@ -249,9 +202,7 @@ module _zkf_pmul #(
                 end
                 assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
             end else if (STAGE_PRODUCT == 3) begin : g_rows
-                // verilator coverage_off
                 wire signed [WP-1:0] brow [0:GA*GB-1];
-                // verilator coverage_on
                 genvar ri, rj;
                 for (ri = 0; ri < GA; ri = ri + 1) begin : g_brow_row
                     for (rj = 0; rj < GB; rj = rj + 1) begin : g_brow_col
@@ -269,11 +220,7 @@ module _zkf_pmul #(
                 end
                 reg signed [WP-1:0] s_row [0:GA-1];
                 reg           s_v;
-                // verilator coverage_off
-                // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it
-                // does not toggle.
                 reg [WSB-1:0] s_sb;
-                // verilator coverage_on
                 integer si;
                 always @(posedge clk) begin
                     if (rst) s_v <= 1'b0;
@@ -281,9 +228,7 @@ module _zkf_pmul #(
                     for (si = 0; si < GA; si = si + 1) s_row[si] <= rowc[si];
                     s_sb <= m_sb;
                 end
-                // verilator coverage_off
                 wire signed [WP-1:0] arow [0:GA-1];
-                // verilator coverage_on
                 genvar ai;
                 for (ai = 0; ai < GA; ai = ai + 1) begin : g_arow
                     localparam integer OI = slc_off(WA, GA, ai);
@@ -297,11 +242,7 @@ module _zkf_pmul #(
                 end
                 reg [WP-1:0]  r_p;
                 reg           r_v;
-                // verilator coverage_off
-                // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it
-                // does not toggle.
                 reg [WSB-1:0] r_sb;
-                // verilator coverage_on
                 always @(posedge clk) begin
                     if (rst) r_v <= 1'b0;
                     else     r_v <= s_v;
@@ -313,9 +254,7 @@ module _zkf_pmul #(
                 // Same GA x GB signed grid as g_rows, but the final GA-way column sum is split across two register
                 // stages: pairwise partial sums (s_col), then their sum. Halves the reduction adder depth for very
                 // wide accumulators where the single-stage column sum is the limiter.
-                // verilator coverage_off
                 wire signed [WP-1:0] brow [0:GA*GB-1];
-                // verilator coverage_on
                 genvar zi, zj;
                 for (zi = 0; zi < GA; zi = zi + 1) begin : g_brow_row
                     for (zj = 0; zj < GB; zj = zj + 1) begin : g_brow_col
@@ -333,10 +272,7 @@ module _zkf_pmul #(
                 end
                 reg signed [WP-1:0] s_row [0:GA-1];
                 reg           s_v;
-                // Constant-per-operator sideband forwarded opaquely; does not toggle within a configuration.
-                // verilator coverage_off
                 reg [WSB-1:0] s_sb;
-                // verilator coverage_on
                 integer zs;
                 always @(posedge clk) begin
                     if (rst) s_v <= 1'b0;
@@ -344,10 +280,8 @@ module _zkf_pmul #(
                     for (zs = 0; zs < GA; zs = zs + 1) s_row[zs] <= rowc[zs];
                     s_sb <= m_sb;
                 end
-                // verilator coverage_off
                 wire signed [WP-1:0] arow [0:GA-1];
                 wire signed [WP-1:0] psum [0:((GA+1)/2)-1];
-                // verilator coverage_on
                 genvar yi;
                 for (yi = 0; yi < GA; yi = yi + 1) begin : g_arow
                     localparam integer OI = slc_off(WA, GA, yi);
@@ -359,18 +293,9 @@ module _zkf_pmul #(
                     if (2*hi + 1 < GA) begin : g_pair assign psum[hi] = arow[2*hi] + arow[2*hi + 1]; end
                     else               begin : g_lone assign psum[hi] = arow[2*hi];                  end
                 end
-                // verilator coverage_off
-                // Per-column pairwise partial-product accumulator: a single pairwise partial cannot reach the full WP
-                // product width at any covered format (the wide w8m36 grid fills csum/r_p to full WP; this partial
-                // stays bounded), so its top bits never toggle.
                 reg signed [WP-1:0] s_col [0:NH-1];
-                // verilator coverage_on
                 reg           t_v;
-                // verilator coverage_off
-                // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it
-                // does not toggle.
                 reg [WSB-1:0] t_sb;
-                // verilator coverage_on
                 integer zt;
                 always @(posedge clk) begin
                     if (rst) t_v <= 1'b0;
@@ -386,11 +311,7 @@ module _zkf_pmul #(
                 end
                 reg [WP-1:0]  r_p;
                 reg           r_v;
-                // verilator coverage_off
-                // Caller-defined sideband forwarded opaquely (sign/exp/flags); constant within a configuration, so it
-                // does not toggle.
                 reg [WSB-1:0] r_sb;
-                // verilator coverage_on
                 always @(posedge clk) begin
                     if (rst) r_v <= 1'b0;
                     else     r_v <= t_v;
@@ -407,11 +328,9 @@ module _zkf_pmul #(
             localparam integer MAXSA = (WA + GA - 1) / GA;   // widest a-slice (no sign bit)
             localparam integer MAXSB = (WB + GB - 1) / GB;
             localparam integer WSP   = MAXSA + MAXSB;
-            // verilator coverage_off
             wire [MAXSA-1:0] a_u [0:GA-1];
             wire [MAXSB-1:0] b_u [0:GB-1];
             wire [WSP-1:0]   pp  [0:GA*GB-1];
-            // verilator coverage_on
             genvar gi, gj;
             for (gi = 0; gi < GA; gi = gi + 1) begin : g_aslice
                 localparam integer WI = slc_w(WA, GA, gi);
@@ -429,9 +348,7 @@ module _zkf_pmul #(
                 end
             end
             // -- Register the GA*GB slice products. --
-            // verilator coverage_off
             reg [WSP-1:0] m_pp [0:GA*GB-1];
-            // verilator coverage_on
             reg           m_v;
             reg [WSB-1:0] m_sb;
             integer mi;
@@ -443,9 +360,7 @@ module _zkf_pmul #(
             end
 
             if (STAGE_PRODUCT == 2) begin : g_flat
-                // verilator coverage_off
                 wire [WP-1:0] term [0:GA*GB-1];
-                // verilator coverage_on
                 genvar ti, tj;
                 for (ti = 0; ti < GA; ti = ti + 1) begin : g_term_row
                     for (tj = 0; tj < GB; tj = tj + 1) begin : g_term_col
@@ -470,9 +385,7 @@ module _zkf_pmul #(
                 end
                 assign p = r_p; assign out_valid = r_v; assign sb_out = r_sb;
             end else if (STAGE_PRODUCT == 3) begin : g_rows
-                // verilator coverage_off
                 wire [WP-1:0] brow [0:GA*GB-1];
-                // verilator coverage_on
                 genvar ri, rj;
                 for (ri = 0; ri < GA; ri = ri + 1) begin : g_brow_row
                     for (rj = 0; rj < GB; rj = rj + 1) begin : g_brow_col
@@ -480,12 +393,7 @@ module _zkf_pmul #(
                         assign brow[ri*GB + rj] = m_pp[ri*GB + rj] << OJ;
                     end
                 end
-                // verilator coverage_off
-                // Per-row partial-product accumulator: a single row sum cannot reach the full WP product width at any
-                // covered format (the wide w8m36 grid fills csum/r_p to full WP; this row partial stays bounded), so
-                // its top bits never toggle.
                 reg [WP-1:0] rowc [0:GA-1];
-                // verilator coverage_on
                 integer ri2, rj2;
                 always @* begin
                     for (ri2 = 0; ri2 < GA; ri2 = ri2 + 1) begin
@@ -493,12 +401,7 @@ module _zkf_pmul #(
                         for (rj2 = 0; rj2 < GB; rj2 = rj2 + 1) rowc[ri2] = rowc[ri2] + brow[ri2*GB + rj2];
                     end
                 end
-                // verilator coverage_off
-                // Per-row partial-product accumulator: a single row sum cannot reach the full WP product width at any
-                // covered format (the wide w8m36 grid fills csum/r_p to full WP; this row partial stays bounded), so
-                // its top bits never toggle.
                 reg [WP-1:0] s_row [0:GA-1];
-                // verilator coverage_on
                 reg           s_v;
                 reg [WSB-1:0] s_sb;
                 integer si;
@@ -508,9 +411,7 @@ module _zkf_pmul #(
                     for (si = 0; si < GA; si = si + 1) s_row[si] <= rowc[si];
                     s_sb <= m_sb;
                 end
-                // verilator coverage_off
                 wire [WP-1:0] arow [0:GA-1];
-                // verilator coverage_on
                 genvar ai;
                 for (ai = 0; ai < GA; ai = ai + 1) begin : g_arow
                     localparam integer OI = slc_off(WA, GA, ai);
@@ -535,9 +436,7 @@ module _zkf_pmul #(
             end else if (STAGE_PRODUCT == 4) begin : g_rows2
                 // Fully-unsigned counterpart of the signed g_rows2: same GA x GB grid as g_rows, with the final
                 // GA-way column sum split into a registered pairwise partial-sum stage followed by their sum.
-                // verilator coverage_off
                 wire [WP-1:0] brow [0:GA*GB-1];
-                // verilator coverage_on
                 genvar zi, zj;
                 for (zi = 0; zi < GA; zi = zi + 1) begin : g_brow_row
                     for (zj = 0; zj < GB; zj = zj + 1) begin : g_brow_col
@@ -545,12 +444,7 @@ module _zkf_pmul #(
                         assign brow[zi*GB + zj] = m_pp[zi*GB + zj] << OJ;
                     end
                 end
-                // verilator coverage_off
-                // Per-row partial-product accumulator: a single row sum cannot reach the full WP product width at any
-                // covered format (the wide w8m36 grid fills csum/r_p to full WP; this row partial stays bounded), so
-                // its top bits never toggle.
                 reg [WP-1:0] rowc [0:GA-1];
-                // verilator coverage_on
                 integer zr, zc;
                 always @* begin
                     for (zr = 0; zr < GA; zr = zr + 1) begin
@@ -558,12 +452,7 @@ module _zkf_pmul #(
                         for (zc = 0; zc < GB; zc = zc + 1) rowc[zr] = rowc[zr] + brow[zr*GB + zc];
                     end
                 end
-                // verilator coverage_off
-                // Per-row partial-product accumulator: a single row sum cannot reach the full WP product width at any
-                // covered format (the wide w8m36 grid fills csum/r_p to full WP; this row partial stays bounded), so
-                // its top bits never toggle.
                 reg [WP-1:0]  s_row [0:GA-1];
-                // verilator coverage_on
                 reg           s_v;
                 reg [WSB-1:0] s_sb;
                 integer zs;
@@ -573,10 +462,8 @@ module _zkf_pmul #(
                     for (zs = 0; zs < GA; zs = zs + 1) s_row[zs] <= rowc[zs];
                     s_sb <= m_sb;
                 end
-                // verilator coverage_off
                 wire [WP-1:0] arow [0:GA-1];
                 wire [WP-1:0] psum [0:((GA+1)/2)-1];
-                // verilator coverage_on
                 genvar yi;
                 for (yi = 0; yi < GA; yi = yi + 1) begin : g_arow
                     localparam integer OI = slc_off(WA, GA, yi);
@@ -588,12 +475,7 @@ module _zkf_pmul #(
                     if (2*hi + 1 < GA) begin : g_pair assign psum[hi] = arow[2*hi] + arow[2*hi + 1]; end
                     else               begin : g_lone assign psum[hi] = arow[2*hi];                  end
                 end
-                // verilator coverage_off
-                // Per-column pairwise partial-product accumulator: a single pairwise partial of two shifted rows cannot
-                // reach the full WP product width at any covered format (the wide w8m36 grid fills csum/r_p to full WP;
-                // these intermediate partials stay bounded), so its top bits never toggle.
                 reg [WP-1:0]  s_col [0:NH-1];
-                // verilator coverage_on
                 reg           t_v;
                 reg [WSB-1:0] t_sb;
                 integer zt;

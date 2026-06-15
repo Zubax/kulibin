@@ -116,9 +116,10 @@ verify-float-extended-verilator: library
 	@rm -rf build/float/verilator-toggle
 	@$(FLOAT_PYTEST) -m "deep and verilator"
 
-## Full coverage gate over the exhaustive coverage set: every line, branch, and toggle must be covered.
-## Genuinely-unreachable points are suppressed in the RTL with `// verilator coverage_off`/`coverage_on`
-## (no external waiver list). Deep-tier only.
+## Deep coverage gate over the exhaustive coverage set: every LINE and BRANCH must be covered (mandatory).
+## TOGGLE coverage is ADVISORY -- reported for RTL development but never fatal. The few genuinely-unreachable
+## line/branch points are suppressed in the RTL with `// verilator coverage_off`/`coverage_on` (no external
+## waiver list). Deep-tier only.
 coverage-float-gate-full:
 	$(PYTHON) float/tb/zkf_coverage.py --build-dir build/float/verilator-toggle \
 		--output-dir build/float/coverage-full --full

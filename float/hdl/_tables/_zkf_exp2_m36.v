@@ -16,7 +16,6 @@
 `define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
 `endif
 
-// verilator coverage_off
 module _zkf_exp2_m36 #(
     parameter D             = 3,
     parameter WSB           = 1,
@@ -340,7 +339,6 @@ module _zkf_exp2_m36 #(
     assign sticky      = |acc[CF-WMAN-2:0];
     assign out_valid   = ev;
 endmodule
-// verilator coverage_on
 
 `ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
 `undef ZKF_ATTRIBUTE_ROM_PRE

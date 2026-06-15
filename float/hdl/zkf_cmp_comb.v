@@ -21,13 +21,11 @@ module zkf_cmp_comb #(parameter WEXP = 6, parameter WMAN = 18) (
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
 
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Build a monotonic comparison key directly from the raw bits, skipping the explicit canonicalization step.
     // Sign-magnitude to ordered-unsigned: invert all bits for negatives, force the sign bit high for non-negatives.

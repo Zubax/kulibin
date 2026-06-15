@@ -52,7 +52,6 @@ module zkf_exp2 #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -72,7 +71,6 @@ module zkf_exp2 #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
     // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
@@ -90,19 +88,15 @@ module zkf_exp2 #(
     // WI=WEU and FF=WMAN+12 give the (i, f) layout we need; OOR_EXP_THRESHOLD=OOR_THRESHOLD makes the helper
     // saturate the magnitude before the integer part of x can exceed WEXP signed bits (the result exponent range).
     wire             rb_valid;
-    // verilator coverage_off
     // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
     // feed r0_f directly. rb_guard_unused is structurally zero for FF>0 and intentionally ignored.
+    // verilator coverage_off
     wire [WEU+FF-1:0] rb_mag;
     wire             rb_guard_unused;          // FF>0 -> structurally 0; not consumed
     // verilator coverage_on
     // Lost-sticky reduction path: rb_lost_sticky asserts only when the float->fixed reduction drops nonzero low bits,
-    // which needs a wide exponent (e well below -WMAN). The small exhaustive coverage formats (WEXP<=3) never reach it;
-    // the wide-WEXP exp2 configs in the correctness suite verify it. Suppress this bit -- and the
-    // r0_lost / sb_in_e / sb_out_e / e_lost it rides on -- from the toggle gate; they all carry the same one bit.
-    // verilator coverage_off
+    // which needs a wide exponent (e well below -WMAN).
     wire             rb_lost_sticky;
-    // verilator coverage_on
     wire             rb_sign;
     wire             rb_is_inf_unused;         // folded into rb_oor by the helper
     wire             rb_is_zero;
@@ -124,20 +118,16 @@ module zkf_exp2 #(
         .is_zero(rb_is_zero),
         .oor(rb_oor)
     );
-    // verilator coverage_off
     wire _unused_exp2 = &{1'b0, rb_guard_unused, rb_is_inf_unused, 1'b0};
-    // verilator coverage_on
 
     // -- RB2 combinational: form the signed two's-complement value, then split into the signed integer part i and
     // the unsigned fraction f. Negating an unsigned magnitude gives correct signed floor semantics for negative x:
     // floor(-3.25) maps to -4 because the slice picks up the sign-extended integer bits. The OOR cases are routed
     // via rb_oor downstream (force_inf for positive overflow, force_zero for negative), so the magnitude and split
     // for those inputs are don't-care.
-    // verilator coverage_off
     wire signed [WEU+FF:0]   v_signed = rb_sign ? (~{1'b0, rb_mag} + {{(WEU+FF){1'b0}}, 1'b1}) : {1'b0, rb_mag};
     wire signed [WEU:0]      i_full   = v_signed[WEU+FF:FF];
     wire [FF-1:0]            f_bits   = v_signed[FF-1:0];
-    // verilator coverage_on
     wire signed [WEU-1:0]    i_clamped     = i_full[WEU-1:0];   // i fits in WEXP signed bits when oor=0
     wire                     force_inf_in  = rb_oor & ~rb_sign; // +inf / positive overflow
     wire                     force_zero_in = rb_oor &  rb_sign; // -inf / negative underflow
@@ -158,12 +148,8 @@ module zkf_exp2 #(
             reg                    r0_force_inf;
             reg                    r0_force_zero;
             reg                    r0_is_zero;
-            // Registered lost-sticky. lost_sticky is structurally 0 for WEXP<=4 (LEFT_SHIFT_BASE<=0 forces the
-            // left-shift path), and the only STAGE_REDUCE=1 coverage config is the narrow w2m16, so the assignment
-            // `r0_lost_sticky <= rb_lost_sticky` reduces to a constant store that Verilator 5.048 reports as an
-            // uncovered line. The logic is verified alive by a directed _zkf_to_fixpoint sim (WEXP=8 toggles it both
-            // ways) and the wide eval_lost_sticky path is covered end-to-end; this registered copy mirrors the
-            // rb_lost_sticky suppression above.
+            // Registered lost-sticky. At the per-PR STAGE_REDUCE=1 coverage format (w2m16, WEXP<=4) lost_sticky is
+            // structurally 0, so this store constant-folds to a line Verilator 5.048 cannot mark covered.
             // verilator coverage_off
             reg                    r0_lost_sticky;
             // verilator coverage_on
@@ -203,15 +189,11 @@ module zkf_exp2 #(
 
     // -- Pipelined evaluator: 2**f significand + GRS. The sideband {i, force_inf, force_zero, is_zero, lost} is delayed
     // inside the generated evaluator by a plain pipe, aligned to the evaluator output.
-    // verilator coverage_off
     wire [SBW-1:0]  sb_in_e = {
         eval_i, eval_force_inf, eval_force_zero, eval_is_zero, eval_lost_sticky
     };
-    // verilator coverage_on
     wire            ev_valid;
-    // verilator coverage_off
-    wire [SBW-1:0]  sb_out_e;   // bit 0 = lost; high bits sliced into e_i/e_finf/e_fzero/e_is_zero below (own coverage)
-    // verilator coverage_on
+    wire [SBW-1:0]  sb_out_e;   // bit 0 = lost; high bits sliced into e_i/e_finf/e_fzero/e_is_zero below
     wire [WMAN-1:0] eval_sig;
     wire            eval_guard;
     wire            eval_round;
@@ -291,9 +273,7 @@ module zkf_exp2 #(
     wire                  e_finf     = sb_out_e[3];
     wire                  e_fzero    = sb_out_e[2];
     wire                  e_is_zero  = sb_out_e[1];
-    // verilator coverage_off
     wire                  e_lost     = sb_out_e[0];   // lost-sticky; see rb_lost_sticky above
-    // verilator coverage_on
 
     // For x == +0, 2**0 = 1.0 (exp_unbiased 0, significand 1.0, no GRS); otherwise 2**f * 2**i.
     wire signed [WEU-1:0] pack_exp = e_is_zero ? {WEU{1'b0}} : e_i;

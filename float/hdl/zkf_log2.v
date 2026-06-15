@@ -76,7 +76,6 @@ module zkf_log2 #(
     output wire                 domain_error,
     output wire                 pole
 );
-    // verilator coverage_off
     generate
         // BIAS below uses an unsized integer shift on WEXP; WEXP >= 31 would overflow 32-bit integer constants.
         if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wman
@@ -92,7 +91,6 @@ module zkf_log2 #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -120,6 +118,7 @@ module zkf_log2 #(
     // generator's log2_sqrt2_threshold): round(sqrt(S)) for S = 2^(2*WFRAC+1) is (floor(sqrt(4*S)) + 1) / 2, and
     // 4*S = 2^(2*WFRAC+3). The streaming digit-by-digit isqrt below is a fixed-bound constant function (no while loop)
     // so it elaborates portably; WMAN <= 53 keeps 2*WFRAC+3 <= 107 < 128.
+    // Constant isqrt evaluated only at elaboration for THR; no runtime line/branch coverage.
     // verilator coverage_off
     function automatic [127:0] _zkf_isqrt128;
         input [127:0] n_in;
@@ -171,11 +170,7 @@ module zkf_log2 #(
     // only sets bit WFRAC, which never collides with the low bits of 2*frac in the branch that selects them
     // (m < sqrt(2) keeps frac < 2^(WFRAC-1)). The two's-complement identity {1'b1, frac} (= sig) read as signed is
     // exactly frac - 2^WFRAC, the re-center branch's f.
-    // verilator coverage_off
-    // Significand hidden bit (WMAN-1, bit 35 at the widest log2 coverage format w8m36): sig = {1'b1, frac_in}, so the
-    // top bit is the structural hidden 1 and is always set, never toggling.
     wire [WFRAC:0]   sig_in    = {1'b1, frac_in};                  // WMAN-bit significand, m = sig / 2^WFRAC
-    // verilator coverage_on
     wire             recenter  = sig_in >= THR;                    // m >= sqrt(2)
 
     // For special/noncanonical transactions, clamp v to the exact x=1 reduced argument (v=1/2, f=0) so compact log2
@@ -283,10 +278,8 @@ module zkf_log2 #(
     wire [SBW-1:0] sb_in_l = {r0_e, r0_is_special, r0_special_sign, r0_pole, r0_de};
     wire           ev_valid;
     wire [SBW-1:0] sb_out_l;
-    // verilator coverage_off
     wire [F2:0] l_mag;   // |log2(m')| = |f|*C(f) magnitude at scale 2^-F2 (F2+1 bits, unsigned)
     wire        l_neg;   // sign of log2(m') (= reduced f sign); 1 when m >= sqrt(2)
-    // verilator coverage_on
     // We pass the closed-form degree D below; the core asserts it matches the degree its ROM was fitted for (mirrors
     // the LATENCY parameter), so the Horner depth / latency cannot drift.
     // Intentional: unsupported in-range WMAN names missing _zkf_log2_m<WMAN>, prompting table generation.
@@ -370,7 +363,6 @@ module zkf_log2 #(
     // direction known up front. So the sign and the add/subtract direction are resolved from the small exponent/sign
     // flags -- off the critical path -- leaving a single wide add/subtract instead of an add feeding a sign-dependent
     // abs (two dependent wide carry chains). Latency-unchanged and bit-identical to taking |(e << F2) + log2(m')|.
-    // verilator coverage_off
     wire                 e_neg   = e_o[WE-1];
     wire                 e_zero  = ~|e_o;
     wire                 r_sign  = e_neg | (e_zero & l_neg);                       // sign(e + log2(m'))
@@ -382,7 +374,6 @@ module zkf_log2 #(
     wire                 add_mag = e_zero | ~(e_neg ^ l_neg);
     wire        [WR-1:0] mag_full = add_mag ? (e_sh + l_ext) : (e_sh - l_ext);
     wire     [WNORM-1:0] mag      = mag_full[WNORM-1:0];
-    // verilator coverage_on
 
     // Resolve the final sign at the P1 input: when the evaluator flagged a special result (+/-inf), the resolved
     // sign is the special-case sign carried in the sideband; otherwise it is the sign of R = e + log2(m').
@@ -391,9 +382,7 @@ module zkf_log2 #(
     // -- Stage P1: register the magnitude, the resolved sign, and the special-case sideband ahead of the
     // _zkf_fixed_to_float helper. Reset only validity; payload free-runs.
     reg                  p1_valid;
-    // verilator coverage_off
     reg      [WNORM-1:0] p1_mag;
-    // verilator coverage_on
     reg                  p1_sign;
     reg                  p1_special;
     reg                  p1_pole;

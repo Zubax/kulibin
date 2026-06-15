@@ -68,7 +68,6 @@ module _zkf_normshift #(
     // count assembly and exponent arithmetic. (NL4-1)/2 keeps the front from one level too deep at wide W.
     localparam SPLIT_AFTER = (NL4 - 1) / 2;
 
-    // verilator coverage_off
     generate
         if ((STAGE_SPLIT < 0) || (STAGE_SPLIT > 2)) begin : g_invalid_stage_split
             _zkf_invalid_stage_split_out_of_range u_invalid();
@@ -80,16 +79,11 @@ module _zkf_normshift #(
             _zkf_invalid_stage_output u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // data[s] is the input to radix-4 level s; data[0] = x, data[NL4] = normalized output.
-    // verilator coverage_off
-    // The cascade arrays are over-provisioned and many shifted-in pad bits are structurally constant; behaviour is
-    // checked end-to-end through y/count/zero by the normshift bench and every caller, so toggling is suppressed here.
     wire [W-1:0]    data     [0:NL4];
     wire [W-1:0]    data_pre [0:NL4];   // index 0 unused
     wire [CNTW-1:0] dig_pre;            // combinational per-level radix-4 digits, digit k at bits [2k+1:2k]
-    // verilator coverage_on
     assign data[0] = x;
 
     genvar s;
@@ -113,14 +107,16 @@ module _zkf_normshift #(
             // Radix-4 count digit: number of leading all-zero G-groups (z3 => z2 => z1), 0..3.
             assign dig_pre[2*K +: 2] = z1 ? (z2 ? (z3 ? 2'd3 : 2'd2) : 2'd1) : 2'd0;
 
+            // Shift candidates. The shift mux is driven directly by the zero-detects in priority order, so it does
+            // not wait on the digit encoding.
+            // G < W always holds (G is the radix-4 group shift, < W for every supported W), so sh1's overshoot
+            // else-arm is unreachable (sh2/sh3's do fire at the smallest W).
             // verilator coverage_off
-            // Shift candidates; an over-shoot past W is a constant 0 (selectable only for x==0). The shift mux is
-            // driven directly by the zero-detects in priority order, so it does not wait on the digit encoding.
             wire [W-1:0] sh1 = (G     < W) ? (data[s] << G)     : {W{1'b0}};
+            // verilator coverage_on
             wire [W-1:0] sh2 = (2 * G < W) ? (data[s] << (2*G)) : {W{1'b0}};
             wire [W-1:0] sh3 = (3 * G < W) ? (data[s] << (3*G)) : {W{1'b0}};
             assign data_pre[s+1] = z3 ? sh3 : (z2 ? sh2 : (z1 ? sh1 : data[s]));
-            // verilator coverage_on
         end
     endgenerate
 
@@ -171,11 +167,7 @@ module _zkf_normshift #(
                 always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
                 assign cnt[2*k +: 2] = dig_r;
             end else if ((STAGE_SPLIT == 2) && (k == NL4 - 1)) begin : g_count_delay2
-                // verilator coverage_off
-                // Top radix-4 normalize digit delay: this is the highest digit place (k == NL4-1), which the covered
-                // shift distances never reach, so its high bit never toggles.
                 reg [1:0] dig_r1, dig_r2;
-                // verilator coverage_on
                 always @(posedge clk) begin
                     dig_r1 <= dig_pre[2*k +: 2];
                     dig_r2 <= dig_r1;
@@ -258,11 +250,7 @@ module _zkf_normshift #(
         if (STAGE_OUTPUT) begin : g_output_reg
             reg              zero_r;
             reg [WSHAMT-1:0] count_r;
-            // verilator coverage_off
-            // Normalized output MSB: normalization brings the leading one to bit W-1 for every nonzero input (and the
-            // value is don't-care for zero input), so the MSB is always 1 and never toggles.
             reg      [W-1:0] y_r;
-            // verilator coverage_on
             reg  [WSB-1:0]   sb_r;
             reg              valid_r;
             always @(posedge clk) begin

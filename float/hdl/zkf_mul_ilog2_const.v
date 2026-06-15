@@ -56,7 +56,6 @@ module zkf_mul_ilog2_const #(
     localparam integer K_LIMIT_OVERFLOW  =   (1 << WEXP) - 2;
     localparam integer K_LIMIT_UNDERFLOW = -((1 << WEXP) - 2);
 
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wm
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -83,7 +82,6 @@ module zkf_mul_ilog2_const #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Decode and classify.
     wire             a_sign = a_q[WFULL-1];
@@ -103,34 +101,26 @@ module zkf_mul_ilog2_const #(
         if (STAGE_DECODE == 0) begin : g_boundary_single_cycle
             localparam signed [WEXP_EXT-1:0] K_OF_OFFSET  = K - ((1 << WEXP) - 2) - 1;
             localparam signed [WEXP_EXT-1:0] K_EXP_OFFSET = K;
-            // verilator coverage_off
             wire signed [WEXP_EXT-1:0] of_acc      = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_OF_OFFSET;
             wire signed [WEXP_EXT-1:0] new_exp_acc = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_EXP_OFFSET;
             assign overflow   = ~of_acc[WEXP_EXT-1];
             assign underflow  =  new_exp_acc[WEXP_EXT-1];
             assign min_normal = ~|new_exp_acc;
-            // verilator coverage_on
         end else if (K > 0) begin : g_boundary_positive_shift
             localparam signed [WEXP_EXT-1:0] K_OF_OFFSET = K - ((1 << WEXP) - 2) - 1;
             wire signed [WEXP_EXT-1:0] of_acc = $signed({{(WEXP_EXT-WEXP){1'b0}}, a_exp}) + K_OF_OFFSET;
-            // verilator coverage_off
             assign overflow   = ~of_acc[WEXP_EXT-1];
             assign underflow  = 1'b0;
             assign min_normal = 1'b0;
-            // verilator coverage_on
         end else if (K < 0) begin : g_boundary_negative_shift
             localparam [WEXP-1:0] EXP_MIN_NORMAL_THRESHOLD = -K;
-            // verilator coverage_off
             assign overflow   = 1'b0;
             assign underflow  = a_exp < EXP_MIN_NORMAL_THRESHOLD;
             assign min_normal = a_exp == EXP_MIN_NORMAL_THRESHOLD;
-            // verilator coverage_on
         end else begin : g_boundary_zero_shift
-            // verilator coverage_off
             assign overflow   = 1'b0;
             assign underflow  = 1'b0;
             assign min_normal = 1'b0;
-            // verilator coverage_on
         end
     endgenerate
     wire result_is_zero       = a_zero || underflow;
@@ -142,11 +132,8 @@ module zkf_mul_ilog2_const #(
     wire [WEXP-1:0] new_exp = a_exp + K[WEXP-1:0];
 
     // Output candidate forms. Canonicalisation is implicit: zero has sign/frac cleared, infinity has frac cleared.
-    // verilator coverage_off
-    // Constant special-value encodings: only the sign bit varies; exponent/fraction fields are constant.
     wire [WFULL-1:0] y_inf_w        = {a_sign, EXP_INF, {WFRAC{1'b0}}};
     wire [WFULL-1:0] y_min_normal_w = {a_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
-    // verilator coverage_on
     wire [WFULL-1:0] y_normal_w     = {a_sign, new_exp, a_frac};
 
     // result_is_zero takes priority over result_is_inf. For valid K the two flags are mutually exclusive,
@@ -191,11 +178,8 @@ module zkf_mul_ilog2_const #(
                 r_frac                 <= a_frac;
             end
 
-            // verilator coverage_off
-            // Constant special-value encodings (registered): only the sign bit varies.
             wire [WFULL-1:0] r_y_inf_w        = {r_sign, EXP_INF, {WFRAC{1'b0}}};
             wire [WFULL-1:0] r_y_min_normal_w = {r_sign, {{(WEXP-1){1'b0}}, 1'b1}, {WFRAC{1'b0}}};
-            // verilator coverage_on
             wire [WFULL-1:0] r_y_normal_w     = {r_sign, r_new_exp, r_frac};
 
             always @(posedge clk) begin

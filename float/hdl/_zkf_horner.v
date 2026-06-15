@@ -42,38 +42,27 @@ module _zkf_horner #(
     input  wire                    rst,
     input  wire                    in_valid,
     input  wire        [WSB-1:0]   sb_in,
-    // coeffs and acc are fixed-point carriers whose top bits are structural headroom: every coefficient is a small
-    // signed value padded to WCOEF (sign + margin), and acc holds 2**f in [1,2) (exp2) or P(t) in [1,1/ln2] (log2) at
-    // scale 2**CF, so its bits above CF never toggle for any input. Their meaningful bits are exercised end-to-end by
-    // the exp2/log2 suites; suppress these carriers from the toggle gate (no single format can toggle every bit).
-    // verilator coverage_off
+    // coeffs and acc are fixed-point carriers: every coefficient is a small signed value padded to WCOEF (sign +
+    // margin), and acc holds 2**f in [1,2) (exp2) or P(t) in [1,1/ln2] (log2) at scale 2**CF.
     input  wire [(D+1)*WCOEF-1:0]  coeffs,   // c[j] (signed) at bits [j*WCOEF +: WCOEF], j = 0..D
-    // verilator coverage_on
     input  wire        [WRARG-1:0] w,        // reduced argument, unsigned, in [0, 2^WRARG)
     output wire                    out_valid,
     output wire        [WSB-1:0]   sb_out,
     output wire        [WRARG-1:0] w_out,
-    // verilator coverage_off
     output wire signed [WACC-1:0]  acc       // Horner result, signed, scale 2^-CF
-    // verilator coverage_on
 );
-    // verilator coverage_off
     generate
         if (STAGE_PRODUCT < 0) begin : g_invalid_stage_product
             _zkf_invalid_stage_product_out_of_range u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
-    // verilator coverage_off
-    // a_*[s] is the state entering degree step s (s = 0..D); arrays sized for the max degree across configs and the
-    // high accumulator bits are structural headroom proven not to wrap. Checked end to end via the eval cores.
+    // a_*[s] is the state entering degree step s (s = 0..D).
     wire signed [WACC-1:0]    a_acc [0:D];
     wire [(D+1)*WCOEF-1:0]    a_co  [0:D];
     wire [WRARG-1:0]          a_w   [0:D];
     wire                      a_val [0:D];
     wire [WSB-1:0]            a_sb  [0:D];
-    // verilator coverage_on
 
     assign a_acc[0] = $signed(coeffs[D*WCOEF +: WCOEF]);  // acc starts at the top coefficient c[D]
     assign a_co[0]  = coeffs;
@@ -112,14 +101,8 @@ module _zkf_horner #(
                 .clk(clk), .rst(rst), .in_valid(a_val[s]), .in({a_co[s][COW-1:0], a_w[s], a_sb[s]}),
                 .out_valid(prod_sb_valid), .out(prod_sb)
             );
-            // verilator coverage_off
             wire _unused_prod_sb_valid = &{1'b0, prod_sb_valid, 1'b0};
-            // verilator coverage_on
-            // verilator coverage_off
-            // Live-coefficient bus headroom: these top bits exceed the maximum live coefficient magnitude carried at
-            // any input, even at the widest log2 coverage (w8m36), so they never toggle.
             wire [COW-1:0]   p_co = prod_sb[WSB_H-1 -: COW];
-            // verilator coverage_on
             wire [WRARG-1:0] p_w  = prod_sb[WSB+WRARG-1 -: WRARG];
             wire [WSB-1:0]   p_sb = prod_sb[WSB-1:0];
 
@@ -127,14 +110,9 @@ module _zkf_horner #(
             // right shift floors toward minus infinity, matching the truncating-Horner reference exactly. With
             // ACC_SIGNED=0 (exp2) prod_p is a non-negative unsigned product whose top bits are structurally 0, so the
             // arithmetic `>>>` behaves identically to a logical shift -- keep it as-is; do not specialize on ACC_SIGNED.
-            // verilator coverage_off
-            // Horner accumulator headroom (next_acc/r_acc) and registered live-coefficient bus headroom (r_co): these
-            // top bits exceed the maximum partial-sum / live-coefficient magnitude for any input, even at the widest
-            // log2 coverage (w8m36), so they never toggle.
             wire signed [WACC-1:0] next_acc = $signed(p_co[J*WCOEF +: WCOEF]) + $signed($signed(prod_p) >>> WRARG);
             reg signed [WACC-1:0] r_acc;
             reg [COW-1:0]         r_co;
-            // verilator coverage_on
             reg [WRARG-1:0]       r_w;
             reg                   r_val;
             reg [WSB-1:0]         r_sb;

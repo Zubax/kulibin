@@ -24,7 +24,6 @@
 
 `default_nettype none
 
-// verilator coverage_off
 module _zkf_fixed_to_float #(
     parameter WEXP                   = 6,   // exponent field width
     parameter WMAN                   = 18,  // significand precision including the hidden bit
@@ -68,7 +67,6 @@ module _zkf_fixed_to_float #(
             _zkf_invalid_fixed_to_float_weu_too_narrow_for_count u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WCOUNT_PAD = (WEU > WIDX) ? (WEU - WIDX) : 1;
 
@@ -79,18 +77,10 @@ module _zkf_fixed_to_float #(
     // lands aligned with norm_aligned -- no parallel zkf_pipe. The normalizer resets only out_valid; sb free-runs.
     localparam PIPE_W = 3 + WEU + WSB;
     wire              norm_zero;
-    // verilator coverage_off
-    // norm_count's top bits assert only for normalize distances the small coverage formats cannot reach (the wide
-    // formats in the correctness suite do); the aligned bus's bits are sliced into significand / G / R / sticky below.
-    // Both stay internal intermediates -- end-to-end coverage comes from the two callers' cocotb suites.
     wire [WIDX-1:0]   norm_count;
     wire [WMAG-1:0]   norm_aligned;
-    // verilator coverage_on
     wire              sb_valid;
-    // verilator coverage_off
-    // Sideband pipe high bits (exp_offset / force flags) are caller-dependent; not every bit toggles for every f2f user.
     wire [PIPE_W-1:0] sb_pipe_out;
-    // verilator coverage_on
     _zkf_normshift #(
         .W(WMAG), .STAGE_SPLIT(STAGE_NORMALIZE), .STAGE_OUTPUT(STAGE_NORMALIZE_OUTPUT), .WSB(PIPE_W)
     ) u_norm (
@@ -105,6 +95,7 @@ module _zkf_fixed_to_float #(
         .y(norm_aligned)
     );
     wire                    sign_d       = sb_pipe_out[PIPE_W-1];
+    // force_zero is asserted only in the deep coverage sweep; per-PR configs never drive it -> deep-only line.
     // verilator coverage_off
     wire                    force_zero_d = sb_pipe_out[PIPE_W-2];
     // verilator coverage_on
@@ -134,11 +125,8 @@ module _zkf_fixed_to_float #(
     // exp = exp_offset - norm_count, as a signed WEU-bit value. For zkf_from_int (EXP_IS_BIASED=1) this is
     // the biased exponent EXP_BIASED_TOP - shamt and is forwarded to _zkf_pack with the bias-add disabled; for
     // zkf_log2 and remquo it is the unbiased exponent.
-    // verilator coverage_off
-    // The pad bits below the active range are structurally zero; covered downstream through y.
     wire        [WEU-1:0] norm_count_ext = {{WCOUNT_PAD{1'b0}}, c_norm_count};
     wire signed [WEU-1:0] pre_exp        = c_exp_offset - $signed(norm_count_ext);
-    // verilator coverage_on
 
     wire pre_force_inf  = c_force_inf;
     wire pre_force_zero = force_zero_d || (~c_force_inf & c_norm_zero);

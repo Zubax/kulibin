@@ -30,13 +30,11 @@ module zkf_addsub #(
 );
     localparam WFULL = WEXP + WMAN;
 
-    // verilator coverage_off
     generate
         if (LATENCY != `ZKF_ADDSUB_LATENCY) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Forward LATENCY into zkf_add so a drift in zkf_add's own stage count breaks this wrapper's default build too.
     zkf_add #(

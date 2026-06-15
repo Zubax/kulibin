@@ -43,7 +43,6 @@ module zkf_add #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -61,7 +60,6 @@ module zkf_add #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Note of caution: merely replacing a named net with its expression at place-of-use may drastically affect
     // the synthesis outcome even though the circuit topology remains unchanged. All synthesis tools are unreliable.
@@ -100,11 +98,9 @@ module zkf_add #(
     wire             b_finite          = (|b_exp) && !raw_b_inf;
     wire [WFRAC-1:0] a_fraction        = a_q[WFRAC-1:0];
     wire [WFRAC-1:0] b_fraction        = b_q[WFRAC-1:0];
-    // hidden-bit MSB is structurally 1; fractions are covered via the a/b inputs.
-    // verilator coverage_off
+    // hidden-bit MSB is structurally 1.
     wire [WMAN-1:0]  a_significand     = {1'b1, a_fraction};
     wire [WMAN-1:0]  b_significand     = {1'b1, b_fraction};
-    // verilator coverage_on
 
     // Masked exponent/significand keys: zero and non-finite operands contribute magnitude 0 to the datapath, so a
     // zero operand correctly leaves the other unchanged and a non-finite one is overridden by force_inf/force_zero.
@@ -292,21 +288,16 @@ module zkf_add #(
     reg                            s1_force_inf;
     reg                 [WEXP-1:0] s1_exp_biased;
     // the larger operand's extended significand carries the always-1 hidden bit
-    // verilator coverage_off
-    // and fixed GRS pad in its upper bits; its low fraction bits are exercised via the inputs and result.
+    // and fixed GRS pad in its upper bits.
     reg                 [WEXT-1:0] s1_large_ext_exp;
-    // verilator coverage_on
     reg                 [WEXT-1:0] s1_small_aligned;
 
     // The larger-magnitude operand is always the minuend, so no equal-exponent swap is needed: large is the adder's
     // a input, the aligned small operand is the b input. Effective subtraction complements b and adds a carry-in.
-    // verilator coverage_off
     // The adder operands' top bit is the constant carry pad and their upper bits carry the always-1 hidden
-    // bit / fixed GRS positions, so those bits cannot toggle. s1_adder_b (the complemented operand) and
-    // s1_raw_result (the sum) below are the behaviourally meaningful nets and stay covered.
+    // bit / fixed GRS positions.
     wire [WRAW-1:0] s1_adder_a     = {1'b0, s1_large_ext_exp};
     wire [WRAW-1:0] s1_adder_b_abs = {1'b0, s1_small_aligned};
-    // verilator coverage_on
     wire [WRAW-1:0] s1_adder_b     = s1_same_sign ? s1_adder_b_abs : ~s1_adder_b_abs;
     wire [WRAW-1:0] s1_raw_result  = s1_adder_a + s1_adder_b + {{(WRAW-1){1'b0}}, !s1_same_sign};
     wire            s1_result_sign = s1_force_inf ? s1_inf_sign : s1_finite_sign;
@@ -379,10 +370,8 @@ module zkf_add #(
     // directly to _zkf_normshift.STAGE_SPLIT (0/1/2 internal register barriers).
     wire                norm_sub_zero;
     wire   [WINDEX-1:0] norm_sub_shift;
-    // verilator coverage_off
-    // Normalized magnitude; its slices feed the covered significand/GRS below.
+    // Normalized magnitude; its slices feed the significand/GRS below.
     wire   [NINPUT-1:0] norm_sub_aligned;
-    // verilator coverage_on
     _zkf_normshift #(.W(NINPUT), .WSHAMT(WINDEX), .STAGE_SPLIT(STAGE_NORMALIZE), .WSB(Q_W)) u_sub_norm (
         .clk(clk), .rst(rst),
         .in_valid(s2_valid),
@@ -400,9 +389,7 @@ module zkf_add #(
     // the add-path's s2x (depth STAGE_NORMALIZE) + s3 register.
     reg                 s3_sub_zero;
     reg    [WINDEX-1:0] s3_sub_shift;
-    // verilator coverage_off
     reg    [NINPUT-1:0] s3_sub_aligned;
-    // verilator coverage_on
     always @(posedge clk) begin
         s3_sub_zero    <= norm_sub_zero;
         s3_sub_shift   <= norm_sub_shift;
@@ -414,17 +401,12 @@ module zkf_add #(
     wire            s3_sub_sticky      = s3_sub_aligned[0];
 
     // Sub-path exponent correction lands here because the normalize count is now produced in this cone.
-    // verilator coverage_off
     // zero-extension padding of the normalize shift amount (high bits constant 0).
     wire signed [WEXP_UNBIASED-1:0] s3_sub_shift_ext    = {{(WEXP_UNBIASED-WINDEX){1'b0}}, s3_sub_shift};
-    // verilator coverage_on
     // Widen the native-width base exponent to the signed WEXP_UNBIASED for the subtraction, which can go negative on a
     // close-cancellation underflow. The add-path exponent is non-negative, so it zero-extends into the same field.
-    // verilator coverage_off
-    // zero-extension padding (high bits constant 0, like the shift extension above); the exponent value itself is
-    // covered via s3_exp_biased and the signed subtraction result below.
+    // zero-extension padding (high bits constant 0, like the shift extension above).
     wire signed [WEXP_UNBIASED-1:0] s3_exp_biased_ext  = {{(WEXP_UNBIASED-WEXP){1'b0}}, s3_exp_biased};
-    // verilator coverage_on
     wire signed [WEXP_UNBIASED-1:0] s3_sub_exp_biased  = s3_exp_biased_ext - s3_sub_shift_ext;
     wire signed [WEXP_UNBIASED-1:0] s3_pack_exp_biased =
         s3_same_sign ? {{(WEXP_UNBIASED-WEXP){1'b0}}, s3_add_exp_biased} : s3_sub_exp_biased;

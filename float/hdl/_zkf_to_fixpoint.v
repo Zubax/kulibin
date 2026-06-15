@@ -45,11 +45,8 @@ module _zkf_to_fixpoint #(
 
     output wire                  out_valid,
     // mag is the wide fixed-point reduction carrier (sign-extended integer part above the fraction); its top bits are
-    // structural sign-extension / headroom. Its meaningful bits feed the caller's split and are exercised end-to-end
-    // (including the wide-exponent corners) by the to_int / exp2 suites.
-    // verilator coverage_off
+    // structural sign-extension / headroom. Its meaningful bits feed the caller's split.
     output wire    [WI+FF-1:0]   mag,
-    // verilator coverage_on
     output wire                  guard,
     output wire                  lost_sticky,
     output wire                  sign,
@@ -57,7 +54,6 @@ module _zkf_to_fixpoint #(
     output wire                  is_zero,
     output wire                  oor
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WI < 2)) begin : g_invalid_widths
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -70,7 +66,6 @@ module _zkf_to_fixpoint #(
             _zkf_invalid_to_fixpoint_wexp_too_wide_unportable u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC      = WMAN - 1;
     localparam WFULL      = WEXP + WMAN;
@@ -147,9 +142,7 @@ module _zkf_to_fixpoint #(
     wire [WMAN-1:0]  sig_in     = is_zero_in ? {WMAN{1'b0}} : {1'b1, frac_in};
 
     // Zero-extension padding of a non-negative exponent (high bits constant 0).
-    // verilator coverage_off
     wire signed [WEU-1:0] exp_in_ext = $signed({{(WEU-WEXP){1'b0}}, exp_in});
-    // verilator coverage_on
 
     // Two parallel folded-constant subtractions provide the shift magnitudes (only their low WLSH / WRSH bits are
     // consumed downstream). right_shift_full uses the positive constant directly rather than negating
@@ -205,11 +198,7 @@ module _zkf_to_fixpoint #(
     // The left-shift clamp uses the combined oor so that mag stays in-container even when the extrinsic threshold
     // fires before mag_too_big does (zkf_exp2's case). lshamt / rshamt are don't-care for the non-selected
     // direction (the mux picks one), so each clamp only has to be correct in its own direction.
-    // lshamt_clamped's high bits assert only for large left shifts (large exponents) that the small coverage formats
-    // do not reach; the wide-exponent correctness configs do. Suppress this shift-amount carrier from the toggle gate.
-    // verilator coverage_off
     wire [WLSH-1:0] lshamt_clamped = (is_left_shift && !oor_in) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
-    // verilator coverage_on
     wire [WRSH-1:0] rshamt_clamped = right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
 
     // -- Stage 1: capture pre-shift state (decode + clamp). Reset only validity; payload free-runs.
@@ -221,9 +210,7 @@ module _zkf_to_fixpoint #(
     reg             s1_oor;
     reg [WMAN-1:0]  s1_sig;
     reg [WRSH-1:0]  s1_rshamt;
-    // verilator coverage_off
-    reg [WLSH-1:0]  s1_lshamt;   // registered lshamt_clamped (same structural high bits); see the comment above
-    // verilator coverage_on
+    reg [WLSH-1:0]  s1_lshamt;   // registered lshamt_clamped
 
     // -- Stage 1 -> Stage 2 combinational: the heavy barrel shifters. The right-shift barrel folds the discarded
     // tail into a single sticky bit; the left-shift is exact (no GRS). The two branches are muxed by
@@ -237,11 +224,9 @@ module _zkf_to_fixpoint #(
     //          together with the dropped sticky -- we need them separated for FF>0 (the data bit 0 lives in mag,
     //          the sticky is a separate sideband).
     wire [WRSHIFTER-1:0] rsh_out_pre;
-    // verilator coverage_off
     // rsh_in[0] is a structural pad (the {.., 1'b0} / {.., 2'b00} sticky-alignment bit, always 0); the upper bits just
-    // re-present s1_sig, which is covered through its own toggle. Suppress this redundant carrier from the toggle gate.
+    // re-present s1_sig.
     wire [WRSHIFTER-1:0] rsh_in;
-    // verilator coverage_on
     generate
         if (FF == 0) begin : g_rsh_in_grs
             assign rsh_in = {s1_sig, 2'b00};
@@ -271,11 +256,7 @@ module _zkf_to_fixpoint #(
 
     // Left shift: zero-extend the WMAN-bit significand and shift into the WLEFT-bit container. When LSH_MAX==0
     // (rare; would mean WI+FF <= WMAN), the left branch is a passthrough.
-    // lsh_out_pre's high bits are reached only by large left shifts (large exponents) the small coverage formats do
-    // not exercise; the wide-exponent correctness configs do. Suppress this shifter-output carrier from the gate.
-    // verilator coverage_off
     wire [WLEFT-1:0] lsh_out_pre;
-    // verilator coverage_on
     generate
         if (LSH_MAX > 0) begin : g_lshift
             assign lsh_out_pre = {{LSH_MAX{1'b0}}, s1_sig} << s1_lshamt;
@@ -285,8 +266,7 @@ module _zkf_to_fixpoint #(
     endgenerate
 
     // Zero-extension of the shifted magnitude into the WI+FF working width; the high padding bits are
-    // verilator coverage_off
-    // structurally constant. The selected mag_pre_in below stays covered.
+    // structurally constant.
     wire [WI+FF-1:0] mag_pre_rsh_in;
     wire [WI+FF-1:0] mag_pre_lsh_in;
     generate
@@ -304,7 +284,6 @@ module _zkf_to_fixpoint #(
     wire [WI+FF-1:0] mag_pre_in     = s1_is_left_shift ? mag_pre_lsh_in : mag_pre_rsh_in;
     wire             guard_in       = s1_is_left_shift ? 1'b0 : rsh_guard_pre;
     wire             lost_sticky_in = s1_is_left_shift ? 1'b0 : rsh_sticky_pre;
-    // verilator coverage_on
 
     // -- Stage 2: capture post-shift state. Reset only validity; payload free-runs.
     reg             s2_valid;
@@ -313,10 +292,8 @@ module _zkf_to_fixpoint #(
     reg             s2_is_zero;
     reg             s2_oor;
     // WI+FF magnitude reg; the bits above the active range are
-    // verilator coverage_off
-    // structurally constant. Checked downstream via the caller modules' end-to-end tests.
+    // structurally constant.
     reg [WI+FF-1:0] s2_mag;
-    // verilator coverage_on
     reg             s2_guard;
     reg             s2_lost_sticky;
 

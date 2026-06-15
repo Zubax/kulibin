@@ -37,7 +37,6 @@ module zkf_resize #(
     output wire                         out_valid,
     output wire [WEXP_OUT+WMAN_OUT-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP_IN < 2) || (WMAN_IN < 4) || (WEXP_OUT < 2) || (WMAN_OUT < 4)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -52,7 +51,6 @@ module zkf_resize #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC_IN  = WMAN_IN  - 1;
     localparam WFRAC_OUT = WMAN_OUT - 1;
@@ -95,36 +93,24 @@ module zkf_resize #(
 
             // Re-biased exponent for the normal case. exp_in fits in WEXP_IN unsigned bits and BIAS_OFFSET is at most
             // 2^(WEXP_OUT-1), so the sum <= 2^WEXP_OUT-1 and never reaches the all-1 inf encoding for normal inputs.
-            // zero-extension padding of exp_in (high bits constant 0); the
-            // verilator coverage_off
-            // re-biased exp_widened below is covered.
             wire [WEXP_OUT-1:0]  exp_in_widened = {{(WEXP_OUT-WEXP_IN){1'b0}}, exp_in};
-            // verilator coverage_on
             wire [WEXP_OUT-1:0]  exp_widened    = exp_in_widened + BIAS_OFFSET;
 
             // Fraction widening: same width is a passthrough; wider output zero-pads on the LSB side.
             // Decided at elaboration so only one branch exists in the netlist.
-            // when widening the mantissa the low FRAC_PAD bits are constant 0;
-            // verilator coverage_off
-            // the fraction value is exercised via the inputs.
             wire [WFRAC_OUT-1:0] frac_widened;
             if (FRAC_PAD == 0) begin : g_same_man
                 assign frac_widened = frac_in;
             end else begin : g_pad_man
                 assign frac_widened = {frac_in, {FRAC_PAD{1'b0}}};
             end
-            // verilator coverage_on
 
             // Final encoding: zero collapses to canonical +0 (wins over inf); infinity becomes canonical signed
             // infinity; normal values use the re-biased exponent and padded fraction. A ternary (not a case) so the
             // same expression feeds both the registered and combinational STAGE_OUTPUT branches below.
-            // y_widen takes constant zero/inf encodings on two arms (only the sign bit varies there); the
-            // verilator coverage_off
-            // normal-result bits and the output port y stay covered.
             wire [WFULL_OUT-1:0] y_widen = is_zero ? {WFULL_OUT{1'b0}}
                                          : is_inf  ? {sign_in, {WEXP_OUT{1'b1}}, {WFRAC_OUT{1'b0}}}
                                          :           {sign_in, exp_widened, frac_widened};
-            // verilator coverage_on
             if (STAGE_OUTPUT != 0) begin : g_owr
                 reg                 s_valid;
                 reg [WFULL_OUT-1:0] s_y;
@@ -151,16 +137,12 @@ module zkf_resize #(
 
             localparam signed [WEU-1:0] IN_BIAS_EXT  = $signed({{(WEU-WEXP_IN){1'b0}}, IN_BIAS});
             wire       signed [WEU-1:0] exp_unbiased = $signed({{(WEU-WEXP_IN){1'b0}}, exp_in}) - IN_BIAS_EXT;
-            // verilator coverage_off
-            // sig_in's hidden-bit MSB is structurally 1; significand_out/guard/round/sticky take constant
-            // values on the widen branch (pad / zeroed GRS). _zkf_pack consumes these and is itself covered.
             wire [WMAN_IN-1:0]          sig_in       = {1'b1, frac_in};
 
             wire [WMAN_OUT-1:0] significand_out;
             wire                guard_out;
             wire                round_out;
             wire                sticky_out;
-            // verilator coverage_on
 
             if (WMAN_OUT >= WMAN_IN) begin : g_widen
                 // Exact: copy the input significand and pad the new low bits with zeros.

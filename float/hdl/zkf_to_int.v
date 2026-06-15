@@ -25,7 +25,6 @@ module zkf_to_int #(
     output wire                   out_valid,
     output wire signed [WINT-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -34,7 +33,6 @@ module zkf_to_int #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // -- Float -> unsigned WINT-bit magnitude reduction. _zkf_to_fixpoint owns the decode, the folded-constant
     // shift predicates, the right/left barrel shifters, and the two register stages (S1 capturing decode+clamps,
@@ -61,20 +59,14 @@ module zkf_to_int #(
     );
     // s2_is_inf and s2_is_zero ride the helper but are not consumed here; +-inf is already folded into s2_oor,
     // and zero produces mag=0 through the helper's right-shift saturation. Tie off explicitly to keep lint happy.
-    // verilator coverage_off
     wire _unused_to_int = &{1'b0, s2_is_inf, s2_is_zero, 1'b0};
-    // verilator coverage_on
 
     // -- Stage 2 -> Stage 3 combinational: round, then saturation detect via bit-range checks.
     // Round only the low WINT bits and feed the rounding carry-out into the overflow detector. The mag has no
     // padding above WINT (the helper sizes the magnitude container to exactly WI+FF = WINT bits), so a bit ever
     // appearing above position WINT-1 only happens via rcarry; there is no separate `hi_pre` term.
     wire           round_increment = s2_guard & (s2_lost_sticky | s2_mag[0]);
-    // the {1'b0, ...} pad is structurally constant; the derived rcarry / saturation predicates carry the
-    // verilator coverage_off
-    // behavior and stay covered.
     wire [WINT:0]  mag_rounded_low = {1'b0, s2_mag} + {{WINT{1'b0}}, round_increment};
-    // verilator coverage_on
     wire           rcarry          = mag_rounded_low[WINT];
 
     // Saturation detection. Positive overflow fires when the magnitude exceeds INT_MAX = 2^(WINT-1)-1, i.e. any

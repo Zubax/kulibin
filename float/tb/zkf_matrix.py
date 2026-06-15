@@ -776,13 +776,11 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
-    # Lock-step (DECOUPLE=0) sincos at un=50: covers the coupled CORDIC's g_zadv path (g_zadv.li_r) and the phi_seen
-    # else-branch (zkf_sincos.v:479).
+    # Lock-step (DECOUPLE=0, un=50) and decoupled (PARALLEL=1, par1) sincos together exercise the line+branch of BOTH
+    # CORDIC handoff modes -- the coupled g_zadv path and the half-rate sigma-replay engine. Keep both: each mode's
+    # branches (and the phi_seen if/else legs) are reachable only in its own row. The structurally-dead P_PHI
+    # implicit-else and FSM default arm are coverage_off in zkf_sincos.v.
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=50))
-    # Decoupled (PARALLEL=1) sincos: runs the half-rate sigma-replay engine, covering _zkf_cordic.v sig_mem and the
-    # phi_seen if-branch fast-skip (zkf_sincos.v:476). Additive -- must NOT replace the lock-step row above, whose
-    # li_r / else-branch coverage exists only under DECOUPLE=0. (The P_PHI guard's implicit else at :483 stays dark in
-    # both modes -- a fixed CORDIC-vs-multiply latency relationship -- so it remains coverage_off in the RTL.)
     out.append(_trans("sincos", s, "deep", "w5m11_par1", 5, 11, "exhaustive", 0, un=50, parallel=1))
     # Wide-format sincos (bona fide): at w5m11 the CORDIC X/Y carry / local-magnitude / local-exponent high bits sit
     # above the format ceiling (guard bits above XF, or a magnitude/exponent the narrow datapath never reaches). The

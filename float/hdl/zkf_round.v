@@ -50,7 +50,6 @@ module zkf_round #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -69,7 +68,6 @@ module zkf_round #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam ROUND_NEAREST_EVEN = 2'd0;
     localparam ROUND_FLOOR        = 2'd1;
@@ -115,21 +113,14 @@ module zkf_round #(
     wire [WFRAC-1:0] frac_in    = a_q[WFRAC-1:0];
     wire             is_zero_s1 = ~|exp_in;
     wire             is_inf_s1  =  &exp_in;
-    // verilator coverage_off
-    // sig_s1's MSB is the significand hidden bit; it is 1 for every normalized input, so its 1->0 toggle never occurs.
     wire  [WMAN-1:0] sig_s1     = {1'b1, frac_in};                 // significand with the hidden bit in place
-    // verilator coverage_on
 
     // Boundary position. p = KK - exp; for |value| >= 1 (exp >= BIAS) this lies in [<=0, WFRAC], where <=0 means
     // there are no fractional bits (already an integer). The sub-one branch is handled separately, so pp is
     // clamped to [0, WFRAC] and only consumed there.
     localparam signed [DW-1:0] KK_S = KK_INT;
-    // verilator coverage_off
-    // p_s high bits and the clamp only swing for the wide-exponent corners the small coverage formats cannot
-    // reach; the wide-format random suites exercise them. pp itself feeds the decoder below and stays covered.
     wire signed [DW-1:0] exp_s = $signed({{(DW-WEXP){1'b0}}, exp_in});
     wire signed [DW-1:0] p_s   = KK_S - exp_s;
-    // verilator coverage_on
     wire                 already_int = (p_s <= 0);                 // exp >= KK: no fractional bits to round
     wire                 sub_one_s1  = exp_in < BIAS_VEC;          // |value| < 1: result is 0 or +-1
     wire        [PW-1:0] pp          = already_int ? {PW{1'b0}} : p_s[PW-1:0];
@@ -164,11 +155,8 @@ module zkf_round #(
         .in_valid(in_valid_q), .in(s1_payload),
         .out_valid(dec_valid), .out(dec_payload)
     );
-    // verilator coverage_off
-    // sig is sig_s1 carried through the decode pipe; its MSB is the significand hidden bit, always 1, so 1->0 of the
-    // MSB never occurs.
+    // sig is sig_s1 carried through the decode pipe.
     wire [WMAN-1:0]       sig          = dec_payload[O_SIG   +: WMAN];
-    // verilator coverage_on
     wire [WMAN-1:0]       frac_mask    = dec_payload[O_FRAC  +: WMAN];
     wire [WMAN-1:0]       bit_pp       = dec_payload[O_BITPP +: WMAN];
     wire      [WEXP-1:0]  exp_biased_d = dec_payload[O_EXP   +: WEXP];   // the input biased exponent (carried through)
@@ -179,11 +167,9 @@ module zkf_round #(
     wire                  frac_nonzero = dec_payload[2];
     wire                  is_zero      = dec_payload[1];
     wire                  is_inf       = dec_payload[0];
-    // verilator coverage_off
     // half_mask = bit_pp >> 1 and bit_pp = 1 << pp with pp <= WFRAC, so half_mask's highest possible set bit is
-    // WFRAC-1; the MSB (bit WMAN-1 = WFRAC) is therefore never set and cannot toggle in any covered format.
+    // WFRAC-1; the MSB (bit WMAN-1 = WFRAC) is therefore never set.
     wire [WMAN-1:0]       half_mask    = bit_pp >> 1;              // bit pp-1, the 0.5 bit (re-derived, not registered)
-    // verilator coverage_on
     wire [WMAN-1:0]       below_mask   = frac_mask ^ half_mask;    // bits below the 0.5 bit (re-derived)
 
     // ============================================================================================================
@@ -217,25 +203,13 @@ module zkf_round #(
     // guard/round/sticky and a pre-biased exponent (EXP_IS_BIASED=1), so it only canonicalizes specials and
     // detects overflow. The biased exponent is exp_in + carry; the sub-one branch is exactly +-1.0 (exp == BIAS).
     // The overflow case still rides this exponent: max_finite (exp == 2^WEXP-2) + carry == 2^WEXP-1 == EXP_INF.
-    // verilator coverage_off
-    // The biased-exponent high bits [8:9] require a result biased exponent in the upper range that the sampled
-    // rounding inputs (whose exponent fields stay below that span in the covered formats) never produce.
     wire signed [WEU-1:0] exp_biased_base = $signed({{(WEU-WEXP){1'b0}}, exp_biased_d});
     wire signed [WEU-1:0] exp_biased_inc  = exp_biased_base + $signed({{(WEU-1){1'b0}}, 1'b1});
     wire signed [WEU-1:0] exp_biased_a    = carry ? exp_biased_inc : exp_biased_base;
-    // verilator coverage_on
     wire                  force_inf    = is_inf;
     wire                  force_zero   = is_zero | (sub_one & ~inc_c);
-    // verilator coverage_off
-    // significand's MSB is the significand hidden bit; it stays 1 for every result the rounding stream produces
-    // (sub_one forces {1'b1,..}; sig_norm_a is masked from sig whose MSB is 1), so its 1->0 toggle never occurs.
     wire [WMAN-1:0]       significand  = sub_one ? {1'b1, {WFRAC{1'b0}}} : sig_norm_a;
-    // verilator coverage_on
-    // verilator coverage_off
-    // exp_biased's high bits [8:9] need a result biased exponent in the upper range the sampled rounding inputs
-    // never produce (same span argument as exp_biased_base/inc/a above).
     wire signed [WEU-1:0] exp_biased   = sub_one ? BIAS_EXT : exp_biased_a;
-    // verilator coverage_on
 
     _zkf_pack #(
         .WEXP(WEXP), .WMAN(WMAN),

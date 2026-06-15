@@ -26,13 +26,11 @@ module _zkf_rshift_sticky #(
     input  wire [WSHIFT-1:0] shamt,
     output wire      [W-1:0] y
 );
-    // verilator coverage_off
     generate
         if ((STAGE_SPLIT != 0) && (STAGE_SPLIT != 1)) begin : g_invalid_stage_split
             _zkf_invalid_stage_split u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WLOCAL = $clog2(W);
     localparam NSTAGE = (WLOCAL + 1) / 2;        // radix-4 stages
@@ -45,33 +43,22 @@ module _zkf_rshift_sticky #(
     // Cascade state: data[i] and sticky[i] are the *input* to stage i. Each stage produces a pair of combinational
     // outputs data_pre[i+1]/sticky_pre[i+1], which then feed data[i+1]/sticky[i+1] either directly (combinational)
     // or through a register barrier (when STAGE_SPLIT != 0 and i == SPLIT_AFTER).
-    // verilator coverage_off
-    // Per-stage cascade state/intermediates: stages whose shift exceeds W saturate to a constant 0 and the
-    // arrays are over-provisioned, so many bits cannot toggle. The shifter is checked exhaustively via the
-    // output y by sim_rshift (including the over-range saturation path); these internals are suppressed.
     wire [W-1:0] data       [0:NSTAGE];
     wire         sticky     [0:NSTAGE];
     wire [W-1:0] data_pre   [0:NSTAGE];   // index 0 unused
     wire         sticky_pre [0:NSTAGE];   // index 0 unused
-    // verilator coverage_on
     assign data[0]   = x;
     assign sticky[0] = 1'b0;
 
     // When STAGE_SPLIT != 0, the late half of the cascade fires one cycle after `shamt` was applied, so those stages
     // must read a registered copy. shamt_late is that copy (combinational alias of shamt when STAGE_SPLIT == 0).
     // Early stages always read the live shamt directly.
-    // verilator coverage_off
-    wire [WSHIFT-1:0] shamt_late;  // top shamt bits exceed some callers' max shift and never toggle for them
-    // verilator coverage_on
+    wire [WSHIFT-1:0] shamt_late;
     generate
         if (STAGE_SPLIT == 0) begin : g_shamt_pass
             assign shamt_late = shamt;
         end else begin : g_shamt_register
-            // verilator coverage_off
-            // shamt_late_r[10] needs a shift distance >= 1024 (exponent difference >= 1024); the sampled add/sub/round
-            // streams that feed this shifter never produce such operand pairs, so that bit never toggles.
             reg [WSHIFT-1:0] shamt_late_r;
-            // verilator coverage_on
             always @(posedge clk) shamt_late_r <= shamt;
             assign shamt_late = shamt_late_r;
         end
@@ -86,11 +73,7 @@ module _zkf_rshift_sticky #(
 
             // Pick the shamt source: early stages see the live input; late stages see the registered
             // copy so their data and shamt stay aligned across the cascade-internal register barrier.
-            // verilator coverage_off
-            // shamt_use[10] needs a shift distance >= 1024 (exponent difference >= 1024); the sampled add/sub/round
-            // streams that feed this shifter never produce such operand pairs, so that bit never toggles.
             wire [WSHIFT-1:0] shamt_use;
-            // verilator coverage_on
             if ((STAGE_SPLIT != 0) && (i > SPLIT_AFTER)) begin : g_shamt_use_late
                 assign shamt_use = shamt_late;
             end else begin : g_shamt_use_early
@@ -110,12 +93,6 @@ module _zkf_rshift_sticky #(
                 assign sel = 2'b00;
             end
 
-            // verilator coverage_off
-            // Radix-4 shift candidates and per-stage mux outputs: stages whose shift exceeds W saturate to a constant
-            // 0, and intermediate widths are over-provisioned, so many of these bits cannot toggle. The shifter's
-            // behavior - including the over-range saturation path - is checked exhaustively by the sim_rshift bench
-            // through the output y; only the internal candidates are suppressed here.
-            // data[]/sticky[] (the stage results) and y stay covered.
             wire [W-1:0] d0 = data[i];
             wire [W-1:0] d1;
             wire [W-1:0] d2;
@@ -155,7 +132,6 @@ module _zkf_rshift_sticky #(
                                    | ((sel == 2'd1) & l1)
                                    | ((sel == 2'd2) & l2)
                                    | ((sel == 2'd3) & l3);
-            // verilator coverage_on
         end
     endgenerate
 

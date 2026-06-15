@@ -201,9 +201,10 @@ class Stats:
 
 
 def summarize(points: dict[Point, int]) -> dict[str, dict[str, Stats]]:
-    """Return {file: {ptype: Stats}}. Genuinely-unreachable points are suppressed at the source with
-    Verilator's `// verilator coverage_off` / `coverage_on` pragmas, so they never reach this gate -
-    there is deliberately no external waiver list to keep in sync."""
+    """Return {file: {ptype: Stats}}. Line and branch coverage are gated (mandatory); toggle coverage is
+    advisory. Genuinely-unreachable LINE/BRANCH points are suppressed at the source with Verilator's
+    `// verilator coverage_off` / `coverage_on` pragmas (kept to a minimum); there is deliberately no
+    external waiver list to keep in sync. Toggle points are never suppressed -- they are reported as-is."""
     out: dict[str, dict[str, Stats]] = defaultdict(lambda: defaultdict(Stats))
     for point, count in points.items():
         st = out[point.file][point.ptype]
@@ -314,7 +315,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("build/float/coverage"))
     parser.add_argument("--gate", action="store_true", help="fail on uncovered LINES (per-PR behaviour)")
     parser.add_argument("--full", action="store_true",
-                        help="fail on uncovered line, branch, OR toggle points (deep tier)")
+                        help="deep tier: fail on uncovered LINE or BRANCH points; report toggle as advisory")
     return parser.parse_args()
 
 
@@ -344,16 +345,21 @@ def main() -> int:
             print(f"    {p.file}:{p.line} {p.net}", file=sys.stderr)
 
     if args.full:
-        any_missing = any(uncovered[pt] for pt in PTYPES)
+        # Line and branch coverage are mandatory; TOGGLE coverage is ADVISORY -- reported but never fatal. Toggle is
+        # consulted while developing the RTL, not used as a verification quality gate (chasing 100% toggle on wide
+        # datapaths is impractical and was the cause of the prior `// verilator coverage_off` sprawl).
+        gated = ("v_line", "v_branch")
         for pt in PTYPES:
             if uncovered[pt]:
-                report(PTYPE_LABEL[pt], uncovered[pt])
-        if any_missing:
-            print("[float-coverage] To close: add a config/vector that exercises the point, or suppress a "
-                  "genuinely-unreachable point in the RTL with `// verilator coverage_off`/`coverage_on`.",
-                  file=sys.stderr)
+                report(PTYPE_LABEL[pt] + (" [advisory]" if pt == "v_toggle" else ""), uncovered[pt])
+        if any(uncovered[pt] for pt in gated):
+            print("[float-coverage] To close: add a config/vector that exercises the uncovered line/branch, or "
+                  "suppress a genuinely-unreachable line/branch in the RTL with `// verilator coverage_off`/"
+                  "`coverage_on`.", file=sys.stderr)
             return 1
-        print(f"[float-coverage] FULL PASS: line+branch+toggle covered. Report: {args.output_dir / 'index.html'}")
+        ntog = len(uncovered["v_toggle"])
+        print(f"[float-coverage] PASS: line+branch covered ({ntog} toggle point(s) uncovered -- advisory, "
+              f"non-fatal). Report: {args.output_dir / 'index.html'}")
         return 0
 
     # Default / --gate: line-only (historical behaviour).

@@ -37,7 +37,6 @@ module zkf_div #(
     localparam WFULL         = WEXP + WMAN;
     localparam WEXP_UNBIASED = WEXP + 2;
 
-    // verilator coverage_off
     generate
         // STAGE_INPUT is realized locally as a single optional input register, so only {0,1} is meaningful.
         // STAGE_PACK / STAGE_OUTPUT forward to _zkf_pack, which validates its own ranges.
@@ -48,7 +47,6 @@ module zkf_div #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Optional input register stage. The divider's pipeline depth already scales with operand width, so
     // a single extra stage is the only useful setting; anything beyond that is silently clamped to 1.
@@ -65,10 +63,8 @@ module zkf_div #(
     wire                            core_force_zero;
     wire                            core_force_inf;
     wire signed [WEXP_UNBIASED-1:0] core_exp_unbiased;
-    // normalized quotient significand; its hidden-bit MSB is structurally 1.
-    // verilator coverage_off
+    // normalized quotient significand.
     wire                 [WMAN-1:0] core_significand;
-    // verilator coverage_on
     wire                            core_guard;
     wire                            core_round;
     wire                            core_sticky;

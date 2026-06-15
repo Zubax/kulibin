@@ -34,7 +34,6 @@ module zkf_from_int #(
     output wire                  out_valid,
     output wire [WEXP+WMAN-1:0]  y
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -50,7 +49,6 @@ module zkf_from_int #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // Magnitude container width: must be at least WINT (to hold |a|, including |INT_MIN| = 2^(WINT-1))
     // and at least WMAN+3 so a static slice of [WX-WMAN-3:0] always provides at least one sticky bit.
@@ -74,23 +72,15 @@ module zkf_from_int #(
     // Stage-1 cone: form |a| via XOR-and-increment so the carry chain handles the negation; this also handles
     // INT_MIN correctly because the resulting unsigned magnitude 2^(WINT-1) fits in WINT bits.
     wire            sign_in    = a_q[WINT-1];
-    // verilator coverage_off
-    // Magnitude formation: the WX-wide carrier zero-extends the WINT magnitude (WX>WINT padding is
-    // constant), and at wide WINT the random stimulus does not toggle every high bit both ways. The
-    // magnitude flows into the normshift inside _zkf_fixed_to_float and the significand/GRS extraction
-    // stays covered through the y output.
     wire [WINT-1:0] inv_in     = a_q ^ {WINT{sign_in}};
     wire [WINT-1:0] mag_in     = inv_in + {{(WINT-1){1'b0}}, sign_in};
     wire [WX-1:0]   mag_ext_in = {{(WX-WINT){1'b0}}, mag_in};
-    // verilator coverage_on
 
     // Stage 1: register sign and magnitude. Reset only validity; payload free-runs.
     reg            s1_valid;
     reg            s1_sign;
-    // WX-wide magnitude reg; the WX>WINT high bits are constant zero-padding.
-    // verilator coverage_off
+    // WX-wide magnitude reg.
     reg [WX-1:0]   s1_mag_ext;
-    // verilator coverage_on
 
     always @(posedge clk) begin
         if (rst) begin
@@ -107,10 +97,11 @@ module zkf_from_int #(
     // EXP_IS_BIASED=1 so the packer skips the bias add), and the _zkf_pack output stage. STAGE_NORMALIZE and
     // STAGE_PACK forward directly to the helper. WSB=1 is unused; sb_in is tied to 1'b0 and sb_out is discarded.
     localparam integer EXP_BIASED_TOP = EXP_BIASED_MAX;
+    // sb_out is discarded (WSB=1 unused); its tie-off declaration takes no per-PR line coverage.
     // verilator coverage_off
     wire sb_out_unused;
-    localparam [WEU-1:0] EXP_BIASED_TOP_EXT = EXP_BIASED_TOP[WEU-1:0];
     // verilator coverage_on
+    localparam [WEU-1:0] EXP_BIASED_TOP_EXT = EXP_BIASED_TOP[WEU-1:0];
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),
         .WMAG(WX), .WEU(WEU),

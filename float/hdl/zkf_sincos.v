@@ -87,7 +87,6 @@ module zkf_sincos #(
     output wire [WEXP+WMAN-1:0] cos,
     output wire [1:0]           quadrant
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -102,7 +101,6 @@ module zkf_sincos #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -209,7 +207,6 @@ module zkf_sincos #(
     reg [WMAN-1:0]   r1_sig;
     reg [WLSH-1:0]   r1_lshamt;
     reg signed [WE-1:0] r1_e;
-    // verilator coverage_off
     wire             is_zero = ~|d_exp;
     wire             is_inf  =  &d_exp;
     wire [WMAN-1:0]  sig_in  = is_zero ? {WMAN{1'b0}} : {1'b1, d_frac};
@@ -217,7 +214,6 @@ module zkf_sincos #(
     // Shift amount clamped to [0, FF]: the e_lo / e_hi range tests are precomputed (parallel to the subtract), so this
     // is just a 3:1 mux selecting 0, FF, or the low bits of sh -- no compare in series with the subtract.
     wire [WLSH-1:0]  lshamt  = e_lo ? {WLSH{1'b0}} : e_hi ? FF[WLSH-1:0] : sh0[WLSH-1:0];
-    // verilator coverage_on
     always @(posedge clk) begin
         if (rst) r1_valid <= 1'b0;
         else     r1_valid <= d_valid;
@@ -232,12 +228,10 @@ module zkf_sincos #(
     // Stage R2 combinational: the wide barrel shift -> quadrant / in-octant coordinate. The shift is the long cone,
     // so its outputs are registered (R2) before the octant fold. The exact-zero reduction is delayed until the fold
     // stage; otherwise the variable-shift mux and wide OR-reduction share one timing cone.
-    // verilator coverage_off
     wire [FF-1:0] frac_pos  = {{(FF-WMAN){1'b0}}, r1_sig} << r1_lshamt;
     wire [1:0]    quad_abs  = r1_is_inf ? 2'b00 : frac_pos[FF-1:FF-2];
     wire [WT-1:0] t_abs     = frac_pos[WT-1:0];
     wire          tiny_c    = ~r1_is_left;
-    // verilator coverage_on
 
     // Stage R2 register: hold the barrel-shift result so the octant fold below is a fresh combinational stage.
     reg              r2_valid;
@@ -261,11 +255,9 @@ module zkf_sincos #(
     // Octant fold (combinational from R2): the pi/2-complement 2**WT - r2_t is a WT-wide two's-complement negate
     // (the +1 is needed for relative accuracy of the small reflected sine near the fold boundary), whose carry chain
     // is the dominant front-end cone on wide datapaths.
-    // verilator coverage_off
     wire          oct_flip_c = (~r2_tiny) & (r2_t > {1'b1, {(WT-1){1'b0}}});
     wire [WT-1:0] tp_w_c     = oct_flip_c ? (~r2_t + 1'b1) : r2_t;
     wire          tzero_c    = ~|r2_t;
-    // verilator coverage_on
 
     // Fold register stage: hold the folded coordinate so the WT-wide negate above is its own stage,
     // isolated from the seed-pack + engine-latch cone below.
@@ -295,12 +287,10 @@ module zkf_sincos #(
     // collapses to 0 once TSA_BITS >= 32 (WMAN >= 34, e.g. the synthesized WMAN=36) under standard constant sizing,
     // which would silently disable the handoff -- and tools differ on whether context widens it. The slice form is
     // exact and width-independent on every tool.
-    // verilator coverage_off
     wire          sa_sel   = f_tiny | f_tzero | (~|f_tpw[WT-1:TSA_BITS]);
     wire [WOP-1:0] operand = f_tiny ? {{(WOP-WMAN){1'b0}}, f_sig} : f_tpw[WOP-1:0];
     wire signed [WZ-1:0] z0 = $signed({{(WZ-WT-ZG){1'b0}}, f_tpw, {ZG{1'b0}}});
     wire [WSB-1:0] sb_red = {f_e, f_quad, f_octflip, f_tzero, f_tiny, sa_sel, f_inf, f_sign};
-    // verilator coverage_on
     wire eng_start = f_valid;
 
     // ============================================================================================================
@@ -308,18 +298,10 @@ module zkf_sincos #(
     // ============================================================================================================
     wire               cd_done, cd_zdone;
     wire [WSB-1:0]     cd_sb;
-    // verilator coverage_off
-    // CORDIC X output (cd_xn) carry high bits above the used XF range at the widest sincos coverage format: x_K never
-    // grows into these top bits, so they never toggle.
     wire signed [WX-1:0] cd_xn;
-    // verilator coverage_on
     wire signed [WX-1:0] cd_yn;
     wire signed [WZ-1:0] cd_zn;
-    // verilator coverage_off
-    // Generated 2*pi constant from the per-WMAN CORDIC table (CONST2PI_S-scaled): a compile-time constant, so its
-    // bits cannot toggle within a configuration.
     wire [CWB-1:0]     const2pi;
-    // verilator coverage_on
     // Intentional: unsupported in-range WMAN names missing _zkf_cordic_m<WMAN>, prompting table generation.
     `define ZKF_SINCOS_CORE(W) end else if (WMAN == W) begin : g_m``W \
         _zkf_cordic_m``W #( \
@@ -405,33 +387,16 @@ module zkf_sincos #(
     localparam integer P_IDLE = 0, P_PHI = 1, P_SC = 2;
     localparam [1:0] BYP_TAG = 2'd0, PHI_TAG = 2'd1, S_TAG = 2'd2, C_TAG = 2'd3;  // multiply sideband product tags
 
-    // verilator coverage_off
-    // Phase FSM uses only states 0/1/2 (P_IDLE/P_PHI/P_SC), so the top state bit (bit 2) is never set and never
-    // toggles.
     reg [2:0]            mphase;
-    // verilator coverage_on
     reg [1:0]            sc_iss;                // S/C issue step: 0 -> issue S, 1 -> issue C, 2 -> done issuing
-    // verilator coverage_off
-    // Registered CORDIC X result (e_xn) carry high bits above the used XF range at the widest sincos coverage format:
-    // x_K never grows into these top bits, so they never toggle.
     reg signed [WX-1:0]  e_xn;
-    // verilator coverage_on
     reg signed [WX-1:0]  e_yn;
     reg [WSB-1:0]        e_sb;
-    // verilator coverage_off
-    // PHI product (const2pi*z_K) low bits discarded by the narrowing shift to phi: they fall below the retained phi
-    // significant range, so these low bits stay constant and never toggle.
     reg signed [WP-1:0]  tprod_r;        // PHI product const2pi*z_K; phi = tprod_r >> ((CONST2PI_S+ZF)-PHI_S)
-    // verilator coverage_on
     reg signed [WP-1:0]  corr_s_r;       // S product (x_K*phi) registered; C product is consumed straight into b2_cos
-    // verilator coverage_off
-    // Bypass magnitude (const2pi*operand) low bits below the const2pi*operand significant range: discarded downstream,
-    // so these low bits stay constant and never toggle.
     reg [WMAG-1:0]       bypass_mag_r;   // const2pi*operand, computed during the CORDIC (small-angle bypass magnitude)
-    // verilator coverage_on
     reg                  phi_seen;       // this transaction's PHI product (tprod_r) has returned -- skip the P_PHI wait
 
-    // verilator coverage_off
     wire signed [WCP-1:0] cphi_op   = $signed(cd_zn[WCP-1:0]);          // narrowed CORDIC residual z_K (corr. angle)
     // The PHI product const2pi*z_K is at scale 2**-(CONST2PI_S+ZF); narrow phi to its top WPHI bits at scale
     // 2**-PHI_S by a single right-shift (CONST2PI_S+ZF) - PHI_S. const2pi is already the narrowed WMAN+5-bit operand,
@@ -454,7 +419,6 @@ module zkf_sincos #(
     wire [1:0]            mul_sb_in = (mphase != P_IDLE) ? (issue_c ? C_TAG : S_TAG)
                                     : cd_zdone           ? PHI_TAG : BYP_TAG;
     wire signed [WP-1:0]   pmul_p;             // exact product of the current phase's operands (shared multiply)
-    // verilator coverage_on
 
     // One multiplier time-shared over the products. Up to two products are in flight at once (BYP overlaps the CORDIC;
     // S/C are pipelined two-deep); the 2-bit sideband tag (sb_in -> sb_out) carried in step with each product routes
@@ -471,13 +435,8 @@ module zkf_sincos #(
         .out_valid(mul_valid), .sb_out(mul_sb_out), .p(pmul_p)
     );
 
-    // verilator coverage_off
-    // b2_sin/b2_cos: CORDIC X/Y carry high bits above the used XF range at the widest sincos coverage format -- the
-    // sin/cos values (x_K +/- correction) never grow into these top bits. b2_sa: bypass-magnitude low bits below the
-    // const2pi*operand significant range, discarded by the narrowing shift to phi. Neither toggles.
     reg signed [WX-1:0]  b2_sin, b2_cos;
     reg [WMAG-1:0]       b2_sa;
-    // verilator coverage_on
     reg [WSB-1:0]        b2_sb;
     reg                  b2_valid;
     always @(posedge clk) begin
@@ -504,8 +463,6 @@ module zkf_sincos #(
             case (mphase)
                 P_IDLE[2:0]: if (cd_done) begin                  // x_K/y_K valid now; PHI was issued earlier (cd_zdone)
                     e_xn <= cd_xn; e_yn <= cd_yn; e_sb <= cd_sb;
-                    // phi_seen if-arm (decoupled fast-skip) is covered by the PARALLEL=1 toggle row; the else-arm
-                    // (lock-step) by the un=50 row. Both legs measured.
                     if (phi_seen) begin                          // decoupled: phi already in tprod_r -> straight to S/C
                         mphase <= P_SC[2:0];
                         sc_iss <= 2'd0;
@@ -513,11 +470,9 @@ module zkf_sincos #(
                         mphase <= P_PHI[2:0];
                     end
                 end
+                // P_PHI is entered only in lock-step, where the PHI product is already valid this cycle, so the guard
+                // is always true; the implicit "still waiting" else is unreachable.
                 // verilator coverage_off
-                // P_PHI is entered only in lock-step (PARALLEL=0); when entered, the PHI product is already valid this
-                // cycle in every toggle format, so the guard is always true and the implicit "still waiting" else
-                // branch is unreached (in PARALLEL=1 the state is skipped entirely). Covering the else needs a
-                // CORDIC/multiply latency offset the toggle formats do not produce. The live then-arm is exercised.
                 P_PHI[2:0]: if (mul_valid && (mul_sb_out == PHI_TAG)) begin   // phi captured above; begin S/C
                     mphase <= P_SC[2:0];
                     sc_iss <= 2'd0;
@@ -534,6 +489,7 @@ module zkf_sincos #(
                         mphase   <= P_IDLE[2:0];
                     end
                 end
+                // FSM uses P_IDLE/P_PHI/P_SC only; the default is a generate-completeness safety arm.
                 // verilator coverage_off
                 default: mphase <= P_IDLE[2:0];
                 // verilator coverage_on
@@ -557,31 +513,21 @@ module zkf_sincos #(
     localparam signed [WEU-1:0] EONE_XF_S    = EONE_XF;            // O(1) cos / +1 / corr path (scale 2**-XF)
     localparam signed [WEU-1:0] EONE_S_WFRAC = EONE_S - WFRAC;     // tiny bypass: const2pi*|sig| at 2**-CONST2PI_S
     localparam signed [WEU-1:0] EONE_S_ZFT   = EONE_S - (WT + 2);  // TSA bypass: const2pi*t' at 2**-CONST2PI_S
-    // verilator coverage_off
     wire signed [WEU-1:0] e_ext = $signed({{(WEU-WE){e_o[WE-1]}}, e_o});
     wire [WMAG-1:0] sin_tp_mag = sa_o ? b2_sa                                   : {{(WMAG-XF-1){1'b0}}, b2_sin[XF:0]};
     wire [WMAG-1:0] cos_tp_mag = sa_o ? {{(WMAG-XF-1){1'b0}}, 1'b1, {XF{1'b0}}} : {{(WMAG-XF-1){1'b0}}, b2_cos[XF:0]};
     wire signed [WEU-1:0] sin_tp_exp = !sa_o  ? EONE_XF_S
                                      : tiny_o ? (e_ext + EONE_S_WFRAC)
                                      :          EONE_S_ZFT;
-    // verilator coverage_on
 
     wire [WMAG-1:0]       sin_loc_mag = oct_o ? cos_tp_mag : sin_tp_mag;
     wire signed [WEU-1:0] sin_loc_exp = oct_o ? EONE_XF_S  : sin_tp_exp;
     wire [WMAG-1:0]       cos_loc_mag = oct_o ? sin_tp_mag : cos_tp_mag;
-    // verilator coverage_off
-    // Local cos exponent high bits beyond the magnitude the phase stream reaches: the result exponent never grows
-    // into these top bits at the covered formats, so they never toggle.
     wire signed [WEU-1:0] cos_loc_exp = oct_o ? sin_tp_exp : EONE_XF_S;
-    // verilator coverage_on
     wire [WMAG-1:0]       sin_mag = quad_o[0] ? cos_loc_mag : sin_loc_mag;
     wire signed [WEU-1:0] sin_exp = quad_o[0] ? cos_loc_exp : sin_loc_exp;
     wire [WMAG-1:0]       cos_mag = quad_o[0] ? sin_loc_mag : cos_loc_mag;
-    // verilator coverage_off
-    // Result cos exponent high bits beyond the magnitude the phase stream reaches: the result exponent never grows
-    // into these top bits at the covered formats, so they never toggle.
     wire signed [WEU-1:0] cos_exp = quad_o[0] ? sin_loc_exp : cos_loc_exp;
-    // verilator coverage_on
     wire sin_sgn = inf_o ? sign_o : (quad_o[1] ^ sign_o);
     wire cos_sgn = inf_o ? sign_o : (quad_o[1] ^ quad_o[0]);
     wire [1:0] quad_out = inf_o   ? 2'b00
@@ -672,10 +618,8 @@ module zkf_sincos #(
     generate
         if (STAGE_OUTPUT == 0) begin : g_out_comb
             reg              pending;
+            // Backpressure-hold registers: per-PR configs keep out_ready high, so the hold branch is deep-only.
             // verilator coverage_off
-            // Output back-pressure hold registers (STAGE_OUTPUT==0): they catch the result only while out_ready is
-            // low. The streaming matrix holds out_ready high, so the hold path is exercised only by the directed
-            // back-pressure test, not in the toggle build, leaving these registers un-toggled there.
             reg [WFULL-1:0]  hold_sin, hold_cos;
             reg [1:0]        hold_quad;
             // verilator coverage_on
@@ -717,12 +661,10 @@ module zkf_sincos #(
         else if (out_valid & out_ready) busy <= 1'b0;
     end
 
-    // verilator coverage_off
     // Intentionally-partial nets: the engine residual angle cd_zn drives the linear correction only through its low
     // bits (cd_zn[WCP-1:0]), and the octant-local magnitudes b2_sin/b2_cos are read only as their low XF+1 bits, so the
     // upper bits never reach an output. Reduction-xor the full vectors so the leftover bits read as used.
     wire _unused = ^{cd_zn, b2_sin, b2_cos};
-    // verilator coverage_on
 endmodule
 
 `undef ZKF_SINCOS_LATENCY

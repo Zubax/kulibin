@@ -78,11 +78,7 @@ module zkf_atan2 #(
     output wire                 out_valid,   // result is ready; held until out_ready (back-pressure)
     input  wire                 out_ready,   // consumer accepts the result on a cycle where out_valid & out_ready
     output wire [WEXP+WMAN-1:0] theta,       // atan2(y, x) in turns, range (-0.5, 0.5]
-    // verilator coverage_off
-    // Magnitude output sign bit (WFULL-1 at the widest atan2 coverage format w8m24): hypot is non-negative, so this
-    // top bit is forced 0 and never toggles.
     output wire [WEXP+WMAN-1:0] mag          // hypot(y, x)
-    // verilator coverage_on
 );
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -148,7 +144,6 @@ module zkf_atan2 #(
     localparam signed [WZ+1:0] QUARTER = {{(WZ+2-(ZF-1)){1'b0}}, 1'b1, {(ZF-2){1'b0}}}; // 1/4 turn
     localparam signed [WZ+1:0] HALF    = {{(WZ+2-ZF){1'b0}}, 1'b1, {(ZF-1){1'b0}}};     // 1/2 turn
 
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -163,7 +158,6 @@ module zkf_atan2 #(
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     // k/8 of a turn (k in {0:+0, 1:1/8, 2:1/4, 3:3/8, 4:+1/2}) with sign s, correctly rounded to ZKF. The half-turn
     // endpoint is canonical +1/2; signed -1/2 is normalized there. The constants are exact dyadics, but for very small
@@ -222,6 +216,7 @@ module zkf_atan2 #(
                 3'd2:    begin body = TURN8_K2;  zero = TURN8_Z2; end
                 3'd3:    begin body = TURN8_K3;  zero = TURN8_Z3; end
                 3'd4:    begin body = TURN8_K4;  zero = TURN8_Z4; end
+                // k>=5 never occurs (turn8 indices are 0..4); generate-completeness arm.
                 // verilator coverage_off
                 default: begin body = TURN8_KNZ; zero = 1'b0;     end       // unused k >= 5 (mirrors old eunb 0)
                 // verilator coverage_on
@@ -242,12 +237,8 @@ module zkf_atan2 #(
     // back-end). inv_tau (turns scaling) and kinv_mag (magnitude descale) each arrive at WMAN+5 bits at their native
     // scale -- connected straight to the shared pmul's `b` operand, no re-narrowing here. atan2 leaves the table's
     // const2pi (sin/cos only) and full-precision kinv (the sin/cos seed) unconnected.
-    // verilator coverage_off
-    // Per-WMAN engine constants from the CORDIC table (1/tau turns scaling, K^-1 magnitude descale): driven by the
-    // table instance with compile-time-constant values, so their bits never toggle within a configuration.
     wire [ITWB-1:0]      eng_inv_tau;
     wire [KINV_MAG-1:0]  eng_kinv_mag;
-    // verilator coverage_on
 
     wire             si_valid;
     wire [WFULL-1:0] si_y, si_x;
@@ -272,7 +263,6 @@ module zkf_atan2 #(
     localparam integer WK  = WFULL - 1;                  // magnitude key width (biased exponent + fraction)
     localparam integer WKL = WK / 2;
     localparam integer WKH = WK - WKL;
-    // verilator coverage_off
     wire [WK-1:0]    f0_keyx = si_x[WK-1:0];
     wire [WK-1:0]    f0_keyy = si_y[WK-1:0];
     wire             f0_hi_gt = f0_keyy[WK-1 -: WKH] >  f0_keyx[WK-1 -: WKH];
@@ -289,7 +279,6 @@ module zkf_atan2 #(
     wire             f0_sx = si_x[WFULL-1], f0_sy = si_y[WFULL-1];
     wire [WEXP-1:0]  f0_xe = si_x[WFULL-2:WFRAC], f0_ye = si_y[WFULL-2:WFRAC];
     wire             f0_xz = ~|f0_xe, f0_xi = &f0_xe, f0_yz = ~|f0_ye, f0_yi = &f0_ye;
-    // verilator coverage_on
     reg              d0_valid, d0_swap;
     reg [WFULL-1:0]  d0_y, d0_x;
     reg              d0_sx, d0_sy, d0_xz, d0_xi, d0_yz, d0_yi;          // narrow special-case descriptor
@@ -309,7 +298,6 @@ module zkf_atan2 #(
     // hidden bit prepended to the fraction, and the biased exponent is the raw field. The mag exponent (f1_eden) is
     // carried BIASED here -- the former decode's -BIAS unbias subtract is dropped because the only consumer, the
     // p2_mexp offset add, folds the +BIAS back in (so the two cancel and the packed result is bit-identical).
-    // verilator coverage_off
     wire [WMAN-1:0]  f1_sigx = {1'b1, d0_x[WFRAC-1:0]};
     wire [WMAN-1:0]  f1_sigy = {1'b1, d0_y[WFRAC-1:0]};
     wire             f1_special = d0_xz | d0_xi | d0_yz | d0_yi;         // any operand zero/inf (from the descriptor)
@@ -375,27 +363,16 @@ module zkf_atan2 #(
     wire [WFULL-1:0] f1_sp_mag   = (d0_xi | d0_yi) ? {1'b0, {WEXP{1'b1}}, {WFRAC{1'b0}}}        // +inf
                                  : (d0_xz & d0_yz) ? {WFULL{1'b0}}                               // +0
                                  :                   {1'b0, f1_den_exp, f1_den_sig[WFRAC-1:0]};  // |larger|
-    // verilator coverage_on
 
     // -- Stage D: register the ordered/aligned quantities. Splits the (now short) decode + den/num order cone from the
     // align/seed cone (the wide variable barrel shift below).
     reg                  d_valid;
-    // verilator coverage_off
-    // Ordered/aligned significand hidden bits (WMAN-1 at the widest atan2 coverage format w8m24): both den and num
-    // significands carry the structural hidden 1 in this top bit, so it is always 1 and never toggles.
     reg [WMAN-1:0]       d_den_sig, d_num_sig;
-    // verilator coverage_on
     reg [WSH-1:0]        d_shamt;
     reg                  d_swap, d_sx, d_sy, d_special, d_bypass;
-    // verilator coverage_off
-    // Divider denominator-exponent high bit beyond the covered exponent range; never toggles at the exercised WEXP.
     reg signed [WE-1:0]  d_eden;
-    // verilator coverage_on
     reg signed [WE:0]    d_eydiff;
-    // verilator coverage_off
-    // Special-case packed magnitude: its sign bit (WFULL-1) is forced 0 because the magnitude is non-negative.
     reg [WFULL-1:0]      d_sp_mag;
-    // verilator coverage_on
     reg [2:0]            d_spk;                                   // narrow special-case octant code (-> turn8 @ out)
     reg                  d_sp_sign;                               // narrow special-case theta sign (-> turn8 @ out)
     reg [WMAN-1:0]       d_byp_irem;                              // precomputed bypass initial remainder
@@ -413,21 +390,12 @@ module zkf_atan2 #(
     // while the CORDIC runs for many cycles, so capture the fields once at the seed boundary instead of carrying them
     // through every CORDIC stage.
     reg                  hd_swap, hd_sx, hd_sy, hd_special, hd_bypass;
-    // verilator coverage_off
-    // Divider denominator-exponent high bit beyond the covered exponent range; never toggles at the exercised WEXP.
     reg signed [WE-1:0]  hd_eden;
-    // verilator coverage_on
     reg signed [WE:0]    hd_eydiff;
-    // verilator coverage_off
-    // Special-case packed magnitude: its sign bit (WFULL-1) is forced 0 because the magnitude is non-negative.
     reg [WFULL-1:0]      hd_sp_mag;
-    // verilator coverage_on
     reg [2:0]            hd_spk;
     reg                  hd_sp_sign;
-    // verilator coverage_off
-    // Held divisor significand hidden bit (WMAN-1 at the widest atan2 coverage format w8m24): always 1, never toggles.
     reg [WMAN-1:0]       hd_den_sig;
-    // verilator coverage_on
     reg [WMAN-1:0]       hd_byp_irem;
     reg                  hd_byp_ibit;
     always @(posedge clk) begin
@@ -455,17 +423,11 @@ module zkf_atan2 #(
     // d_num_sig (WMAN bits, top at WFRAC) shifted up by (XF-WFRAC-2) tops out at bit XF-2, so it fits in
     // WX (== XF+2) bits with room to spare; the former WX+XF width carried XF dead high bits
     // (only the low WX were ever read). Sizing it to WX drops them.
-    // verilator coverage_off
     wire [WX-1:0]    f2_den_fix = {{(WX-WMAN){1'b0}}, d_den_sig} << (XF - WFRAC - 2);
     wire [WX-1:0]    f2_num_up  = {{(WX-WMAN){1'b0}}, d_num_sig} << (XF - WFRAC - 2);
     wire [WX-1:0]    f2_num_fix = f2_num_up >> d_shamt;
-    // verilator coverage_on
     reg                  f2_valid;
-    // verilator coverage_off
-    // CORDIC x/y seed registers: at the covered formats the fixed-point den/num seeds never fill the WX-wide
-    // datapath, so the high (and zero/sign-extension) seed bits stay constant and never toggle.
     reg signed [WX-1:0]  f2_x0, f2_y0;
-    // verilator coverage_on
     always @(posedge clk) begin
         if (rst) f2_valid <= 1'b0; else f2_valid <= d_valid;
         f2_x0 <= $signed({1'b0, f2_den_fix});
@@ -477,15 +439,11 @@ module zkf_atan2 #(
     // Vectoring CORDIC engine (MODE=1), per-WMAN table.
     // ================================================================================================================
     wire                 cd_done;
+    // Unused CORDIC sideband tie-off: never read, so its declaration line takes no per-PR line coverage.
     // verilator coverage_off
     wire [WSB-1:0]       cd_sb_unused;
     // verilator coverage_on
-    // verilator coverage_off
-    // CORDIC X output top bit beyond the magnitude reachable for the covered formats: |x_K| never grows into this
-    // high bit at the exercised CORDIC width, so it never toggles.
-    wire signed [WX-1:0] cd_xn;
-    // verilator coverage_on
-    wire signed [WX-1:0] cd_yn;
+    wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
     `define ZKF_ATAN2_CORE(W) end else if (WMAN == W) begin : g_m``W \
@@ -561,18 +519,11 @@ module zkf_atan2 #(
     wire             be_sx       = hd_sx;
     wire             be_swap     = hd_swap;
     wire signed [WE:0]   be_eydiff = hd_eydiff;
-    // verilator coverage_off
-    // Divider denominator-exponent high bit beyond the covered exponent range; never toggles at the exercised WEXP.
     wire signed [WE-1:0] be_eden   = hd_eden;
-    // Divisor significand hidden bit (WMAN-1 at the widest atan2 coverage format w8m24): always 1, never toggles.
     wire [WMAN-1:0]  be_sigx     = hd_den_sig;
-    // verilator coverage_on
     wire [WMAN-1:0]  be_byp_irem = hd_byp_irem;   // precomputed bypass initial remainder (front-end)
     wire             be_byp_ibit = hd_byp_ibit;   // precomputed bypass integer quotient bit
-    // verilator coverage_off
-    // Special-case packed magnitude: its sign bit (WFULL-1) is forced 0 because the magnitude is non-negative.
     wire [WFULL-1:0] be_sp_mag   = hd_sp_mag;
-    // verilator coverage_on
     wire [2:0]       be_spk      = hd_spk;
     wire             be_sp_sign  = hd_sp_sign;
 
@@ -583,7 +534,6 @@ module zkf_atan2 #(
     // |y_K| (one negate off cd_yn) and its integer bit is structurally 0 (|y_K| < x_K always).
     // The bypass remainder and integer bit are PRECOMPUTED at the front-end and captured into hd_* (slack-rich), so
     // neither the cd_yn negate nor the divisor mux sits behind a compare+subtract here.
-    // verilator coverage_off
     wire signed [WX-1:0] be_ykabs = cd_yn[WX-1] ? -cd_yn : cd_yn;                    // |y_K| (the only cd_yn-dep work)
     // The divisor is just selected here (bypass vs residual); 3*den is formed one cycle later in the divider's setup
     // state off the REGISTERED divisor (a reg->reg hop), keeping the wide 3*den carry chain off the engine-output arm
@@ -598,46 +548,29 @@ module zkf_atan2 #(
     // Arm inputs: select the precomputed bypass remainder/bit or the residual |y_K| / structural 0 -- pure muxes.
     wire             div_ibit    = be_bypass & be_byp_ibit;
     wire [WDIV-1:0]  div_irem    = be_bypass ? {{(WDIV-WMAN){1'b0}}, be_byp_irem} : be_ykabs[WDIV-1:0];
-    // verilator coverage_on
 
     // -- Divide-setup register (arm) + the folded radix-4 divider (one reused _zkf_div_radix4_step, STEPS cycles).
     // The control/engine outputs registered here are held until the next transaction (one in flight),
     // so the post-divide multiply and unmap read them directly.
     reg                  dv_valid, dv_run;
     reg [WCNT-1:0]       dv_cnt;
-    // verilator coverage_off
-    // Divider remainder/denominator datapath top bits beyond the divisor magnitude for the covered formats: at the
-    // widest atan2 coverage format w8m24 these high bits exceed the magnitude den/rem ever reach, so they never toggle.
     reg [WDIV-1:0]       dv_rem, dv_den;
-    // 3*denominator candidate top bits beyond the divisor magnitude for the covered formats (mirrors dv_den/dv_rem).
     reg [WDIV+1:0]       dv_den3;
-    // verilator coverage_on
     reg [WQUO-1:0]       dv_quo;
-    // verilator coverage_off
-    // CORDIC X result top bit (= x_K) beyond the magnitude reachable for the covered formats; never toggles.
     reg signed [WX-1:0]  dv_xn;
-    // CORDIC residual angle z_K low seed bit: held constant for the covered formats (the bounded residual never
-    // flips this bit at the exercised CORDIC width), so it does not toggle.
     reg signed [WZ-1:0]  dv_zn;
-    // verilator coverage_on
     reg                  dv_bypass, dv_yneg, dv_swap, dv_sx, dv_sy, dv_special;
     reg signed [WE:0]    dv_eydiff;
-    // verilator coverage_off
-    // Divider denominator-exponent high bit beyond the covered exponent range; never toggles at the exercised WEXP.
     reg signed [WE-1:0]  dv_eden;
-    // Special-case packed magnitude: its sign bit (WFULL-1) is forced 0 because the magnitude is non-negative.
     reg [WFULL-1:0]      dv_sp_mag;
-    // verilator coverage_on
     reg [2:0]            dv_spk;                                    // narrow special-case octant code (-> turn8 @ out)
     reg                  dv_sp_sign;                                // narrow special-case theta sign (-> turn8 @ out)
     // ONE reused stock _zkf_div_radix4_step (from _zkf_div_core, unchanged): one radix-4 digit (2 quotient bits) per
     // cycle, STEPS cycles, preceded by a one-cycle setup that forms dv_den3 = 3*dv_den off the REGISTERED divisor. The
     // setup keeps the wide 3*den carry chain on a reg->reg hop instead of chaining off the CORDIC x output on the
     // one-shot arm cone (which set the critical path otherwise). Costs one cycle (DIVCYC = STEPS + 1).
-    // verilator coverage_off
     wire [WDIV-1:0] step_rem_next;
     wire [1:0]      step_digit;
-    // verilator coverage_on
     _zkf_div_radix4_step #(.WMAN(WDIV)) u_step (
         .den(dv_den), .den3(dv_den3), .rem(dv_rem),
         .rem_next(step_rem_next), .digit(step_digit)
@@ -729,10 +662,8 @@ module zkf_atan2 #(
     // The `b` operand is the pre-narrowed table constant for the current product, connected directly (no re-narrowing):
     // eng_kinv_mag (scale 2**-KINV_S) for MAG, eng_inv_tau (scale 2**-INVTAU_S) for QT -- both already WMAN+5 bits.
     // The post-product scaling below derives its shift / exp-offset from those native scales, so no fold-back remains.
-    // verilator coverage_off
     wire [WA_MUL-1:0]  pmul_a = qt_issue ? {{(WA_MUL-WQUO){1'b0}}, dv_quo} : dv_xn[WA_MUL-1:0];
     wire [KINV_MAG-1:0] pmul_b = qt_issue ? eng_inv_tau : eng_kinv_mag;       // narrowed inv_tau (QT) / kinv_mag (MAG)
-    // verilator coverage_on
     wire             pmul_ov;
     wire [0:0]       pmul_tag_out;
     localparam integer WPMUL = WA_MUL + KINV_MAG;
@@ -765,7 +696,6 @@ module zkf_atan2 #(
     // The unmap algebra (bit-exact to the former single-stage form): un_tmag = unmap_const +/- res_a0, res_a0 =
     // z_K +/- res_delta, with res_a0 negated iff swap^sx and res_delta negated iff y_K<0. Folding gives un_base =
     // unmap_const +/- z_K (negate z_K iff swap^sx) and res_delta subtracted iff (swap^sx) ^ y_K<0.
-    // verilator coverage_off
     wire [WMAG-1:0]      qt_full   = pmul_p[WMAG-1:0];                 // Q * inv_tau (WA_MUL+KINV_MAG, padded to WMAG)
     // qt_full = Q * inv_tau is at scale 2**-(F + INVTAU_S); the right-shift to the angle scale 2**-ZF is the difference
     // F + INVTAU_S - ZF (>= 0 for every supported WMAN). inv_tau is the pre-narrowed operand, so no fold-back.
@@ -776,20 +706,13 @@ module zkf_atan2 #(
     wire signed [WZ+1:0] un_base     = un_neg_a0 ? (unmap_const - zn_ext) : (unmap_const + zn_ext);  // early (no delta)
     wire                 un_sub_delta = un_neg_a0 ^ dv_yneg;                    // subtract res_delta when set
     wire [WMAG-1:0]      byp_tmag  = qt_full | {{(WMAG-1){1'b0}}, div_sticky}; // jam the divide sticky into the pack
-    // verilator coverage_on
 
     // -- Stage P2: register the correction operands + forward the THETA back-end inputs (one add still pending for B2).
     // The magnitude no longer flows through P2/B2: it is issued to the SHARED back-end early (the moment its product
     // returns, see mag_be_issue below), so p2/b2 carry only the theta-path payload.
     reg                  p2_valid, p2_bypass, p2_sub_delta;
-    // verilator coverage_off
-    // Theta-path correction operands beyond the covered angle magnitude: p2_un_base's low seed bit stays constant
-    // (the residual z_K combined with the quarter/half/zero unmap constants never flips it at the exercised
-    // CORDIC/divider widths), and p2_res_delta's high bits exceed the angle magnitude reachable for the covered
-    // formats; neither toggles.
     reg signed [WZ+1:0]  p2_un_base;
     reg [WZ+1:0]         p2_res_delta;
-    // verilator coverage_on
     reg [WMAG-1:0]       p2_byp_tmag;
     reg signed [WEU-1:0] p2_texp;
     reg                  p2_tsign;
@@ -810,10 +733,8 @@ module zkf_atan2 #(
         p2_texp      <= (dv_bypass ? ((WMAG - 1) - F - INVTAU_S + dv_eydiff) : ((WMAG - 1) - ZF)) + BIAS;
         p2_tsign     <= dv_sy;
     end
-    // verilator coverage_off
     wire signed [WZ+1:0] p2_un_tmag = p2_sub_delta ? (p2_un_base - $signed(p2_res_delta))
                                                    : (p2_un_base + $signed(p2_res_delta));
-    // verilator coverage_on
 
     // -- Stage B2: the one pending unmap add + the theta packer-input assembly (the magnitude path is separate now).
     reg              b2_valid;
@@ -844,9 +765,7 @@ module zkf_atan2 #(
     // 2**(e_den + 2 - (XF+KINV_S)): M = x_K*kinv_mag at scale 2**-(XF+KINV_S), the 1/4 pre-scale undone (+2). No +BIAS
     // (dv_eden is already biased), EXP_IS_BIASED-packed -- bit-identical to the former p2_mexp.
     localparam signed [WEU-1:0] MAG_EXP_OFFS = (WMAG - 1) - (XF + KINV_S) + 2;
-    // verilator coverage_off
     wire signed [WEU-1:0] mag_be_exp = $signed({{(WEU-WE){dv_eden[WE-1]}}, dv_eden}) + MAG_EXP_OFFS;
-    // verilator coverage_on
     wire             mag_be_issue = mag_ov;                 // MAG product just returned -> issue magnitude
     wire             share_iv     = mag_be_issue | b2_valid;
     wire             share_is_th  = b2_valid;               // tag: 1 = theta (mutually exclusive with mag_be_issue)
@@ -864,11 +783,9 @@ module zkf_atan2 #(
     // the special descriptor {special, sp_sign, spk, sp_mag} is read DIRECTLY from the held dv_* regs at the
     // output (see below), so it is not carried through the f2f pipe -- shrinking the sideband from WFULL+5 to a single
     // bit.
-    // verilator coverage_off
     wire [WMAG-1:0]       share_mag = share_is_th ? b2_tmag  : pmul_p;
     wire signed [WEU-1:0] share_exp = share_is_th ? b2_texp  : mag_be_exp;
     wire                  share_sgn = share_is_th ? b2_tsign : 1'b0;
-    // verilator coverage_on
     localparam integer WSB2 = 1;                        // {tag} only (the special descriptor is read direct, below)
     wire [WSB2-1:0]  share_sb = share_is_th;
     wire             be_ov;
@@ -897,30 +814,19 @@ module zkf_atan2 #(
     wire             out_special  = dv_special;
     wire             out_sp_sign  = dv_sp_sign;
     wire [2:0]       out_spk      = dv_spk;
-    // verilator coverage_off
-    // Special-case packed magnitude: its sign bit (WFULL-1 at the widest atan2 coverage format w8m24) is forced 0
-    // because the magnitude is non-negative, so this top bit never toggles.
     wire [WFULL-1:0] out_sp_mag   = dv_sp_mag;
-    // verilator coverage_on
     // Latch the magnitude's packed numeric result when the MAG pass emerges (it returns before theta); held until the
     // theta pass emerges, when both outputs are paired. Pure datapath: only sampled in lockstep with be_valid (reset).
-    // verilator coverage_off
-    // Latched packed-magnitude numeric result: its sign bit (WFULL-1 at the widest atan2 coverage format w8m24) is
-    // forced 0 because hypot is non-negative, so this top bit never toggles.
     reg [WFULL-1:0]  mag_num_r;
-    // verilator coverage_on
     always @(posedge clk) begin
         if (be_ov && !out_tag) mag_num_r <= be_num;
     end
     // Deferred special-case theta: turn8's biased-exponent add runs here, off every register cone. Equivalent to the
     // previous front-end turn8 (the inputs are unchanged). The special override (from the held dv_* descriptor) selects
     // the exact special-case theta/mag for BOTH outputs.
-    // verilator coverage_off
     // Special-case theta is turn8 of a per-special-case octant/sign code: it selects among a fixed set of constant
-    // turn bodies (0, +/-1/8, +/-1/4, +/-1/2), so the lower body bits are compile-time constants per special case and
-    // do not toggle in the special-mux output.
+    // turn bodies (0, +/-1/8, +/-1/4, +/-1/2).
     wire [WFULL-1:0] out_sp_theta = turn8(out_sp_sign, out_spk);
-    // verilator coverage_on
     wire             be_valid = be_ov & out_tag;            // theta emergence == the (unchanged) output-valid cycle
     // Canonicalize the generic half-turn. Near the negative-x axis (finite x<0, |y| -> 0) the generic magnitude rounds
     // to 1/2 turn with sign = sy, packing the out-of-range -1/2. The documented range is the half-open (-0.5, +0.5],
@@ -931,19 +837,11 @@ module zkf_atan2 #(
     // magnitude has a strictly smaller exponent) -- a WEXP-wide exponent compare suffices, no full-width equality.
     // turn8(0,4) is the config-correct +1/2 body (computed identically to the live k==4 special path; its TURN8_Z4
     // underflow branch is unreachable for the legal WEXP>=2), so its exponent field is the correct reference.
-    // verilator coverage_off
-    // half_pos is a compile-time constant (turn8 of the fixed k==4 body), so its bits never toggle -- suppress its
-    // toggle coverage like the other constant cones in this module. be_neg_half / be_num_canon below DO toggle.
     wire [WFULL-1:0] half_pos     = turn8(1'b0, 3'd4);
-    // verilator coverage_on
     wire             be_neg_half  = be_num[WFULL-1] & (be_num[WFULL-2:WFRAC] == half_pos[WFULL-2:WFRAC]);
     wire [WFULL-1:0] be_num_canon = {be_num[WFULL-1] & ~be_neg_half, be_num[WFULL-2:0]};
     wire [WFULL-1:0] be_theta = out_special ? out_sp_theta : be_num_canon;
-    // verilator coverage_off
-    // Magnitude sign bit (WFULL-1 at the widest atan2 coverage format w8m24): hypot is non-negative, so the packed
-    // magnitude's sign bit is forced 0 and never toggles.
     wire [WFULL-1:0] be_mag_o = out_special ? out_sp_mag   : mag_num_r;
-    // verilator coverage_on
 
     // ================================================================================================================
     // Output handshake with back-pressure. One transaction in flight; the result waits for out_ready. With out_ready
@@ -957,6 +855,7 @@ module zkf_atan2 #(
     generate
         if (STAGE_OUTPUT == 0) begin : g_out_comb
             reg              pending;
+            // Backpressure-hold registers: per-PR configs keep out_ready high, so the hold branch is deep-only.
             // verilator coverage_off
             reg [WFULL-1:0]  hold_theta, hold_mag;
             // verilator coverage_on
@@ -974,9 +873,7 @@ module zkf_atan2 #(
             assign mag       = pending ? hold_mag   : be_mag_o;
         end else begin : g_out_reg
             reg              r_valid;
-            // verilator coverage_off
             reg [WFULL-1:0]  r_theta, r_mag;
-            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst)            r_valid <= 1'b0;
                 else if (be_valid)  r_valid <= 1'b1;

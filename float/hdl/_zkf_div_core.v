@@ -29,29 +29,22 @@ module _zkf_div_core #(
     output reg                            force_zero,
     output reg                            force_inf,
     output reg signed [WEXP_UNBIASED-1:0] exp_unbiased,
-    // verilator coverage_off
-    // Output significand's hidden-bit MSB is structurally 1 (never toggles 1->0).
     output reg                 [WMAN-1:0] significand,
-    // verilator coverage_on
     output reg                            guard,
     output reg                            round,
     output reg                            sticky,
     output reg                            div0,
     output reg signed [WEXP_UNBIASED-1:0] exp_diff,
     output reg                 [QFRAC:0]  raw,
-    // verilator coverage_off
     // Final delayed divisor significand, exposed for consumers that derive residuals from the quotient stream.
     output reg                 [WMAN-1:0] den,
-    // verilator coverage_on
     output reg                 [WMAN-1:0] partial_rem
 );
-    // verilator coverage_off
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
     endgenerate
-    // verilator coverage_on
 
     localparam WFRAC         = WMAN - 1;
     localparam WFULL         = WEXP + WMAN;
@@ -83,11 +76,8 @@ module _zkf_div_core #(
     wire            result_zero   = a_zero || b_inf;
     wire            result_inf    = !a_zero && !b_inf && (b_zero || a_inf);
     wire            result_sign   = b_zero ? a_sign : (a_sign ^ b_sign);
-    // Hidden-bit MSB is structurally 1; fractions checked via the input ports.
-    // verilator coverage_off
     wire [WMAN-1:0] a_significand = {1'b1, a_frac};
     wire [WMAN-1:0] b_significand = {1'b1, b_frac};
-    // verilator coverage_on
 
     // Emit the integer quotient bit before the radix-4 stages. Since both significands are in [1, 2),
     // this bit is the only possible integer part, and the initial remainder is strictly below the denominator.
@@ -95,11 +85,9 @@ module _zkf_div_core #(
     wire  [WMAN-1:0] initial_rem  = initial_bit ? (a_significand - b_significand) : a_significand;
     wire [WREM4-1:0] initial_den3 = {1'b0, b_significand, 1'b0} + {2'b00, b_significand};  // x3
 
-    // Zero-extension padding of non-negative exponents (high bits constant 0).
-    // verilator coverage_off
+    // Zero-extension padding of non-negative exponents.
     wire signed [WEXP_UNBIASED-1:0] a_exp_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, a_exp};
     wire signed [WEXP_UNBIASED-1:0] b_exp_ext = {{(WEXP_UNBIASED-WEXP){1'b0}}, b_exp};
-    // verilator coverage_on
     wire signed [WEXP_UNBIASED-1:0] decoded_exp_unbiased = a_exp_ext - b_exp_ext;
 
     // Stage zero keeps input decode/classification and the first radix-4 digit off the same path. It also
@@ -115,10 +103,7 @@ module _zkf_div_core #(
     reg                            r_div0         [0:QSTAGES];
     // Carry den and 3*den through the stages to keep each digit resolver free of repeated WMAN-wide adders.
     // This costs FFs, but it preserves the short per-stage subtract/compare structure that sets divider timing.
-    // verilator coverage_off
-    // Divisor carried through the stages: its hidden-bit MSB is structurally 1, so that bit never toggles.
     reg                 [WMAN-1:0] r_den          [0:QSTAGES];
-    // verilator coverage_on
     reg                [WREM4-1:0] r_den3         [0:QSTAGES];
     reg                 [WMAN-1:0] r_rem          [0:QSTAGES];
     reg                            r_raw0;
@@ -203,22 +188,14 @@ module _zkf_div_core #(
     wire            final_sticky_hi = final_tail_hi || final_rem_sticky;
     wire            final_sticky_lo = final_tail_lo || final_rem_sticky;
     // Moving this into stage zero makes initial_bit's significand compare feed the exponent sideband path.
-    // verilator coverage_off
-    // final_exp_adjust is 0 or 1 in a WEXP_UNBIASED-wide signed field (only the low bit toggles); the
-    // high bits are structurally constant. The exponent it feeds is covered downstream.
     wire signed [WEXP_UNBIASED-1:0] final_exp_adjust = final_high ? ZERO_EXT : ONE_EXT;
-    // verilator coverage_on
 
     generate
         if (TAIL_HI_WIDTH > 0) begin : g_final_tail_hi
             assign final_tail_hi = |final_raw[TAIL_HI_WIDTH-1:0];
-        // verilator coverage_off
         end else begin : g_no_final_tail_hi
-            // Unreachable for any valid WMAN >= 4: QFRAC >= WMAN + 2 by construction, so
-            // TAIL_HI_WIDTH = QFRAC - WMAN - 1 >= 1 always. This branch exists for generate-completeness.
             assign final_tail_hi = 1'b0;
         end
-        // verilator coverage_on
 
         if (TAIL_LO_WIDTH > 0) begin : g_final_tail_lo
             assign final_tail_lo = |final_raw[TAIL_LO_WIDTH-1:0];
@@ -239,10 +216,7 @@ module _zkf_div_core #(
         force_zero   <= r_force_zero[QSTAGES];
         force_inf    <= r_force_inf[QSTAGES];
         exp_unbiased <= r_exp_unbiased[QSTAGES] - final_exp_adjust;
-        // output significand's hidden-bit MSB is structurally 1.
-        // verilator coverage_off
         significand  <= final_high ? final_significand_hi : final_significand_lo;
-        // verilator coverage_on
         guard        <= final_high ? final_guard_hi : final_guard_lo;
         round        <= final_high ? final_round_hi : final_round_lo;
         sticky       <= final_high ? final_sticky_hi : final_sticky_lo;
@@ -270,33 +244,16 @@ endmodule
 
 // Resolve one radix-4 quotient digit using parallel candidate subtracts.
 module _zkf_div_radix4_step#(parameter WMAN = 18) (
-    // verilator coverage_off
-    // Divisor significand's hidden-bit MSB is structurally 1 (never toggles 1->0).
     input wire [WMAN-1:0] den,
-    // verilator coverage_on
-    // verilator coverage_off
-    // 3*denominator candidate's top bits beyond the divisor magnitude for the covered formats: at the exercised WMAN
-    // these high bits exceed the magnitude that 3*den ever reaches, so they never toggle.
     input wire [WMAN+1:0] den3,
-    // Remainder datapath top bit beyond the divisor magnitude for the covered formats: the running remainder never
-    // grows into this high bit at the exercised WMAN.
     input wire [WMAN-1:0] rem,
-    // verilator coverage_on
 
-    // verilator coverage_off
-    // Next-remainder datapath top bit beyond the divisor magnitude for the covered formats (mirrors rem above): the
-    // selected remainder never grows into this high bit at the exercised WMAN.
     output wire [WMAN-1:0] rem_next,
-    // verilator coverage_on
     output wire      [1:0] digit
 );
     localparam WREM4 = WMAN + 2;
     localparam WDIFF = WREM4 + 1;
 
-    // verilator coverage_off
-    // Radix-4 candidate operands/subtractions: den1/den2/rem4 carry constant shift-pad bits and the
-    // diff* high bits are structurally constant (the digit fits in 2 bits). The digit-selection borrows
-    // (ge1/ge2/ge3) and the selected rem_next output below carry the behaviour and stay covered.
     wire [WREM4-1:0] den1 = {2'b00, den};
     wire [WREM4-1:0] den2 = {1'b0, den, 1'b0};
     wire [WREM4-1:0] rem4 = {rem, 2'b00};
@@ -304,7 +261,6 @@ module _zkf_div_radix4_step#(parameter WMAN = 18) (
     wire [WDIFF-1:0] diff1 = {1'b0, rem4} - {1'b0, den1};
     wire [WDIFF-1:0] diff2 = {1'b0, rem4} - {1'b0, den2};
     wire [WDIFF-1:0] diff3 = {1'b0, rem4} - {1'b0, den3};
-    // verilator coverage_on
     wire             ge1   = !diff1[WREM4];
     wire             ge2   = !diff2[WREM4];
     wire             ge3   = !diff3[WREM4];
