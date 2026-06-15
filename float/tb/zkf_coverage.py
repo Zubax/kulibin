@@ -115,25 +115,6 @@ def merge_coverage(build_dir: Path, output_dir: Path) -> Path:
     return info_path
 
 
-def uncovered_lines(info_path: Path) -> dict[str, list[int]]:
-    """Uncovered executable lines from the merged LCOV info (historical --gate path)."""
-    missing: dict[str, list[int]] = defaultdict(list)
-    current: str | None = None
-    with info_path.open() as fp:
-        for raw in fp:
-            line = raw.strip()
-            if line.startswith("SF:"):
-                source = line[3:]
-                current = source if is_zkf_source(source) else None
-            elif current and line.startswith("DA:"):
-                lineno_text, hits_text = line[3:].split(",", 1)
-                if int(hits_text) == 0:
-                    missing[Path(current).name].append(int(lineno_text))
-            elif line == "end_of_record":
-                current = None
-    return {name: sorted(lines) for name, lines in sorted(missing.items())}
-
-
 # --------------------------------------------------------------------------------------------------
 # Raw coverage.dat parsing for branch and toggle points.
 # --------------------------------------------------------------------------------------------------
@@ -313,7 +294,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, default=Path("build/float/verilator"))
     parser.add_argument("--output-dir", type=Path, default=Path("build/float/coverage"))
-    parser.add_argument("--gate", action="store_true", help="fail on uncovered LINES (per-PR behaviour)")
+    parser.add_argument("--gate", action="store_true",
+                        help="per-PR tier: fail on uncovered LINE points only (branch is gated by --full; "
+                             "toggle is advisory)")
     parser.add_argument("--full", action="store_true",
                         help="deep tier: fail on uncovered LINE or BRANCH points; report toggle as advisory")
     return parser.parse_args()
@@ -323,7 +306,6 @@ def main() -> int:
     args = parse_args()
     try:
         info_path = merge_coverage(args.build_dir, args.output_dir)
-        line_missing = uncovered_lines(info_path)
         genhtml_ok = run_genhtml(info_path, args.output_dir)
 
         points = merged_points(args.build_dir)
@@ -362,14 +344,24 @@ def main() -> int:
               f"non-fatal). Report: {args.output_dir / 'index.html'}")
         return 0
 
-    # Default / --gate: line-only (historical behaviour).
-    if line_missing:
-        print("[float-coverage] uncovered ZKF RTL lines:", file=sys.stderr)
-        for name, lines in line_missing.items():
-            print(f"  {name}: {lines}", file=sys.stderr)
+    # Default / --gate (per-PR): gate on uncovered LINE points only, ptype-aware. Branch coverage is enforced at
+    # the deep tier (--full); toggle coverage is advisory everywhere and is never gated. Gating on the raw merged
+    # LCOV info instead would be ptype-blind -- it collapses line/branch/toggle into one DA record per source line,
+    # so an isolated uncovered toggle point (e.g. a control input the per-PR set never asserts) would fail the
+    # line gate. That ptype-blindness was the cause of the prior `// verilator coverage_off` sprawl.
+    line_uncovered = uncovered["v_line"]
+    if line_uncovered:
+        report("line", line_uncovered)
+        if args.gate:
+            print("[float-coverage] To close: add a config/vector that exercises the uncovered line, or suppress a "
+                  "genuinely-unreachable line in the RTL with `// verilator coverage_off`/`coverage_on`.",
+                  file=sys.stderr)
         return 1 if args.gate else 0
 
-    print(f"[float-coverage] PASS: report written to {args.output_dir / 'index.html'}")
+    nbr = len(uncovered["v_branch"])
+    ntog = len(uncovered["v_toggle"])
+    print(f"[float-coverage] PASS: line covered ({nbr} branch + {ntog} toggle point(s) uncovered -- not gated at "
+          f"this tier; run --full for the branch gate). Report: {args.output_dir / 'index.html'}")
     return 0
 
 

@@ -618,11 +618,8 @@ module zkf_sincos #(
     generate
         if (STAGE_OUTPUT == 0) begin : g_out_comb
             reg              pending;
-            // Backpressure-hold registers: per-PR configs keep out_ready high, so the hold branch is deep-only.
-            // verilator coverage_off
             reg [WFULL-1:0]  hold_sin, hold_cos;
             reg [1:0]        hold_quad;
-            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) pending <= 1'b0;
                 else if (be_valid & ~out_ready) begin

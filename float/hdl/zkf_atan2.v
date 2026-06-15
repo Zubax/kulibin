@@ -439,10 +439,7 @@ module zkf_atan2 #(
     // Vectoring CORDIC engine (MODE=1), per-WMAN table.
     // ================================================================================================================
     wire                 cd_done;
-    // Unused CORDIC sideband tie-off: never read, so its declaration line takes no per-PR line coverage.
-    // verilator coverage_off
     wire [WSB-1:0]       cd_sb_unused;
-    // verilator coverage_on
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
@@ -855,10 +852,7 @@ module zkf_atan2 #(
     generate
         if (STAGE_OUTPUT == 0) begin : g_out_comb
             reg              pending;
-            // Backpressure-hold registers: per-PR configs keep out_ready high, so the hold branch is deep-only.
-            // verilator coverage_off
             reg [WFULL-1:0]  hold_theta, hold_mag;
-            // verilator coverage_on
             always @(posedge clk) begin
                 if (rst) pending <= 1'b0;
                 else if (be_valid & ~out_ready) begin

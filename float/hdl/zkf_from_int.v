@@ -97,10 +97,7 @@ module zkf_from_int #(
     // EXP_IS_BIASED=1 so the packer skips the bias add), and the _zkf_pack output stage. STAGE_NORMALIZE and
     // STAGE_PACK forward directly to the helper. WSB=1 is unused; sb_in is tied to 1'b0 and sb_out is discarded.
     localparam integer EXP_BIASED_TOP = EXP_BIASED_MAX;
-    // sb_out is discarded (WSB=1 unused); its tie-off declaration takes no per-PR line coverage.
-    // verilator coverage_off
     wire sb_out_unused;
-    // verilator coverage_on
     localparam [WEU-1:0] EXP_BIASED_TOP_EXT = EXP_BIASED_TOP[WEU-1:0];
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN),

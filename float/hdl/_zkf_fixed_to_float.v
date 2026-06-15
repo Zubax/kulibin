@@ -95,10 +95,7 @@ module _zkf_fixed_to_float #(
         .y(norm_aligned)
     );
     wire                    sign_d       = sb_pipe_out[PIPE_W-1];
-    // force_zero is asserted only in the deep coverage sweep; per-PR configs never drive it -> deep-only line.
-    // verilator coverage_off
     wire                    force_zero_d = sb_pipe_out[PIPE_W-2];
-    // verilator coverage_on
     wire                    force_inf_d  = sb_pipe_out[PIPE_W-3];
     wire signed [WEU-1:0]   exp_offset_d = sb_pipe_out[WSB +: WEU];
     wire [WSB-1:0]          sb_d         = sb_pipe_out[WSB-1:0];

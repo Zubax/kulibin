@@ -90,10 +90,8 @@ module zkf_exp2 #(
     wire             rb_valid;
     // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
     // feed r0_f directly. rb_guard_unused is structurally zero for FF>0 and intentionally ignored.
-    // verilator coverage_off
     wire [WEU+FF-1:0] rb_mag;
     wire             rb_guard_unused;          // FF>0 -> structurally 0; not consumed
-    // verilator coverage_on
     // Lost-sticky reduction path: rb_lost_sticky asserts only when the float->fixed reduction drops nonzero low bits,
     // which needs a wide exponent (e well below -WMAN).
     wire             rb_lost_sticky;
