@@ -1,7 +1,9 @@
 ## Maximum-verification CI for float/: every simulation testbench, every algebraic property test, every
 ## formal-equivalence proof under float/proof/, and the full parameter-sweep coverage closure. Slow, so it runs only
 ## on pushes that modify float/ AND are either on `main` or carry the "#ci-float" marker in the commit message. The
-## cheap `verify.yml` workflow gates every PR.
+## cheap `verify.yml` workflow gates every PR with the per-PR baseline (lint + `make verify` + line-coverage gate) and
+## runs on the same pushes, so this workflow does not repeat that baseline -- it adds only the deep-tier sweeps,
+## algebraic properties, accuracy oracle, and formal proofs.
 ##
 ## The maximum suite is split across jobs because GitHub caps a single job at 6h. The final `verify-deep` job aggregates
 ## the split jobs, preserving one high-level check while keeping each shard under the timeout.
@@ -19,44 +21,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  verify-base:
-    if: |
-      github.ref == 'refs/heads/main' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '#ci-float')
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
-      options: --user root      # See verify.yml for why root is needed.
-    timeout-minutes: 360
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Enable parallel matrix (best-effort)
-        continue-on-error: true
-        run: python3 -m pip install --no-input --break-system-packages pytest-xdist || python3 -m pip install --no-input pytest-xdist
-
-      - name: Lint
-        run: make lint
-
-      - name: Run baseline verification
-        run: make verify FLOAT_PRUNE_BUILDS=1
-
-      - name: Upload baseline coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: float-baseline-coverage-report
-          path: build/float/coverage/
-          retention-days: 30
-
+  # The deep+icarus sweep is ~790 pure pass/fail correctness configs and is the workflow's long pole.
+  # Icarus produces no coverage artifacts, so it shards cleanly: FLOAT_SHARD='k/N' tiles the matrix by a
+  # stable per-config hash with no cross-shard merge. Bump the shard count to trade runners for wall-clock
+  # (the practical floor is the ~30m float-accuracy job; ~6 shards reaches it).
   float-extended-icarus:
     if: |
       github.ref == 'refs/heads/main' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.head_commit.message, '#ci-float')
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/4', '2/4', '3/4', '4/4']
     container:
       image: ghcr.io/zubax/zubax-fpga-toolchain:2026-06-14
       options: --user root
@@ -69,8 +47,10 @@ jobs:
         continue-on-error: true
         run: python3 -m pip install --no-input --break-system-packages pytest-xdist || python3 -m pip install --no-input pytest-xdist
 
-      - name: Run extended Icarus sweep
+      - name: Run extended Icarus sweep (shard ${{ matrix.shard }})
         run: make verify-float-extended-icarus FLOAT_PRUNE_BUILDS=1
+        env:
+          FLOAT_SHARD: ${{ matrix.shard }}
 
   float-extended-verilator:
     if: |
@@ -217,7 +197,6 @@ jobs:
         contains(github.event.head_commit.message, '#ci-float')
       )
     needs:
-      - verify-base
       - float-extended-icarus
       - float-extended-verilator
       - float-properties
@@ -227,7 +206,6 @@ jobs:
     steps:
       - name: Check split deep verification jobs
         run: |
-          test '${{ needs.verify-base.result }}' = 'success'
           test '${{ needs.float-extended-icarus.result }}' = 'success'
           test '${{ needs.float-extended-verilator.result }}' = 'success'
           test '${{ needs.float-properties.result }}' = 'success'

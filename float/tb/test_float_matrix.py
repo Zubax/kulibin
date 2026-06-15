@@ -13,6 +13,7 @@ the former Makefile recipe loops and run_extended.sh, which duplicated the fuses
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -89,8 +90,32 @@ def _prune_successful_build(root: Path, keep_coverage: bool) -> None:
     shutil.move(str(tmp), str(root))
 
 
+def _shard_keep():
+    """Optional deterministic sharding for parallel CI jobs.
+
+    ``FLOAT_SHARD='k/N'`` keeps only configs whose stable hash falls in shard k (1-indexed) of N; unset
+    keeps everything (so a bare ``pytest`` / ``make verify`` is unchanged). The partition uses a stable
+    hash of ``run.id`` -- NOT Python's salted ``hash()`` -- so every shard process (each a separate CI job)
+    partitions identically and the shards exactly tile the matrix with no overlap or gaps. Sharding is
+    applied to the whole matrix, so it composes with any ``-m`` marker selection: each shard runs its
+    slice of whatever tier/sim was selected. Used to fan the long deep+icarus sweep across runners; the
+    Icarus sweep is pure pass/fail correctness (no coverage merge), so no cross-shard reconciliation is
+    needed."""
+    spec = os.environ.get("FLOAT_SHARD", "").strip()
+    if not spec:
+        return lambda run: True
+    k_text, _, n_text = spec.partition("/")
+    k, n = int(k_text), int(n_text)
+    if not (n >= 1 and 1 <= k <= n):
+        raise ValueError(f"FLOAT_SHARD must be 'k/N' with 1 <= k <= N, got {spec!r}")
+    return lambda run: int(hashlib.md5(run.id.encode()).hexdigest(), 16) % n == (k - 1)
+
+
 def _parametrized():
+    keep = _shard_keep()
     for run in build_matrix():
+        if not keep(run):
+            continue
         marks = [getattr(pytest.mark, run.tier), getattr(pytest.mark, run.sim)]
         yield pytest.param(run, id=run.id, marks=marks)
 
