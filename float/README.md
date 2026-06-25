@@ -58,12 +58,12 @@ across several tiles; this is significant when wide operands over 2x the native 
 If not specified, the library will split wide multiplication into equal-width operands, which is not always optimal.
 Common multiplier operand widths frequently found in FPGAs are 16, 18, and 24 bits.
 
-Every sequential module exposes a `LATENCY` parameter that defaults to the module's exact register-stage count
-for the current configuration. It is not a tuning knob -- changing it does not change the hardware. Its purpose is
-to let a latency-sensitive consumer pin down the latency it relies on: compute the value locally and pass it in.
+Every sequential module exposes a `LATENCY` parameter. It is not a tuning knob; changing it does not change the hardware.
+Its purpose is to let a latency-sensitive consumer pin down the latency it relies on: compute the value locally and pass it in.
 The module fails synthesis if the supplied value disagrees with its real stage count, so an internal change that shifts
 the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
 Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
+A zero `LATENCY` is a special value indicating that the latency should not be checked (the default).
 
 The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).

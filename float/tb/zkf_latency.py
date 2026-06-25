@@ -205,7 +205,7 @@ def sincos_latency(
     # plus STAGE_NORMALIZE + STAGE_PACK. out_ready adds nothing when held high.
     # Decoupled z-path (parallel): the z-recurrence runs at full rate (k cycles), reaching z_done ZGAP = iter_cycles - k
     # ahead of done, so PHI is issued early and its PMUL_L = 1+STAGE_PRODUCT pipeline overlaps the CORDIC; the back-end
-    # skips the P_PHI wait, cutting SAVED = min(PMUL_L, ZGAP). Only legal half-rate. Mirrors ZKF_SINCOS_LATENCY exactly.
+    # skips the P_PHI wait, cutting SAVED = min(PMUL_L, ZGAP). Only legal half-rate. Mirrors zkf_sincos LATENCY_REF.
     if stage_product not in (0, 1, 2, 3, 4):
         raise ValueError(f"stage_product must be 0..4, got {stage_product}")
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
@@ -247,7 +247,7 @@ def atan2_latency(
     # cycles (data-independent: the same divide runs for the bypass and the residual, F = 2*STEPS >= XF quotient bits);
     # STAGE_PRODUCT extra cycles in the shared _zkf_pmul (on the post-divide QT product, the only one on the critical
     # path); the optional STAGE_INPUT register (+1); STAGE_NORMALIZE + STAGE_PACK in the shared _zkf_fixed_to_float
-    # back-end; plus the public theta/mag/out_valid STAGE_OUTPUT register. Mirrors `ZKF_ATAN2_LATENCY exactly.
+    # back-end; plus the public theta/mag/out_valid STAGE_OUTPUT register. Mirrors zkf_atan2 LATENCY_REF exactly.
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
     spec = TRIG_SPECS[wman]
