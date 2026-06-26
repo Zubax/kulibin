@@ -18,7 +18,7 @@
 `default_nettype none
 
 module zkf_mul_ilog2_const #(
-    parameter         WEXP         = 6,     // exponent field width
+    parameter         WEXP         = 6,
     parameter         WMAN         = 18,    // significand precision including the hidden bit
     parameter integer K            = 0,     // signed integer exponent shift: y = a * 2^K
     parameter         STAGE_INPUT  = 0,     // 0 = combinational input; 1 = latch input before logic (+1 cycle)

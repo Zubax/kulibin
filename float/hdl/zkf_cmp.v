@@ -19,9 +19,9 @@ module zkf_cmp #(
     input wire [WEXP+WMAN-1:0] b,
 
     output reg out_valid,
-    output reg a_gt_b,      // a > b
-    output reg a_eq_b,      // a = b
-    output reg a_lt_b       // a < b
+    output reg a_gt_b,
+    output reg a_eq_b,
+    output reg a_lt_b
 );
     localparam WFULL = WEXP + WMAN;
 

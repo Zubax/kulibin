@@ -26,7 +26,7 @@
 `default_nettype none
 
 module zkf_fma #(
-    parameter WEXP            = 6,  // exponent field width
+    parameter WEXP            = 6,
     parameter WMAN            = 18, // significand precision including the hidden bit
     parameter WMULTIPLIER     = 0,  // forwarded to _zkf_pmul
     parameter STAGE_INPUT     = 0,  // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
@@ -190,7 +190,7 @@ module zkf_fma #(
     wire       [WMAG-1:0] d_p_key;
     wire       [WMAN-1:0] d_c_key;
     wire signed [WEU-1:0] d_ep_eff;
-    wire signed [WEU-1:0] d_ec_eff;  // c effective exponent
+    wire signed [WEU-1:0] d_ec_eff;
     wire                  d_p_sign;
     wire                  d_c_sign;
     wire                  d_p_inf;
@@ -212,7 +212,7 @@ module zkf_fma #(
             reg       [WMAG-1:0] r_p_key;
             reg       [WMAN-1:0] r_c_key;
             reg signed [WEU-1:0] r_ep_eff;
-            reg signed [WEU-1:0] r_ec_eff;  // c effective exponent
+            reg signed [WEU-1:0] r_ec_eff;
             reg                  r_p_sign;
             reg                  r_c_sign;
             reg                  r_p_inf;

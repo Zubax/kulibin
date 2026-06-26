@@ -29,7 +29,7 @@
 `default_nettype none
 
 module zkf_exp2 #(
-    parameter WEXP          = 6,    // exponent field width
+    parameter WEXP          = 6,
     parameter WMAN          = 18,   // significand precision including the hidden bit
     parameter WMULTIPLIER   = 0,    // see _zkf_pmul
     parameter STAGE_INPUT   = 0,    // 0: combinational inputs;   1: latch inputs before any logic, +1 stage

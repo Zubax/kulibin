@@ -20,8 +20,8 @@ module zkf_sort #(
     input wire [WEXP+WMAN-1:0] b,
 
     output reg                 out_valid,
-    output reg [WEXP+WMAN-1:0] min,         // min(a,b)
-    output reg [WEXP+WMAN-1:0] max          // max(a,b)
+    output reg [WEXP+WMAN-1:0] min,
+    output reg [WEXP+WMAN-1:0] max
 );
     localparam WFULL = WEXP + WMAN;
 

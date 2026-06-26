@@ -78,7 +78,6 @@ module zkf_from_int #(
     // Stage 1: register sign and magnitude. Reset only validity; payload free-runs.
     reg            s1_valid;
     reg            s1_sign;
-    // WX-wide magnitude reg.
     reg [WX-1:0]   s1_mag_ext;
 
     always @(posedge clk) begin

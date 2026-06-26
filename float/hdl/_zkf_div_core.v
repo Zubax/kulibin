@@ -11,7 +11,7 @@
 `default_nettype none
 
 module _zkf_div_core #(
-    parameter WEXP          = 6,      // exponent field width
+    parameter WEXP          = 6,
     parameter WMAN          = 18,     // significand precision including the hidden bit
     parameter QFRAC_BASE    = WMAN + 2,
     parameter QFRAC         = QFRAC_BASE + (QFRAC_BASE % 2),

@@ -14,7 +14,7 @@
 `default_nettype none
 
 module zkf_div #(
-    parameter WEXP         = 6,    // exponent field width
+    parameter WEXP         = 6,
     parameter WMAN         = 18,   // significand precision including the hidden bit
     parameter STAGE_INPUT  = 0,    // 0 = combinational inputs; 1 = latched inputs (+1 cycle)
     parameter STAGE_PACK   = 0,    // 0 = comb pack inputs; 1 = register pack inputs (+1 cycle)
