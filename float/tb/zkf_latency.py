@@ -55,7 +55,7 @@ def add_latency(
 ) -> int:
     return (
         4
-        + _enabled(stage_input)
+        + _count(stage_input)  # STAGE_INPUT is an unbounded count of input register stages (matches RTL LATENCY_REF)
         + _enabled(stage_decode)
         + _enabled(stage_align)
         + _count(stage_normalize)

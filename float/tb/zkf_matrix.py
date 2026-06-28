@@ -377,7 +377,11 @@ def _per_pr(sim, out: list) -> None:
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
         out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1,
-                           si=1, so=1))
+                           si=2, so=1))
+        # Arbitrary STAGE_INPUT (>1 dummy input stages): isolated exhaustive (si=3) + a wider random (si=2) exercise
+        # the counted-latency bookkeeping and the multi-stage input pipe beyond the former {0,1} range.
+        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
+        out.append(_binary(op, sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
         # STAGE_NORMALIZE knob (new): forwards to _zkf_normshift.STAGE_SPLIT for the close-cancel path. SN=1
         # matches today's silent SS=1 (same latency, different register placement); SN=2 adds an s2x catch-up
         # cycle. The normshift needs NL4 >= 3 for SN=2, which requires NINPUT = WMAN+3 >= 11 -> WMAN >= 8.
@@ -724,7 +728,9 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary("mul", s, "deep", base, w, m, "exhaustive", 0, sp=sp))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=0, sa=0))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
+        out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
+        out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
         out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
     # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default and all-on staging toggles
