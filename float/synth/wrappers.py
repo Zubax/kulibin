@@ -435,7 +435,7 @@ module {spec.top} (
     output wire                     sign,
     output wire                     force_zero,
     output wire                     force_inf,
-    output wire signed [{wexp_unbiased - 1}:0] exp_unbiased,
+    output wire signed [{wexp_unbiased - 1}:0] exp_biased,
     output wire [{spec.wman - 1}:0] significand,
     output wire                     guard,
     output wire                     round,
@@ -456,7 +456,7 @@ module {spec.top} (
     wire                            dut_sign;
     wire                            dut_force_zero;
     wire                            dut_force_inf;
-    wire signed [{wexp_unbiased - 1}:0] dut_exp_unbiased;
+    wire signed [{wexp_unbiased - 1}:0] dut_exp_biased;
     wire                 [{spec.wman - 1}:0] dut_significand;
     wire                            dut_guard;
     wire                            dut_round;
@@ -473,7 +473,7 @@ module {spec.top} (
     {SYNTH_REG_ATTR}
     reg                            r_force_inf;
     {SYNTH_REG_ATTR}
-    reg signed [{wexp_unbiased - 1}:0] r_exp_unbiased;
+    reg signed [{wexp_unbiased - 1}:0] r_exp_biased;
     {SYNTH_REG_ATTR}
     reg                 [{spec.wman - 1}:0] r_significand;
     {SYNTH_REG_ATTR}
@@ -491,7 +491,7 @@ module {spec.top} (
     assign sign         = r_sign;
     assign force_zero   = r_force_zero;
     assign force_inf    = r_force_inf;
-    assign exp_unbiased = r_exp_unbiased;
+    assign exp_biased   = r_exp_biased;
     assign significand  = r_significand;
     assign guard        = r_guard;
     assign round        = r_round;
@@ -512,7 +512,7 @@ module {spec.top} (
         .sign(dut_sign),
         .force_zero(dut_force_zero),
         .force_inf(dut_force_inf),
-        .exp_unbiased(dut_exp_unbiased),
+        .exp_biased(dut_exp_biased),
         .significand(dut_significand),
         .guard(dut_guard),
         .round(dut_round),
@@ -535,7 +535,7 @@ module {spec.top} (
         r_sign          <= dut_sign;
         r_force_zero    <= dut_force_zero;
         r_force_inf     <= dut_force_inf;
-        r_exp_unbiased  <= dut_exp_unbiased;
+        r_exp_biased    <= dut_exp_biased;
         r_significand   <= dut_significand;
         r_guard         <= dut_guard;
         r_round         <= dut_round;

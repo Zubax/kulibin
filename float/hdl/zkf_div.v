@@ -61,7 +61,7 @@ module zkf_div #(
     wire                            core_sign;
     wire                            core_force_zero;
     wire                            core_force_inf;
-    wire signed [WEXP_UNBIASED-1:0] core_exp_unbiased;
+    wire signed [WEXP_UNBIASED-1:0] core_exp_biased;
     // normalized quotient significand.
     wire                 [WMAN-1:0] core_significand;
     wire                            core_guard;
@@ -79,7 +79,7 @@ module zkf_div #(
         .sign(core_sign),
         .force_zero(core_force_zero),
         .force_inf(core_force_inf),
-        .exp_unbiased(core_exp_unbiased),
+        .exp_biased(core_exp_biased),
         .significand(core_significand),
         .guard(core_guard),
         .round(core_round),
@@ -93,7 +93,7 @@ module zkf_div #(
 
     // The packer drives the external q/out_valid directly; STAGE_OUTPUT selects registered vs combinational output.
     _zkf_pack #(
-        .WEXP(WEXP), .WMAN(WMAN),
+        .WEXP(WEXP), .WMAN(WMAN), .EXP_IS_BIASED(1),
         .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_pack (
         .clk(clk),
@@ -102,7 +102,7 @@ module zkf_div #(
         .sign(core_sign),
         .force_zero(core_force_zero),
         .force_inf(core_force_inf),
-        .exp_unbiased(core_exp_unbiased),
+        .exp_unbiased(core_exp_biased),
         .significand(core_significand),
         .guard(core_guard),
         .round(core_round),
