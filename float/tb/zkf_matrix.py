@@ -569,6 +569,20 @@ def _per_pr(sim, out: list) -> None:
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))  # one-off
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
+    # Arbitrary STAGE_INPUT (>1 dummy input stages) across the generalized public modules: a latency-checked si=2 per
+    # module (+ si=3 on the multiplier) confirms the widened input pipe and the _count(stage_input) latency model agree
+    # beyond the former {0,1}. sincos/atan2 are excluded (handshake-entangled input stage; deferred).
+    for op in ("mul", "div", "cmp", "sort"):
+        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
+    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
+    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
+    out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
+    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
+    out.append(_cast("from_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
+    out.append(_cast("to_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
+    out.append(_resize(sim, "pr", "w3m4_to_w4m6", 3, 4, 4, 6, "exhaustive", 0, 2))
+    for op in ("exp2", "log2"):
+        out.append(_trans(op, sim, "pr", "w2_m16", 2, 16, "exhaustive", 0, si=2))
 
 
 def _deep_correctness(out: list) -> None:

@@ -41,7 +41,7 @@ def mul_latency(
     stage_output: int = 0,
 ) -> int:
     # stage_product (0..4) forwards to _zkf_pmul, whose latency is 1 + stage_product, so it contributes its raw count.
-    return 1 + _enabled(stage_input) + _count(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
+    return 1 + _count(stage_input) + _count(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
 
 
 def add_latency(
@@ -76,7 +76,7 @@ def fma_latency(
 ) -> int:
     return (
         5
-        + _enabled(stage_input)
+        + _count(stage_input)
         + _count(stage_product)  # forwards to _zkf_pmul (latency 1 + stage_product); contributes its raw count
         + _enabled(stage_decode)
         + _enabled(stage_align)
@@ -97,15 +97,15 @@ def div_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    return div_core_latency(wman) + _enabled(stage_input) + _enabled(stage_pack) + _enabled(stage_output)
+    return div_core_latency(wman) + _count(stage_input) + _enabled(stage_pack) + _enabled(stage_output)
 
 
 def cmp_latency(*, stage_input: int = 0) -> int:
-    return 1 + _enabled(stage_input)
+    return 1 + _count(stage_input)
 
 
 def mul_ilog2_const_latency(*, stage_input: int = 0, stage_decode: int = 0) -> int:
-    return 1 + _enabled(stage_input) + _enabled(stage_decode)
+    return 1 + _count(stage_input) + _enabled(stage_decode)
 
 
 def from_int_latency(
@@ -115,19 +115,19 @@ def from_int_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    return 1 + _enabled(stage_input) + _count(stage_normalize) + _enabled(stage_pack) + _enabled(stage_output)
+    return 1 + _count(stage_input) + _count(stage_normalize) + _enabled(stage_pack) + _enabled(stage_output)
 
 
 def to_int_latency(*, stage_input: int = 0) -> int:
-    return 4 + _enabled(stage_input)
+    return 4 + _count(stage_input)
 
 
 def resize_latency(*, stage_input: int = 0, stage_output: int = 0) -> int:
-    return _enabled(stage_input) + _enabled(stage_output)
+    return _count(stage_input) + _enabled(stage_output)
 
 
 def round_latency(*, stage_input: int = 0, stage_decode: int = 0, stage_pack: int = 0, stage_output: int = 0) -> int:
-    return _enabled(stage_input) + _enabled(stage_decode) + _enabled(stage_pack) + _enabled(stage_output)
+    return _count(stage_input) + _enabled(stage_decode) + _enabled(stage_pack) + _enabled(stage_output)
 
 
 def exp2_latency(
@@ -142,7 +142,7 @@ def exp2_latency(
     degree = TRANS_SPECS[("exp2", wman)]["d"]
     product_stages = _count(stage_product)
     return (
-        _enabled(stage_input)
+        _count(stage_input)
         + _enabled(stage_reduce)
         + 4
         + degree * (2 + product_stages)
@@ -168,7 +168,7 @@ def log2_latency(
     final_product_raw = stage_product if stage_product_final in (None, -1) else stage_product_final
     final_product_stages = _count(final_product_raw)
     return (
-        _enabled(stage_input)
+        _count(stage_input)
         + _enabled(stage_decode)
         + 5
         + final_product_stages

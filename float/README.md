@@ -36,7 +36,8 @@ other modules since they always canonicalize inputs, but it is worth noting.
 
 Most modules provide pipelining knobs, like output register selection, internal registers, etc,
 to enable tuning for the target chip. Common options seen in most modules are:
-`STAGE_INPUT` -- latch inputs (no combinational paths at the input);
+`STAGE_INPUT` -- latch inputs (no combinational paths at the input) plus optional dummy stages
+(helps in routing-congested designs);
 `STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
 others control various computation stages.
 

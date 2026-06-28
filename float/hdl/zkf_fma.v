@@ -5,6 +5,7 @@
 ///
 /// STAGE_INPUT=0: operands feed the datapath combinationally (default).
 /// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
 ///
 /// STAGE_PRODUCT selects the number of extra multiplier stages, it is forwarded to _zkf_pmul as-is, refer there.
 /// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
@@ -29,7 +30,7 @@ module zkf_fma #(
     parameter WEXP            = 6,
     parameter WMAN            = 18, // significand precision including the hidden bit
     parameter WMULTIPLIER     = 0,  // forwarded to _zkf_pmul
-    parameter STAGE_INPUT     = 0,  // 0 = combinational inputs; 1 = latch inputs before any logic (+1 cycle)
+    parameter STAGE_INPUT     = 0,  // number of input register stages (>=0); +STAGE_INPUT cycles
     parameter STAGE_PRODUCT   = 0,  // forwarded to _zkf_pmul
     parameter STAGE_DECODE    = 0,  // 0 = decode feeds compare/select combinationally; 1 = register it (+1 cycle)
     parameter STAGE_ALIGN     = 0,  // 0 = single-cycle alignment; 1 = split alignment shifter (+1 cycle)
@@ -58,9 +59,6 @@ module zkf_fma #(
         if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
-        if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
-            _zkf_invalid_stage_input u_invalid();
-        end
         if ((STAGE_DECODE != 0) && (STAGE_DECODE != 1)) begin : g_invalid_stage_decode
             _zkf_invalid_stage_decode u_invalid();
         end
@@ -87,12 +85,12 @@ module zkf_fma #(
     // magnitude is forced to 0) is always selected as the "small" operand and contributes nothing.
     localparam signed [WEU-1:0] EXP_MIN = {1'b1, {(WEU-1){1'b0}}};
 
-    // Optional input register stage: latch the operands before any combinational logic (+1 cycle when STAGE_INPUT=1).
+    // Optional input register stage(s): latch the operands before any combinational logic (+STAGE_INPUT cycles).
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
     wire [WFULL-1:0] b_q;
     wire [WFULL-1:0] c_q;
-    zkf_pipe #(.W(3*WFULL), .N(STAGE_INPUT ? 1 : 0)) u_input_pipe (
+    zkf_pipe #(.W(3*WFULL), .N(STAGE_INPUT)) u_input_pipe (
         .clk(clk), .rst(rst), .in_valid(in_valid), .in({c, b, a}),
         .out_valid(in_valid_q), .out({c_q, b_q, a_q})
     );
