@@ -9,7 +9,7 @@ The proofs run via `make formal-float`, which invokes [`run_proofs.py`](run_proo
 For each module we write:
 
 - An **independent combinational reference** under `refs/` — a Verilog transliteration of the
-  relevant Python function in `../tb/zkf_model.py`. The reference is deliberately written in a
+  relevant Python function in the reference model. The reference is deliberately written in a
   different style than the synthesisable RTL: single `always @(*)` blocks with blocking
   assignments, no pipeline, no shared helper modules. The intent is that a bug in the production
   RTL is unlikely to also be present in a fundamentally different implementation of the same
@@ -100,4 +100,4 @@ on failure it embeds links to the SBY counter-example VCDs.
      only narrowly.
 
 - The combinational references under `refs/` use `always @(*)` blocks with blocking assignments.
-  This style is what makes the references easy to audit against the Python golden in `../tb/zkf_model.py`.
+  This style is what makes the references easy to audit against the Python golden model.

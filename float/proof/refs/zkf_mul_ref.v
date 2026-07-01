@@ -1,5 +1,4 @@
 /// Combinational reference multiplier for formal equivalence proofs.
-/// Direct transliteration of mul_reference() in float/tb/zkf_model.py.
 /// Independent from zkf_mul.v in style: combinational, single always-block, no pipeline,
 /// no shared GRS-extraction expressions.
 

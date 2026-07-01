@@ -7,7 +7,7 @@ PYTHON ?= python3
 FLOAT_SEED ?= 0x9e3779b97f4a7c15
 
 FLOAT_CORE = zubax:kulibin:float
-FLOAT_PYTHONPATH = $(CURDIR)/float/tb$(if $(PYTHONPATH),:$(PYTHONPATH))
+FLOAT_PYTHONPATH = $(CURDIR)/float:$(CURDIR)/float/tb$(if $(PYTHONPATH),:$(PYTHONPATH))
 # Matrix parallelism: the per-config FuseSoC runs are independent (each builds into its own root and writes its own
 # coverage.dat), so pytest-xdist fans them across cores. FLOAT_JOBS=auto uses every core; set FLOAT_JOBS=1 to serialize.
 # xdist is loaded explicitly with -p; if not installed the run silently falls back to serial.

@@ -5,7 +5,6 @@ subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-
 Only one canonical positive zero representation exists.
 
 The bit layout is identical to IEEE 754: sign, exponent, and the significand with the MSb omitted.
-See `zkf.py` for the encoding rules and range/precision limits.
 
 See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpga-floating-point-eval>.
 

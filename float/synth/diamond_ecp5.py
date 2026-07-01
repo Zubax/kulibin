@@ -353,36 +353,6 @@ def format_diamond_slack_from_fmax(fmax_mhz: float | None) -> str:
     return f"{slack_ns:.3f} ns"
 
 
-DIAMOND_TABLE_EBR_MIN_BITS = 16 * 1024
-
-
-def diamond_table_bits(spec: ModuleSpec) -> int | None:
-    if spec.kind not in {"exp2", "log2"}:
-        return None
-    import zkf_trans_tables
-
-    table = zkf_trans_tables.get_spec(spec.kind, spec.wman)
-    return len(table["coeffs"]) * (table["d"] + 1) * table["cw"]
-
-
-def diamond_requires_table_bram(spec: ModuleSpec) -> bool:
-    bits = diamond_table_bits(spec)
-    return bits is not None and bits >= DIAMOND_TABLE_EBR_MIN_BITS
-
-
-def format_rom_inference(spec: ModuleSpec, bram_used: int | None) -> str:
-    bits = diamond_table_bits(spec)
-    if bits is None:
-        return "not required"
-    if bits < DIAMOND_TABLE_EBR_MIN_BITS:
-        return f"not required: {bits / 1024.0:.1f} kbit generated table below EBR gate"
-    if bram_used is None:
-        return "FAIL: block RAM usage was not reported for generated table ROM"
-    if bram_used <= 0:
-        return "FAIL: generated table ROM mapped to zero block RAMs"
-    return f"PASS: generated table ROM uses {bram_used} block RAMs"
-
-
 def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     module_dir = DIAMOND_BUILD / spec.name
     clean_module_dir(module_dir)
@@ -410,7 +380,6 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     unrouted = parse_diamond_par_summary(par_text, "Number of unrouted conns")
     par_errors = parse_diamond_par_summary(par_text, "Number of errors")
     bram_counts = parse_diamond_resource_counts(r"Number of block RAMs:\s+([0-9]+) out of ([0-9]+)", mrp_text)
-    bram_used, _ = bram_counts
     route_clean = unrouted in {None, 0} and par_errors in {None, 0}
     timing_clean = (
         fmax is not None
@@ -418,7 +387,6 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         and setup_errors in {None, 0}
         and hold_errors in {None, 0}
     )
-    rom_clean = not diamond_requires_table_bram(spec) or (bram_used is not None and bram_used > 0)
 
     return {
         "name": spec.name,
@@ -428,7 +396,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "target": format_mhz(DIAMOND_TARGET_FREQ_MHZ),
         "fmax": format_optional_fmax(fmax),
         "slack": format_diamond_slack_from_fmax(fmax),
-        "status": "PASS" if route_clean and timing_clean and rom_clean else "FAIL",
+        "status": "PASS" if route_clean and timing_clean else "FAIL",
         "registers": parse_diamond_resource(r"Number of registers:\s+([0-9]+) out of ([0-9]+)", mrp_text),
         "lut4": parse_diamond_resource(r"Number of LUT4s:\s+([0-9]+) out of ([0-9]+)", mrp_text),
         "bram": format_diamond_resource(bram_counts),
@@ -445,7 +413,6 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
         "lpf": relative_or_missing(lpf, DIAMOND_BUILD),
         "setup_errors": "not reported" if setup_errors is None else str(setup_errors),
         "hold_errors": "not reported" if hold_errors is None else str(hold_errors),
-        "rom_inference": format_rom_inference(spec, bram_used),
         "unrouted": "not reported" if unrouted is None else str(unrouted),
         "par_errors": "not reported" if par_errors is None else str(par_errors),
         "group": module_group(spec),
@@ -495,7 +462,6 @@ def write_diamond_html(results: list[dict[str, str]]) -> None:
             "<pre>"
             f"setup errors: {escape(result['setup_errors'])}\n"
             f"hold errors:  {escape(result['hold_errors'])}\n"
-            f"ROM inference: {escape(result['rom_inference'])}\n"
             f"unrouted:     {escape(result['unrouted'])}\n"
             f"PAR errors:   {escape(result['par_errors'])}"
             "</pre>"

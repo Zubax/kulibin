@@ -1,6 +1,4 @@
 /// Combinational reference packer for formal equivalence proofs.
-/// Direct transliteration of pack_reference() in float/tb/zkf_model.py.
-/// Style: single always @(*) with blocking assignments — formal/testbench context only.
 
 `default_nettype none
 
