@@ -246,6 +246,19 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
                 target=target, root_module=root_module)
 
 
+def _ilog2(sim, tier, base, w, m, kind, count, *, wk=None, si=None, sd=None) -> Run:
+    # zkf_mul_ilog2: k is a runtime port of width WK (default WEXP+1). WK is always passed so the RTL parameter and the
+    # bench (ZKF_WK) agree; the default width already reaches shifts that saturate to inf / flush to zero.
+    wk = wk if wk is not None else w + 1
+    vlog = [("WEXP", w), ("WMAN", m), ("WK", wk)]
+    suffix = f"_wk{wk}"
+    if si is not None:
+        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+    if sd is not None:
+        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+    return _run("mul_ilog2", sim, tier, base + suffix, vlog, kind=kind, count=count, root_module="zkf_mul_ilog2")
+
+
 def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None,
          wm=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
@@ -543,6 +556,18 @@ def _per_pr(sim, out: list) -> None:
     # New uniform STAGE_INPUT knob for mul_ilog2_const: standalone and combined with STAGE_DECODE.
     out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
+    # zkf_mul_ilog2 (runtime k): same format sweep as the const module, both decode depths. The default WK=WEXP+1 range
+    # already covers shifts that overflow to inf / underflow to zero for every input class.
+    for sd in (0, 1):
+        for cfg, w, m, k, c in UNARY:
+            out.append(_ilog2(sim, "pr", cfg, w, m, k, c, sd=sd))
+    # STAGE_INPUT (incl. dummy >1) and non-default WK (narrow, so k cannot leave the normal range; and wide, so large
+    # |k| exercises the saturating boundaries) on a fast exhaustive format.
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=2))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=6, sd=1))
     for si in (0, 1):
         for cfg, w, m, wint, k, c in FROM_INT:
             out.append(_cast("from_int", sim, "pr", cfg, w, m, wint, k, c, si))
@@ -641,6 +666,7 @@ def _deep_correctness(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, k, c))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
+            out.append(_ilog2(s, "deep", base, w, m, k, c, sd=sd))
     # exp2/log2: STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT staging (one knob at a time off the baseline) across the
     # deep transcendental format list.
     for w, m, k, c in TRANS_EXPLOG_EXT:
@@ -765,6 +791,7 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
+            out.append(_ilog2(s, "deep", base, w, m, "exhaustive", 0, sd=sd))
     # exp2/log2 coverage: cheapest exhaustive WMAN=16 formats toggle the ROM/Horner; the so=1 run covers the
     # registered pack output, and the sp=2/3/4 runs toggle the shared _zkf_pmul split-product paths via the Horner
     # multiply. The split-final row exercises log2's independent final f*C(f) multiply staging.
@@ -909,6 +936,8 @@ _FAST = [
     ("addsub_sd1_sa1", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("ilog2_sd0", "mul_ilog2_const", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0)]),
     ("ilog2_sd1", "mul_ilog2_const", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1)]),
+    ("ilog2rt_sd0", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 0)]),
+    ("ilog2rt_sd1", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 1)]),
     ("mul_sp0", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 0)]),
     ("mul_sp1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 1)]),
     ("mul_so1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 1)]),

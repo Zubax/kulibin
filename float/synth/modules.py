@@ -31,6 +31,7 @@ class ModuleSpec:
     wman: int
     wexp_unbiased: int
     wint: int = 0
+    wk: int = 0              # zkf_mul_ilog2: width of the signed runtime shift k (0 -> RTL default WEXP+1)
     wexp_in: int = 0
     wman_in: int = 0
     wexp_out: int = 0
@@ -325,6 +326,39 @@ MODULES = [
         wexp=8,
         wman=36,
         wexp_unbiased=0,
+        stage_decode=1,
+    ),
+    # zkf_mul_ilog2 (runtime k): narrow and wide operating points. With the offset-sum overflow the runtime path clears
+    # timing at minimum latency (STAGE_DECODE=0) at both widths; the wide SD1 variant covers the registered decode path.
+    ModuleSpec(
+        name="zkf_mul_ilog2",
+        label="zkf_mul_ilog2 (runtime k; WEXP=6, WMAN=18, WK=7)",
+        top="zkf_mul_ilog2_synth_top",
+        kind="mul_ilog2",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wk=7,
+    ),
+    ModuleSpec(
+        name="zkf_mul_ilog2_w8m36",
+        label="zkf_mul_ilog2 (runtime k; WEXP=8, WMAN=36, WK=9)",
+        top="zkf_mul_ilog2_w8m36_synth_top",
+        kind="mul_ilog2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wk=9,
+    ),
+    ModuleSpec(
+        name="zkf_mul_ilog2_w8m36_sd1",
+        label="zkf_mul_ilog2 (runtime k; WEXP=8, WMAN=36, WK=9, STAGE_DECODE=1)",
+        top="zkf_mul_ilog2_w8m36_sd1_synth_top",
+        kind="mul_ilog2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wk=9,
         stage_decode=1,
     ),
     ModuleSpec(
@@ -762,6 +796,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
     if spec.kind == "mul_ilog2_const":
         return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2_const.v"]
+    if spec.kind == "mul_ilog2":
+        return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2.v"]
     if spec.kind == "from_int":
         return [
             hdl / "_zkf_pack.v",
@@ -958,6 +994,8 @@ def params(spec: ModuleSpec) -> str:
         )
     if spec.kind == "mul_ilog2_const":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_si_suffix(spec)}{_sd_suffix(spec)}"
+    if spec.kind == "mul_ilog2":
+        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WK={spec.wk}{_si_suffix(spec)}{_sd_suffix(spec)}"
     if spec.kind == "to_int":
         return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
     if spec.kind == "resize":

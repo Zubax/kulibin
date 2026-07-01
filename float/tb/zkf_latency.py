@@ -108,6 +108,10 @@ def mul_ilog2_const_latency(*, stage_input: int = 0, stage_decode: int = 0) -> i
     return 1 + _count(stage_input) + _enabled(stage_decode)
 
 
+def mul_ilog2_latency(*, stage_input: int = 0, stage_decode: int = 0) -> int:
+    return 1 + _count(stage_input) + _enabled(stage_decode)
+
+
 def from_int_latency(
     *,
     stage_input: int = 0,
@@ -317,6 +321,8 @@ def module_latency(
         return cmp_latency(stage_input=stage_input)
     if kind == "mul_ilog2_const":
         return mul_ilog2_const_latency(stage_input=stage_input, stage_decode=stage_decode)
+    if kind == "mul_ilog2":
+        return mul_ilog2_latency(stage_input=stage_input, stage_decode=stage_decode)
     if kind == "from_int":
         return from_int_latency(
             stage_input=stage_input,

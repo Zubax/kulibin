@@ -30,6 +30,7 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
+    wk: int | None = None    # zkf_mul_ilog2: width of the signed runtime shift k
     stage_input: int = 0     # input register knob for sequential float operators
     stage_reduce: int = 0    # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input
     stage_product: int = 0   # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
@@ -74,6 +75,8 @@ class TestContext:
             knob_suffix += f" EB={self.exp_is_biased}"
         if self.assume_no_overflow:
             knob_suffix += f" NOV={self.assume_no_overflow}"
+        if self.wk is not None:
+            knob_suffix += f" WK={self.wk}"
         if self.wexp_in is not None and self.wman_in is not None:
             return (
                 f"{self.config} {self.wexp_in}/{self.wman_in}->"
@@ -260,6 +263,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
+        wk=(plusarg_int("ZKF_WK", 0) or None),   # only zkf_mul_ilog2 sets it; 0/absent -> None (RTL default WEXP+1)
         stage_input=_stage_input(),
         stage_reduce=_stage_reduce(),
         stage_product=stage_product,

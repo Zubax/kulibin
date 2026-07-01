@@ -22,6 +22,7 @@ filesets:
       - hdl/zkf_sort.v
       - hdl/zkf_addsub.v
       - hdl/zkf_mul_ilog2_const.v
+      - hdl/zkf_mul_ilog2.v
       - hdl/zkf_fma.v
       - hdl/_zkf_horner.v
       - hdl/_zkf_pmul.v
@@ -154,6 +155,12 @@ filesets:
     files:
       - hdl/zkf_pipe.v
       - hdl/zkf_mul_ilog2_const.v
+    file_type: verilogSource
+
+  rtl_mul_ilog2:
+    files:
+      - hdl/zkf_pipe.v
+      - hdl/zkf_mul_ilog2.v
     file_type: verilogSource
 
   rtl_from_int:
@@ -323,6 +330,8 @@ filesets:
           file_type: user
       - tb/test_mul_ilog2_const.py:
           file_type: user
+      - tb/test_mul_ilog2.py:
+          file_type: user
       - tb/test_from_int.py:
           file_type: user
       - tb/test_to_int.py:
@@ -406,6 +415,14 @@ parameters:
   ZKF_WINT:
     datatype: int
     default: 32
+    paramtype: plusarg
+  WK:
+    datatype: int
+    default: 7
+    paramtype: vlogparam
+  ZKF_WK:
+    datatype: int
+    default: 7
     paramtype: plusarg
   WEXP_IN:
     datatype: int
@@ -1143,6 +1160,40 @@ targets:
       <<: *verilator_binary_flow
       cocotb_module: test_mul_ilog2_const
     parameters: *float_binary_params_sd
+
+  sim_mul_ilog2_icarus:
+    filesets: [rtl_mul_ilog2, tb_cocotb]
+    toplevel: zkf_mul_ilog2
+    flow: sim
+    flow_options:
+      tool: icarus
+      cocotb_module: test_mul_ilog2
+      timescale: 1ns/1ps
+      iverilog_options: [-Wall, -Wno-timescale, -DSIMULATION=1]
+    parameters: &float_ilog2_params
+      - WEXP
+      - WMAN
+      - WK
+      - STAGE_INPUT
+      - STAGE_DECODE
+      - ZKF_WEXP
+      - ZKF_WMAN
+      - ZKF_WK
+      - ZKF_KIND
+      - ZKF_COUNT
+      - ZKF_SEED
+      - ZKF_CONFIG
+      - ZKF_STAGE_INPUT
+      - ZKF_STAGE_DECODE
+
+  sim_mul_ilog2_verilator:
+    filesets: [rtl_mul_ilog2, tb_cocotb]
+    toplevel: zkf_mul_ilog2
+    flow: sim
+    flow_options:
+      <<: *verilator_binary_flow
+      cocotb_module: test_mul_ilog2
+    parameters: *float_ilog2_params
 
   sim_from_int_icarus:
     filesets: [rtl_from_int, tb_cocotb]
