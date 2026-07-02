@@ -8,7 +8,8 @@ import cocotb
 import numpy as np
 from cocotb.triggers import Timer
 
-from zkf_model import ZkfFormat, hex_bits, mask, neg_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, is_resolvable
@@ -42,7 +43,7 @@ def add_unique(cases: list[UnaryCase], seen: set[int], label: str, fmt: ZkfForma
     if key in seen:
         return
     seen.add(key)
-    cases.append(UnaryCase(label, x, neg_reference(fmt, x)))
+    cases.append(UnaryCase(label, x, (-fmt.wrap(x)).bits))
 
 
 def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[UnaryCase]:

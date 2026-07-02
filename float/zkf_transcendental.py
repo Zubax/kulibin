@@ -2,32 +2,19 @@
 """
 Coefficient generator for the ZKF transcendental operators ``zkf_log2`` and ``zkf_exp2``.
 
-Both operators reduce to evaluating a smooth helper function on the unit interval with a per-segment polynomial:
+Both reduce to a per-segment polynomial (truncating fixed-point Horner, ``hdl/_zkf_horner.v``) on the unit interval:
 
-  * exp2 evaluates ``H(s) = 2**s`` for ``s in [0,1)`` (the fractional part of the input); the result is the
-    significand ``2**f in [1,2)``.
+  * exp2 evaluates ``H(s) = 2**s`` for ``s in [0,1)`` -> the significand ``2**f in [1,2)``.
 
-  * log2 uses the standard SYMMETRIC argument reduction: after ``x = m * 2**e`` (m in [1,2)), re-center so the
-    reduced mantissa ``m' in [sqrt(1/2), sqrt(2))`` and ``log2(m') in [-1/2, 1/2)`` (``m >= sqrt(2)`` halves m and
-    increments e). The signed reduced fraction ``f = m' - 1 in [sqrt(1/2)-1, sqrt(2)-1] = [-0.293, 0.414]`` is exact
-    (Sterbenz). The kernel is the smooth ``C(f) = log2(1+f)/f`` (~1.4427 at f=0) and ``log2(m') = f * C(f)``. The
-    symmetric reduction removes the catastrophic cancellation of the old ``m in [1,2)`` reduction at x -> 1 (where
-    e = -1 and log2(m) -> 1 nearly cancel): now x -> 1 maps to e = 0, f -> 0, the direct cancellation-free path.
+  * log2 uses SYMMETRIC argument reduction of ``x = m*2**e`` (m in [1,2)): if ``m >= sqrt(2)`` halve m and increment e,
+    so ``m' in [sqrt(1/2), sqrt(2))`` and the reduced fraction ``f = m'-1`` is exact (Sterbenz). Fit the smooth kernel
+    ``C(f) = log2(1+f)/f`` and return ``log2(m') = f*C(f)``. GOTCHA: the symmetric reduction is what removes the
+    catastrophic cancellation of the naive ``m in [1,2)`` reduction as ``x -> 1`` (where ``e`` and ``log2(m)`` cancel).
 
-The helper interval is split into ``2**K`` equal segments indexed by the top ``K`` argument bits; within a segment a
-degree-``D`` polynomial in the segment-local coordinate ``wn in [0,1)`` is evaluated by a truncating fixed-point Horner
-recurrence (see ``hdl/_zkf_horner.v``). ``D`` is a closed-form function of ``WMAN`` (so the pipeline depth is too);
-``K`` is then the smallest segment count meeting the accuracy target at that degree, and affects only the ROM size.
-
-This module is the single source of truth. ``--emit`` writes, per supported ``WMAN``, a self-contained per-table eval
-core ``hdl/_tables/_zkf_<func>_m<WMAN>.v`` plus the Python data table ``tb/zkf_trans_tables.py`` that the bit-exact
-reference model imports. The public ``hdl/zkf_<func>.v`` modules carry a hand-written generate-if that enumerates every
-``WMAN`` in [16, 53] and instantiates the matching table module, passing the closed-form degree the table asserts
-against its ROM (mirroring the ``LATENCY`` parameter); an un-pregenerated ``WMAN`` fails elaboration loudly (the chosen
-table module is simply undefined). ``--check`` verifies the tables against an ``mpmath`` ground truth.
-
-The table content depends on ``WMAN`` only (never ``WEXP``): the helper functions live on the unit interval and the
-exponent/integer part is handled outside the table by the renormalize/pack stage.
+Degree ``D`` is a closed-form function of ``WMAN`` (so is the pipeline depth); ``K`` (segment count) is then the
+smallest meeting the accuracy target. Table content depends on ``WMAN`` only -- the helpers live on the unit interval;
+the exponent/integer part is handled by the renormalize/pack stage. ``--emit`` writes the per-WMAN Verilog cores and the
+Python data table; ``--check`` verifies both against an ``mpmath`` ground truth (<= 1 ULP).
 """
 
 from __future__ import annotations
@@ -41,46 +28,32 @@ from textwrap import dedent
 
 import mpmath as mp
 
-mp.mp.prec = 280  # generous working precision for coefficient fitting and ground-truth rounding
+mp.mp.prec = 280  # generous headroom for coefficient fitting and ground-truth rounding
 
-REPO = Path(__file__).resolve().parent  # .../float
+REPO = Path(__file__).resolve().parent
 HDL = REPO / "hdl"
 TABLES = HDL / "_tables"
-TB = REPO / "tb"
+PKG_TABLES = REPO / "zkf" / "_tables"
 
 FUNCS = ("exp2", "log2")
 
-# Guard bits: fixed-point fractional headroom kept below the WMAN significand, common to both operators. Used as the
-# reduced-argument fraction width (exp2: FF = WMAN + GUARD) and the coefficient/result scale (both: CF = WMAN + GUARD).
-#
-# Why 12: the operators must be faithfully rounded (<=1 ULP, targeting 0.5 ULP), so the value reaching the rounder must
-# be trustworthy a few bits below the round position. The fit + truncating Horner is held to a relative error budget of
-# ERR_GUARD = 8 bits below the ULP (see `target` in choose_spec); GUARD must sit ABOVE that noise floor by enough to
-# host the guard and round bits and absorb the Horner's few-LSB truncation. GUARD = ERR_GUARD + 4 = 12 places the round
-# bit ~7 bits clear of the approximation error, which the end-to-end mpmath `--check` confirms is sufficient for every
-# supported WMAN (shrinking GUARD eventually breaks the faithful-rounding assertion). A single shared value suffices
-# because both uses demand the same headroom; it is not a per-function quantity.
+# Fixed-point fractional headroom below the WMAN significand: reduced-argument width (exp2 FF = WMAN+GUARD) and the
+# coefficient/result scale (CF = WMAN+GUARD). GUARD = ERR_GUARD + 4 = 12 puts the round bit ~7 bits clear of the fit +
+# truncating-Horner error floor, keeping the operators faithfully rounded; shrinking it breaks the --check assertion.
 GUARD = 12
 ERR_GUARD = 8   # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
 
-# Maximum segment-index bits: choose_spec() searches for the smallest K <= K_CAP that meets the accuracy target, so
-# actual ROM row counts vary by WMAN/function. K_CAP still sets the closed-form degree scale: larger caps permit lower
-# Horner degree (shorter pipeline) at the cost of potentially wider ROMs.
+# Max segment-index bits. choose_spec() picks the smallest K <= K_CAP meeting accuracy; K_CAP also sets the closed-form
+# degree scale (larger cap -> lower Horner degree/shorter pipeline, wider ROM).
 K_CAP = 11
 ACC_MARGIN = 1  # extra accumulator bits above the measured maximum, guarding against wrap
 
-# Minimum supported WMAN for exp2/log2 generated tables. The K_CAP=11 geometry would fit a few narrower formats, but the
-# shipped exp2/log2 contract starts at WMAN=16 to keep the table family focused on useful precisions and avoid carrying
-# the old WMAN=11 area/accuracy tradeoff.
+# exp2/log2 tables start at WMAN=16 (narrower formats fit the K_CAP=11 geometry but are outside the shipped contract).
 WMAN_MIN, WMAN_MAX = 16, 53
+SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]  # FPGA-friendly sizes + the standard IEEE ones
 
-# WMAN values shipped with pre-generated tables: FPGA-friendly significand sizes and the standard IEEE 754 ones. New
-# ones can be added easily.
-SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
-
-# Random faithful-rounding samples per (format, operator) drawn in the --check for non-exhaustive formats. The RNG is
-# UNSEEDED (true randomness) so every run explores fresh inputs and repeated runs accumulate coverage; any miss prints
-# the offending input. The default is deliberately thorough -- override with ZKF_CHECK_SAMPLES=<n> for a quicker run.
+# Random --check samples per (format, operator) for non-exhaustive formats. UNSEEDED, so repeated runs accumulate
+# coverage; override with ZKF_CHECK_SAMPLES=<n>.
 RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 
@@ -92,34 +65,27 @@ def cf_bits(wman: int) -> int:
     return wman + GUARD
 
 
-# log2 symmetric-reduction geometry (see the module docstring and choose_spec). After x = m*2**e with m in [1,2),
-# re-center to m' in [sqrt(1/2), sqrt(2)) so log2(m') in [-1/2, 1/2). The reduced fraction f = m' - 1 lies in
-# [sqrt(1/2)-1, sqrt(2)-1]. The table is INDEXED by the unsigned quantity v = f + 1/2 (an exact power-of-two shift),
-# which lands in [sqrt(1/2)-1/2, sqrt(2)-1/2) = [0.2071, 0.9142) -- strictly inside [0,1) -- so the existing top-K-bits
-# segment indexing of the unit interval is reused unchanged. Per segment we fit C(f) = C(v - 1/2). The RTL builds v as
-# a (WFRAC+1)-bit fixed-point fraction directly from the stored fraction (no irrational subtraction; the index
-# arithmetic is exact and identical model<->RTL): m < sqrt(2) gives v = 2**WFRAC + 2*frac, m >= sqrt(2) gives v = frac.
-# The signed combine operand is F = v - 2**WFRAC (= f at scale 2**-(WFRAC+1)): m < sqrt(2) -> F = 2*frac (>= 0),
-# m >= sqrt(2) -> F = frac - 2**WFRAC (< 0).
+# log2 index geometry: the table is indexed by the unsigned v = f + 1/2 in [0.207, 0.914) (strictly inside [0,1), so
+# the unit-interval top-K-bits segmenting is reused); per segment we fit C(f) = C(v - 1/2). RTL builds v exactly from
+# the stored fraction (no irrational subtraction; model<->RTL identical): m < sqrt(2) -> v = 2**WFRAC + 2*frac, else
+# v = frac; the signed combine operand is F = v - 2**WFRAC (= f at scale 2**-(WFRAC+1)).
 LOG2_V_OFFSET = mp.mpf(1) / 2   # v = f + LOG2_V_OFFSET maps the signed reduced fraction f into [0,1) for indexing
 
 
 def log2_sqrt2_threshold(wfrac: int) -> int:
-    """Integer significand threshold THR for the re-center test m >= sqrt(2), i.e. sig >= THR with sig the WMAN-bit
-    significand (m = sig / 2**WFRAC). Round-to-nearest; the exact value is internal -- both reduced branches stay
-    within the fitted f range [sqrt(1/2)-1, sqrt(2)-1] for any sane rounding, so this only picks where the split lands.
-    Mirror this constant in the phase-2 RTL re-center stage."""
+    """
+    Integer significand threshold THR for the re-center test m >= sqrt(2) (sig >= THR, sig the WMAN-bit significand).
+    Rounding is not critical -- both branches stay within the fitted f range -- it only picks where the split lands.
+    GOTCHA: the phase-2 RTL re-center stage must mirror this constant.
+    """
     return int(mp.nint(mp.sqrt(2) * (1 << wfrac)))
 
 
 def degree(wman: int) -> int:
     """
-    Per-segment polynomial degree, a closed-form function of WMAN alone, so the Horner pipeline depth is too.
-
-    K_CAP is the maximum segment-index width used by choose_spec(). At that finest allowed segmentation each segment
-    spans 2**-K_CAP of the unit interval, and its polynomial must approximate the helper there to B = WMAN + ERR_GUARD
-    bits; the degree target is therefore ceil(B / K_CAP) - 1. choose_spec() may select a smaller K when it still meets
-    the same error target, but D remains fixed by this cap so latency depends only on WMAN.
+    Per-segment polynomial degree, closed-form in WMAN (so is the Horner pipeline depth). At the finest allowed
+    segmentation (2**-K_CAP wide) a segment must approximate the helper to B = WMAN + ERR_GUARD bits, giving
+    D = ceil(B/K_CAP) - 1. choose_spec() may pick a smaller K, but D stays fixed by K_CAP so latency tracks WMAN only.
     """
     if not (WMAN_MIN <= wman <= WMAN_MAX):
         raise ValueError(f"Bad {wman=}")
@@ -154,20 +120,19 @@ class Spec:
 # Coefficient fitting (high precision via mpmath)
 # --------------------------------------------------------------------------------------------------
 def helper_true(func: str, arg):
-    """Exact helper value (mpf), high precision. exp2: H(s)=2**s on the unit-interval argument s. log2: the kernel
-    C(f)=log2(1+f)/f evaluated at the SIGNED reduced fraction ``arg`` = f in [sqrt(1/2)-1, sqrt(2)-1], with the
-    removable singularity C(0)=1/ln2. (The caller maps the unsigned index coordinate v in [0,1) to f = v - 1/2.)"""
+    """
+    Exact helper value (mpf). exp2: H(s)=2**s at s in [0,1). log2: the kernel C(f)=log2(1+f)/f at the signed reduced
+    fraction ``arg`` = f, with the removable singularity C(0)=1/ln2.
+    """
     if func == "exp2":
         return mp.power(2, arg)
-    # log2: C(f) = log2(1+f)/f, with the removable singularity C(0) = 1/ln2.
     if arg == 0:
         return 1 / mp.log(2)
     return mp.log(1 + arg) / (mp.log(2) * arg)
 
 
 def helper_arg(func: str, v):
-    """Map the unsigned unit-interval coordinate ``v`` (the table index coordinate, in [0,1)) to the helper's actual
-    argument. exp2 evaluates at v directly; log2 evaluates the signed kernel at f = v - 1/2 (see LOG2_V_OFFSET)."""
+    """Map the unit-interval index coordinate v to the helper argument: exp2 uses v; log2 uses f = v - 1/2."""
     return v if func == "exp2" else v - LOG2_V_OFFSET
 
 
@@ -258,15 +223,11 @@ def measure(func: str, wman: int, k: int, seg_base: int, cf: int, width: int, co
 
 def choose_spec(func: str, wman: int) -> Spec:
     """
-    With the degree fixed by the closed-form ``degree`` (so the pipeline depth is a closed-form function of WMAN),
-    pick the smallest segment count K (smallest ROM) that meets the accuracy target. K affects only the ROM, not the
-    depth. Accuracy is measured through the truncating Horner, so meeting the target guarantees faithful rounding.
-    K is searched over 1..K_CAP and the smallest passing ROM is emitted; the degree remains fixed by K_CAP.
+    Degree is fixed by degree() (closed-form in WMAN); search K in 1..K_CAP for the smallest ROM meeting the accuracy
+    target. Accuracy is measured THROUGH the truncating Horner, so meeting it guarantees faithful rounding.
     """
     cf = cf_bits(wman)
-    # Reduced-argument (table index coordinate) width. exp2: FF = WMAN + GUARD. log2: the symmetric reduction's
-    # unsigned index coordinate v = f + 1/2 is a (WFRAC + 1)-bit fixed-point fraction (WFRAC = WMAN - 1, plus the one
-    # bit introduced by the m >= sqrt(2) halving) -- so WMAN bits, one wider than the old m in [1,2) reduction.
+    # Reduced-argument (index coordinate) width: exp2 FF = WMAN+GUARD; log2 uses WMAN (v is a WFRAC+1 = WMAN-bit fraction).
     width = ff_bits(wman) if func == "exp2" else wman
     d = degree(wman)
     target = mp.mpf(2) ** (-(wman + ERR_GUARD))  # relative helper-error budget
@@ -280,20 +241,15 @@ def choose_spec(func: str, wman: int) -> Spec:
             cw = maxabs.bit_length() + 2                          # +1 sign, +1 margin
             accw = max(max_acc, maxabs).bit_length() + 1 + ACC_MARGIN
             if func == "log2":
-                # log2's signed final multiply trims the Horner result to ACCM = CF+2 bits,
-                # which is lossless only because C(f) = log2(1+f)/f < 2 over the reduced range so acc < 2**(CF+1).
-                # Assert the bound at generation time: a future kernel/range change that broke it would otherwise
-                # silently truncate the product (caught only end-to-end), so fail here instead.
+                # The final multiply trims the Horner acc to ACCM = CF+2 bits, lossless only because C(f) < 2 (acc <
+                # 2**(CF+1)). Assert here so a kernel/range change that broke the bound fails at generation, not silently.
                 assert max_acc < (1 << (cf + 2)), (
                     f"log2 WMAN={wman}: max Horner acc {max_acc} >= 2**ACCM (2**{cf + 2}); "
                     f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table")
             if func == "exp2":
-                # exp2's Horner multiply is emitted UNSIGNED (_zkf_horner ACC_SIGNED=0), which is correct only because
-                # every coefficient is non-negative: then acc = c[j] + (acc*w)>>RW stays >= 0 for all w by induction,
-                # so the accumulator never needs a sign bit. chebyfit is a minimax fit, not Taylor -- it COULD emit a
-                # small negative high-order coefficient -- so prove the premise here at generation time. A fired assert
-                # means that format cannot use the unsigned grid; the random/exhaustive sims would not reliably catch
-                # the resulting wrong bits, hence the hard fail.
+                # exp2's Horner is emitted UNSIGNED (ACC_SIGNED=0), valid only if every coefficient is >= 0 (then acc
+                # stays >= 0 by induction). chebyfit is minimax, not Taylor, so it COULD emit a negative coefficient --
+                # prove the premise here; a fired assert means this format needs the signed grid.
                 assert all(c >= 0 for seg in coeffs for c in seg), (
                     f"exp2 WMAN={wman}: a fitted coefficient is negative; the unsigned Horner grid "
                     f"(ACC_SIGNED=0) would produce wrong bits -- make _zkf_horner signed for exp2 again")
@@ -418,7 +374,7 @@ def _emit_table(s: Spec) -> str:
     """
     mod = table_module(s.func, s.wman)
     w = _Writer()
-    w("/// GENERATED by float/zkf_transcendental.py -- DO NOT EDIT.")
+    w("/// GENERATED by zkf_transcendental.py -- DO NOT EDIT.")
     if s.func == "exp2":
         w(f"/// Table+polynomial core for zkf_exp2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
           "/// Evaluates the significand 2**f in [1,2) from the reduced fractional argument f (FF = WMAN + 12 bits).",
@@ -604,7 +560,7 @@ def _emit_table(s: Spec) -> str:
 def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
     w = _Writer()
     w("# GENERATED by float/zkf_transcendental.py -- DO NOT EDIT.")
-    w('"""Bit-exact table+polynomial data for zkf_log2 / zkf_exp2, consumed by zkf_model.py."""')
+    w('"""Bit-exact table+polynomial data for zkf_log2 / zkf_exp2, consumed by the zkf package (zkf._core)."""')
     w("")
     w("SPECS = {")
     w.push()
@@ -618,17 +574,6 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
         w("),")
     w.pop()
     w("}")
-    w("")
-    w(f"GUARD_FF = {GUARD}")
-    w(f"GUARD_CF = {GUARD}")
-    w("")
-    w("""
-        def get_spec(func, wman):
-            try:
-                return SPECS[(func, wman)]
-            except KeyError:
-                raise KeyError(f'no {func} table for WMAN={wman}; run float/zkf_transcendental.py --emit')
-    """)
     return w.render()
 
 
@@ -638,7 +583,7 @@ def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
         path = TABLES / f"{table_module(func, wman)}.v"
         path.write_text(_emit_table(s))
         print(f"wrote {path.relative_to(REPO)}")
-    path = TB / "zkf_trans_tables.py"
+    path = PKG_TABLES / "trans.py"
     path.write_text(_emit_python(all_specs))
     print(f"wrote {path.relative_to(REPO)}")
 
@@ -654,27 +599,40 @@ def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
         print(f"{func:5} {wman:>4} {s.k:>3} {s.seg_base:>5} {s.nseg:>5} {s.d:>3} {s.cf:>4} "
               f"{s.rw:>4} {s.cw:>4} {s.accw:>5} {entries:>8} {entries * s.cw / 1024.0:>9.1f}")
 
-    # zkf_<func>.v derives the degree D = (WMAN+18)/11 - 1 closed-form at elaboration (the ZKF_<func>_DEGREE macro,
-    # matching degree() above), so the module name need not encode it. The map is a cross-check for that value; it is
-    # identical for exp2 and log2 (degree does not depend on the function).
+    # zkf_<func>.v derives D = (WMAN+18)/11 - 1 closed-form at elaboration (matching degree()); this map cross-checks it,
+    # identical for both operators.
     d_map = " ".join(f"{wman}:{degree(wman)}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
     print(f"\nclosed-form degree D = (WMAN+18)/11 - 1 derived in zkf_<func>.v "
           f"({WMAN_MAX - WMAN_MIN + 1} values, same for both):\n  {d_map}")
 
 
-def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
-    """End-to-end accuracy check vs mpmath via the bit-exact model. Requires tb/ on sys.path."""
+def _check() -> None:
+    """End-to-end accuracy check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
-    sys.path.insert(0, str(TB))
-    import importlib
-    import zkf_model
-    importlib.reload(zkf_model)
-    from zkf_model import ZkfFormat, exp2_reference, log2_reference, exp2_true, log2_true
+    sys.path.insert(0, str(REPO))
+    import zkf
+    import zkf.oracle
+    from zkf import ZkfFormat
     import numpy as np
+    # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
+    # without reaching into package internals to reload/clear caches.
+
+    def exp2_reference(fmt, b):
+        return zkf.Zkf(fmt, b).exp2().bits
+
+    def log2_reference(fmt, b):
+        r = zkf.Zkf(fmt, b).log2()
+        return (r.value.bits, int(r.domain_error), int(r.pole))
+
+    def exp2_true(fmt, b):
+        return zkf.oracle.exp2(zkf.Zkf(fmt, b)).bits
+
+    def log2_true(fmt, b):
+        r = zkf.oracle.log2(zkf.Zkf(fmt, b))
+        return (r.value.bits, int(r.domain_error), int(r.pole))
 
     print("end-to-end correct-rounding check (model vs mpmath):")
-    # Every supported WMAN (2/16 and 3/16 run exhaustive; wider formats random). Previously only 5 of 9 were listed,
-    # leaving m18/27/32/53 unchecked -- now all of SUPPORTED_WMAN are covered.
+    # 2/16 and 3/16 run exhaustive; wider formats random. Covers all of SUPPORTED_WMAN.
     cases = [(2, 16), (3, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
@@ -698,13 +656,10 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
             print(f"  {status} {func} {wexp}/{wman:<3} max_ulp={worst} mismatches={ne}/{len(inputs)} ({tag})")
             assert worst <= 1, f"{func} {wexp}/{wman}: max ULP {worst} > 1 (faithful-rounding contract violated)"
 
-    # --- log2 near-x=1 regression guard (the catastrophic-cancellation class the symmetric reduction fixed) ---
-    # As x -> 1, log2(x) -> 0 with an arbitrarily fine ULP; the old m in [1,2) reduction formed e + log2(m) and
-    # cancelled, losing the tiny result (worst was ~1.9e12 ULP at m53, ~14M at the shipped m36 -- a real defect in
-    # shipped configs). Random sampling can NEVER hit these vanishing-measure inputs (it missed the bug for years), so
-    # this EXHAUSTIVELY sweeps the extreme fractions of the two binades straddling x=1 for EVERY supported WMAN, every
-    # run -- a permanent guard that fails loudly if the reduction/kernel regresses near 1. ZKF_NEAR1_SAMPLES tunes depth
-    # (default 2^16 covers far past the hardest, x = 1 +/- 1 ULP, where any such regression manifests most).
+    # --- log2 near-x=1 regression guard (the cancellation class the symmetric reduction fixed) ---
+    # As x -> 1, log2 -> 0 with arbitrarily fine ULP; the naive reduction cancelled and lost it (was ~1.9e12 ULP at m53
+    # -- a real shipped defect). Random sampling can NEVER hit these vanishing-measure inputs, so sweep the extreme
+    # fractions straddling x=1 for every WMAN, every run. ZKF_NEAR1_SAMPLES tunes depth (default 2^16).
     near1 = int(os.environ.get("ZKF_NEAR1_SAMPLES", str(1 << 16)))
     print(f"log2 near-x=1 regression guard (symmetric-reduction cancellation; top/bottom {near1} fracs each side):")
     for wman in SUPPORTED_WMAN:
@@ -725,12 +680,10 @@ def _check(all_specs: dict[tuple[str, int], Spec]) -> None:
         print(f"  {status} log2 near-1 m{wman:<3} max_ulp={worst} mismatches={ne}/{len(inputs)} (span {span})")
         assert worst <= 1, f"log2 m{wman} near-x=1: max ULP {worst} > 1 (symmetric-reduction cancellation regression)"
 
-    # --- exp2 boundary regression guard (binade crossings + the 1.0 seam + saturation) ---
-    # exp2 is structurally immune to the log2 cancellation (2^x never -> 0 at finite x, and it renormalizes through the
-    # packer), but its rounding-sensitive seams are the power-of-two/binade crossing at every integer x, the 1.0 seam
-    # (x -> 0), and the over/underflow edge -- and the random check undersamples those just like it did log2's near-1.
-    # So deterministically sweep a dense band straddling every representable integer x, the tiny-x binades (both signs),
-    # and the saturation edge, for EVERY supported WMAN every run. Verified clean today (a hardening guard, not a fix).
+    # --- exp2 boundary regression guard (binade crossings + 1.0 seam + saturation) ---
+    # exp2 has no log2-style cancellation, but its rounding-sensitive seams (every integer x, the 1.0 seam, the
+    # over/underflow edge) are undersampled by random too, so sweep a dense band around them for every WMAN, every run.
+    # Hardening (clean today, not a fix).
     eb = int(os.environ.get("ZKF_EXP2_BAND", "48"))
     print(f"exp2 boundary regression guard (integer/binade crossings + 1.0 seam + saturation; band {eb}):")
     for wman in SUPPORTED_WMAN:
@@ -774,8 +727,8 @@ def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
 
 def _ordered_index(fmt, bits: int) -> int:
     """Monotonic integer index of a canonical ZKF value (sign-magnitude -> ordered)."""
-    import zkf_model
-    bits = zkf_model.canonicalize_special(fmt, bits)
+    from zkf import Zkf
+    bits = Zkf(fmt, bits).canonicalize().bits
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
     return -mag if sign else mag
@@ -796,7 +749,7 @@ def main() -> None:
     if args.emit:
         emit(all_specs)
     if args.check:
-        _check(all_specs)
+        _check()
 
 
 if __name__ == "__main__":

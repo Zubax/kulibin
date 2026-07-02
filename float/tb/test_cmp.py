@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, cmp_reference, hex_bits, mask
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import cmp_latency
 from zkf_params import check_width, float_context
@@ -38,11 +39,10 @@ def raw_directed_values(fmt: ZkfFormat) -> list[int]:
 
 
 def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
-    """All non-canonical zero and infinity bit patterns at a few representative fractions.
-
-    Targets the `override_eq` logic in zkf_cmp_comb: every pattern in the zero class must compare equal to every
-    other zero pattern, every same-sign infinity pattern must compare equal regardless of fraction, and crossing
-    a class boundary must produce strict ordering.
+    """
+    Zero and infinity bit patterns at representative fractions, targeting the override_eq logic in zkf_cmp_comb:
+    every zero pattern compares equal to every other, same-sign infinities compare equal regardless of fraction, and
+    crossing a class boundary produces strict ordering.
     """
     frac_bits = [0, 1, fmt.frac_mask >> 1, fmt.frac_mask] if fmt.wfrac >= 2 else [0, fmt.frac_mask]
     frac_bits = sorted({f & fmt.frac_mask for f in frac_bits})
@@ -59,13 +59,13 @@ def corner_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     """Hand-picked pairings that exercise every transition in the cmp_comb decision tree."""
     pairs: list[tuple[str, int, int]] = []
     specials = special_class_representatives(fmt)
-    # Cross-product of all zero and infinity representations: equality of any two zeros, equality of same-sign
-    # infinities, and strict ordering of different-sign infinities all surface in this cross-product.
+    # Cross-product of all zero/infinity representations (equal zeros, equal same-sign infinities, ordered
+    # different-sign infinities).
     for left_label, left in specials:
         for right_label, right in specials:
             pairs.append((f"{left_label}_vs_{right_label}", left, right))
-    # Reflexivity-style probes outside the special classes (already covered by exhaustive at small widths, but
-    # listed explicitly here so they also fire at the larger random configurations).
+    # Reflexivity probes outside the special classes: covered by exhaustive at small widths, listed explicitly so they
+    # also fire at the larger random configurations.
     if fmt.wexp >= 3:
         named = directed_numbers(fmt)
         for label, value in named.items():
@@ -172,7 +172,8 @@ async def cmp_runtime_cases(dut) -> None:
     def drive_case(case: CompareCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
         drive_unsigned(dut.b, case.b)
-        a_gt_b, a_eq_b, a_lt_b = cmp_reference(fmt, case.a, case.b)
+        c = fmt.wrap(case.a).cmp(fmt.wrap(case.b))
+        a_gt_b, a_eq_b, a_lt_b = int(c.gt), int(c.eq), int(c.lt)
         return {"a_gt_b": a_gt_b, "a_eq_b": a_eq_b, "a_lt_b": a_lt_b}
 
     def invalid_drive() -> None:

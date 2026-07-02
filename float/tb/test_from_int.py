@@ -7,15 +7,9 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import (
-    ZkfFormat,
-    from_int_reference,
-    hex_bits,
-    mask,
-    signed_int_max,
-    signed_int_min,
-    signed_to_bits,
-)
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_bits import signed_int_max, signed_int_min, signed_to_bits
 from zkf_operands import directed_integers, random_integer
 from zkf_latency import from_int_latency
 from zkf_params import cast_context, check_width
@@ -44,14 +38,14 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    cases.append(FromIntCase(label, value, from_int_reference(fmt, wint, value)))
+    cases.append(FromIntCase(label, value, fmt.from_int(wint, value).bits))
 
 
 def directed_case_values(wint: int) -> list[tuple[str, int]]:
     cases: list[tuple[str, int]] = []
     for label, value in directed_integers(wint).items():
         cases.append((f"directed_{label}", value))
-    # Add a handful of round-boundary cases for any sensible WINT.
+    # Round-boundary cases (powers of two and neighbours) for any WINT.
     int_max = signed_int_max(wint)
     int_min = signed_int_min(wint)
     extra_positive = [3, 5, 7, 8, 9, 15, 16, 17, 31, 33, 63, 65, 127, 129]

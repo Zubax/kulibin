@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Standalone bench for the sticky-folded right shifter _zkf_rshift_sticky.
+"""
+Standalone bench for the sticky-folded right shifter _zkf_rshift_sticky.
 
-Another shared helper (used by zkf_to_int and zkf_add) that had no dedicated test - embedded callers
-drive only a limited shift-amount range, leaving the upper radix-4 cascade stages and the over-range
-saturation path under-toggled. This bench sweeps (x, shamt) across the FULL shamt range (including
-shamt >= W, which exercises the saturation collapse) and checks y against the model, for both
-STAGE_SPLIT polarities.
+Embedded callers (zkf_to_int, zkf_add) drive only a limited shift-amount range, leaving the upper radix-4 cascade
+stages and the over-range saturation path under-toggled. This bench sweeps (x, shamt) across the FULL shamt range
+(including shamt >= W, the saturation collapse) and checks y against the model, for both STAGE_SPLIT polarities.
 """
 
 from __future__ import annotations
@@ -14,9 +13,22 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge, Timer
 
-from zkf_model import mask, rshift_sticky_reference
+from zkf_bits import mask
 from zkf_params import plusarg_int, plusarg_str
 from zkf_stream import drive_unsigned, is_resolvable, start_clock
+
+
+def rshift_sticky_reference(width: int, value: int, shamt: int) -> int:
+    """
+    Independent bench reference for _zkf_rshift_sticky: y = value >> shamt, with y[0] OR-collecting every dropped
+    bit (and the bit landing at position 0). For shamt >= width the result is {0, |value}.
+    """
+    value &= mask(width)
+    if shamt >= width:
+        shifted, dropped = 0, value
+    else:
+        shifted, dropped = value >> shamt, value & mask(shamt)
+    return (shifted | (1 if dropped else 0)) & mask(width)
 
 
 def shamt_values(width: int, wshift: int) -> list[int]:
@@ -57,10 +69,9 @@ async def rshift_runtime_cases(dut) -> None:
         for shamt in shamts:
             drive_unsigned(dut.x, x)
             drive_unsigned(dut.shamt, shamt)
-            # Settle the combinational path first (this is the result for STAGE_SPLIT=0), then advance
-            # `split` real clock edges holding the inputs stable across the cascade-internal register
-            # barrier. Settling before the first edge avoids a t=0 drive/clock race on the un-reset
-            # datapath register.
+            # Settle the combinational path first (the STAGE_SPLIT=0 result), then advance split clock edges holding
+            # the inputs stable across the register barrier. Settling before the first edge avoids a t=0 drive/clock
+            # race on the un-reset datapath register.
             await Timer(1, unit="ns")
             for _ in range(split):
                 await RisingEdge(dut.clk)

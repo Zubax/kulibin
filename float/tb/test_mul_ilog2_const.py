@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, mask, mul_ilog2_const_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import mul_ilog2_const_latency
 from zkf_params import check_width, float_context
@@ -15,7 +16,6 @@ from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases
 
 
 # Port-to-K map must mirror the K values instantiated in zkf_mul_ilog2_const_wrap.v.
-# Each entry is (port_name, K-as-a-function-of-WEXP).
 def k_for_port(fmt: ZkfFormat) -> dict[str, int]:
     emax_minus_one = fmt.exp_max_finite - 1
     return {
@@ -59,12 +59,10 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int]]:
 
 
 def binary32_manual_cases() -> list[tuple[str, int]]:
-    """Explicit binary32 inputs that exercise each (input_class, sign, magnitude-edge) combination.
-
-    The wrap module fans each input across seven K instances, so this list also drives every K-induced
-    transition (identity, ±1, midrange, ±(EXP_MAX_FINITE-1)) into every input class. Together with the
-    exhaustive sweep at WEXP=2/3 this gives full line coverage and exercises every internal toggle that
-    a single (WEXP, WMAN) configuration can produce.
+    """
+    Binary32 inputs covering each (input_class, sign, magnitude-edge). The wrap fans each across seven
+    K instances, so every K-induced transition (identity, ±1, midrange, ±(EXP_MAX_FINITE-1)) reaches every
+    input class too.
     """
     return [
         ("manual_zero",                    0x00000000),
@@ -120,8 +118,7 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[UnaryCas
         return cases
 
     rng = np.random.default_rng(seed)
-    # Cap the random sample at the size of the input universe so the loop terminates even when the requested count
-    # is larger than the number of representable inputs at small widths.
+    # Cap at the input-universe size so the loop terminates when count exceeds the representable inputs.
     target = min(count, 1 << fmt.wfull)
     while len(cases) < target:
         a = random_operand(fmt, rng) if int(rng.integers(0, 4)) else random_bits(fmt.wfull, rng)
@@ -153,7 +150,7 @@ async def mul_ilog2_const_runtime_cases(dut) -> None:
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, outputs)
 
     def expected_for(a_bits: int) -> dict[str, int]:
-        return {port: mul_ilog2_const_reference(fmt, a_bits, k) for port, k in ports.items()}
+        return {port: fmt.wrap(a_bits).mul_ilog2(k).bits for port, k in ports.items()}
 
     def drive_case(case: UnaryCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)

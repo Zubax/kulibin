@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, mask, mul_ilog2_const_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import mul_ilog2_latency
 from zkf_params import check_width, float_context
@@ -30,7 +31,7 @@ def k_range(wk: int) -> tuple[int, int]:
 
 
 def directed_shifts(fmt: ZkfFormat, wk: int) -> list[int]:
-    """Shifts that drive every input class across every boundary, plus the saturating WK extremes."""
+    """Shifts crossing every input-class boundary, plus the saturating WK extremes."""
     kmin, kmax = k_range(wk)
     candidates = {
         0, 1, -1, 2, -2,
@@ -47,7 +48,7 @@ def add_unique(cases: list[Case], seen: set[tuple[int, int]], label: str, fmt: Z
     if key in seen:
         return
     seen.add(key)
-    cases.append(Case(label, a, k, mul_ilog2_const_reference(fmt, a, k)))
+    cases.append(Case(label, a, k, fmt.wrap(a).mul_ilog2(k).bits))
 
 
 def directed_operands(fmt: ZkfFormat) -> list[tuple[str, int]]:

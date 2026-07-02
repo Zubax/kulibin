@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, log2_reference, mask, normal
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import log2_latency
 from zkf_params import check_width, float_context
@@ -31,8 +33,8 @@ def add_unique(cases: list[UnaryCase], seen: set[int], label: str, fmt: ZkfForma
     if key in seen:
         return
     seen.add(key)
-    y, domain_error, pole = log2_reference(fmt, x)
-    cases.append(UnaryCase(label, x, y, domain_error, pole))
+    r = fmt.wrap(x).log2()
+    cases.append(UnaryCase(label, x, r.value.bits, int(r.domain_error), int(r.pole)))
 
 
 def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
@@ -53,12 +55,12 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             if 1 <= exp <= fmt.exp_max_finite:
                 out.append((f"pow2_{k}", normal(fmt, 0, exp, 0)))
                 out.append((f"neg_pow2_{k}", normal(fmt, 1, exp, 0)))   # negative -> domain error
-        # Top finite exponent/fraction combinations exercise the reduced WNORM upper range: the re-center branch may
-        # carry e to 2^(WEXP-1), but log2(m') is then negative, so the finite result stays just below that bound.
+        # Top finite exp/frac exercise the reduced WNORM upper range: the re-center branch may carry e to 2^(WEXP-1),
+        # but log2(m') is then negative so the finite result stays just below that bound.
         for frac in sorted({0, 1, fmt.frac_mask >> 1, fmt.frac_mask - 1, fmt.frac_mask}):
             out.append((f"max_exp_frac_{frac}", normal(fmt, 0, fmt.exp_max_finite, frac)))
-        # Inputs x=2^k yield exact integer outputs y=k. When |k| is a power of two, y itself has a power-of-two
-        # significand; the neighbors exercise rounder/normalizer behavior around those output exponent boundaries.
+        # x=2^k yields exact integer y=k; for |k| a power of two, y's significand is a power of two, and the neighbors
+        # exercise the rounder/normalizer around those output exponent boundaries.
         for p in range(fmt.wexp):
             k = 1 << p
             for delta in (-1, 0, 1):
@@ -114,7 +116,7 @@ async def log2_runtime_cases(dut) -> None:
     dut.x.value = 0
 
     register_stages = log2_latency(
-        context.wman,
+        fmt,
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
         stage_product=context.stage_product,

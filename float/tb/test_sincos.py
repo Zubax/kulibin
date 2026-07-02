@@ -9,7 +9,9 @@ import numpy as np
 from cocotb.triggers import RisingEdge
 
 from zkf_latency import sincos_latency
-from zkf_model import ZkfFormat, hex_bits, mask, normal, sincos_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, start_clock
@@ -32,8 +34,8 @@ def add_unique(cases: list[SincosCase], seen: set[int], label: str, fmt: ZkfForm
     if key in seen:
         return
     seen.add(key)
-    sin, cos, quadrant = sincos_reference(fmt, x)
-    cases.append(SincosCase(label, x, sin, cos, quadrant))
+    r = fmt.wrap(x).sincos()
+    cases.append(SincosCase(label, x, r.sin.bits, r.cos.bits, r.quadrant))
 
 
 def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
@@ -50,8 +52,7 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             out.append((f"num_{label}", value))
 
         def turns(sign: int, k: int) -> int:
-            # x = k / 4 turns as a normalized float, for k = 1..7 (quarter-turn boundaries and mid-quadrant points).
-            # k/4 = m * 2**exp with m in [1,2): exp = floor(log2(k/4)), mantissa frac picks up the rest.
+            # x = k/4 turns as a normalized float (k=1..7): k/4 = m * 2**exp, m in [1,2), exp = floor(log2(k/4)).
             exp_unb = (k.bit_length() - 1) - 2
             frac = (k << (fmt.wfrac - (k.bit_length() - 1))) & fmt.frac_mask
             be = fmt.bias + exp_unb
@@ -104,15 +105,12 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[SincosCa
 
 @cocotb.test()
 async def sincos_runtime_cases(dut) -> None:
-    # Iterative (single-transaction) handshake: assert in_valid for one cycle while in_ready is high, then wait for the
-    # out_valid pulse and sample the result. The next transaction is started only after the current result lands
-    # (in_ready returns high). The handshake conveys completion, but the latency (II) is still a fixed, published
-    # quantity: we measure accept->out_valid and assert it equals sincos_latency() (the model the RTL LATENCY
-    # parameter and the synthesis reports share), so the latency model cannot drift from the hardware.
+    # Latency is data-independent and published: measure accept->out_valid and assert it equals sincos_latency() (the
+    # model shared by the RTL LATENCY parameter and the synthesis reports) so the model cannot drift from the RTL.
     context = float_context("sincos")
     fmt = ZkfFormat(context.wexp, context.wman)
     expected_latency = sincos_latency(
-        context.wman,
+        fmt,
         unroll100=context.unroll100,
         parallel=context.parallel,
         stage_input=context.stage_input,
@@ -129,7 +127,7 @@ async def sincos_runtime_cases(dut) -> None:
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
-    dut.out_ready.value = 1                                      # always ready: the latency measurement assumes this
+    dut.out_ready.value = 1                                      # latency measurement assumes always-ready
     drive_unsigned(dut.x, 0)
     for _ in range(4):
         await RisingEdge(dut.clk)
@@ -141,7 +139,7 @@ async def sincos_runtime_cases(dut) -> None:
     checked = 0
     for index, case in enumerate(cases):
         guard = 0
-        while int(dut.in_ready.value) == 0:                     # wait until the engine can accept
+        while int(dut.in_ready.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: in_ready stuck low (case {index})"
@@ -151,7 +149,7 @@ async def sincos_runtime_cases(dut) -> None:
         dut.in_valid.value = 0
         drive_unsigned(dut.x, mask(fmt.wfull))                  # garbage between transactions
         guard = 0
-        while int(dut.out_valid.value) == 0:                    # wait for the result pulse
+        while int(dut.out_valid.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
@@ -171,9 +169,8 @@ async def sincos_runtime_cases(dut) -> None:
 
 @cocotb.test()
 async def sincos_backpressure(dut) -> None:
-    # out_ready back-pressure: with out_ready held low, out_valid and the (sin, cos, quadrant) result must persist
-    # unchanged after the engine finishes, in_ready must stay low (the finished transaction occupies the pipe), and the
-    # result is taken only on a cycle where out_valid & out_ready. Then a fresh transaction must run correctly.
+    # Back-pressure: while out_ready is low, out_valid and (sin, cos, quadrant) persist and in_ready stays low; the
+    # result is taken only on a cycle with out_valid & out_ready.
     context = float_context("sincos")
     fmt = ZkfFormat(context.wexp, context.wman)
     cases = cases_for(fmt, "directed", context.seed, 0)[:2]
@@ -207,16 +204,16 @@ async def sincos_backpressure(dut) -> None:
             guard += 1
             assert guard < timeout, f"{context.prefix()} bp: out_valid timeout (case {index})"
         exp = {"sin": case.sin, "cos": case.cos, "quadrant": case.quadrant}
-        for hold in range(5):                                   # held low: result + out_valid must persist, in_ready low
+        for hold in range(5):
             got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}
             assert int(dut.out_valid.value) == 1, f"{context.prefix()} bp case={index}: out_valid dropped while stalled"
             assert int(dut.in_ready.value) == 0, f"{context.prefix()} bp case={index}: in_ready high while result unread"
             assert got == exp, f"{context.prefix()} bp case={index} hold={hold}: result changed while stalled: {got} != {exp}"
             await RisingEdge(dut.clk)
-        dut.out_ready.value = 1                                 # accept the result on this edge
+        dut.out_ready.value = 1
         await RisingEdge(dut.clk)
-        dut.out_ready.value = 0                                 # back to stalled for the next transaction
-    # After consuming the last result, the module must return to idle (in_ready able to go high again).
+        dut.out_ready.value = 0
+    # After the last consume, in_ready must be able to go high again.
     guard = 0
     while int(dut.in_ready.value) == 0:
         await RisingEdge(dut.clk)

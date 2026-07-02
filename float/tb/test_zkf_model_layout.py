@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Verify ZKF binary32/binary64 bit layouts against NumPy.
+"""
+Verify ZKF binary32/binary64 bit layouts against NumPy.
 
-These tests intentionally use NumPy float32/float64 values backed by the platform's FPU hardware as the oracle. This
-assumes the platform is IEEE 754-compliant for binary32 and binary64 representation and basic value preservation.
-NaNs and subnormals are excluded because ZKF does not support them, and NaN payload/sign handling is not portable.
+NumPy float32/float64 (the platform FPU) is the oracle, assuming IEEE 754 compliance. NaNs and subnormals
+are excluded: ZKF does not support them and NaN payload/sign handling is not portable.
 """
 
 from __future__ import annotations
@@ -17,29 +17,18 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))          # float/tb (harness siblings)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # float/ (the zkf package)
 
-from zkf_model import (  # noqa: E402
-    ZkfFormat,
-    _bits_to_numpy,
-    _canonicalize_numpy_result,
-    _numpy_to_bits,
-    add_reference,
-    canonical_inf,
-    decode,
-    div_reference,
-    hex_bits,
-    mask,
-    mul_reference,
-    normal,
-    numpy_add_reference,
-    numpy_div_reference,
-    numpy_mul_reference,
-    pack_bits,
-    pow2_fraction,
-    round_fraction_to_zkf,
-    zero,
-)
+from zkf import Zkf, ZkfFormat  # noqa: E402
+from zkf.oracle import add, div, mul  # noqa: E402
+from zkf_bits import hex_bits, mask, pow2_fraction  # noqa: E402
+from zkf_operands import canonical_inf, normal, pack_bits, zero  # noqa: E402
+
+
+def round_fraction_to_zkf(fmt: ZkfFormat, sign: int, magnitude) -> int:
+    """RNTE-encode a signed magnitude to packed bits via the public API (test reference)."""
+    return fmt.encode(-magnitude if sign else magnitude).bits
 
 
 class LayoutCase(NamedTuple):
@@ -117,14 +106,12 @@ class ZkfModelLayoutTest(unittest.TestCase):
         value = bits_to_numpy(case.bits, dtype)
         self.assertFalse(np.isnan(value), case.label)
         self.assertEqual(numpy_to_bits(value, dtype), case.bits, case.label)
-        self.assertEqual(_numpy_to_bits(value, dtype), case.bits, case.label)
-        self.assertEqual(numpy_to_bits(_bits_to_numpy(case.bits, dtype), dtype), case.bits, case.label)
 
         packed = pack_bits(fmt, case.sign, case.exp, case.frac)
         self.assertEqual(packed, case.bits, case.label)
 
-        decoded = decode(fmt, case.bits)
-        self.assertEqual(decoded.sign, case.sign, case.label)
+        decoded = Zkf(fmt, case.bits)
+        self.assertEqual(decoded.negative, case.sign, case.label)
         self.assertEqual(decoded.exp, case.exp, case.label)
         self.assertEqual(decoded.frac, case.frac, case.label)
 
@@ -210,24 +197,11 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 with self.subTest(fmt=fmt, case=label):
                     self.assertEqual(round_fraction_to_zkf(fmt, sign, value), expected)
 
-    def test_numpy_subnormal_canonicalization_uses_zkf_boundary(self) -> None:
-        cases = [
-            (BINARY32, 0x003FFFFF, zero(BINARY32)),
-            (BINARY32, 0x00400000, normal(BINARY32, 0, 1, 0)),
-            (BINARY32, 0x00600000, normal(BINARY32, 0, 1, 0)),
-            (BINARY32, 0x80400000, normal(BINARY32, 1, 1, 0)),
-            (BINARY64, 0x0007FFFFFFFFFFFF, zero(BINARY64)),
-            (BINARY64, 0x0008000000000000, normal(BINARY64, 0, 1, 0)),
-            (BINARY64, 0x000C000000000000, normal(BINARY64, 0, 1, 0)),
-            (BINARY64, 0x8008000000000000, normal(BINARY64, 1, 1, 0)),
-        ]
-        for fmt, bits, expected in cases:
-            with self.subTest(fmt=fmt, bits=f"0x{bits:0{fmt.wfull // 4}x}"):
-                self.assertEqual(_canonicalize_numpy_result(fmt, bits), expected)
-
     def _canonical_operands(self, fmt: ZkfFormat, seed: int, n_random: int) -> list[int]:
-        """Canonical operands (the only kind numpy_*_reference accepts), biased toward the corners and
-        toward small magnitudes so products/quotients exercise the underflow/flush boundary."""
+        """
+        Canonical operands (the only kind the zkf.oracle cross-checks accept), biased toward corners and
+        small magnitudes so products/quotients exercise the underflow/flush boundary.
+        """
         rng = random.Random(seed)
         ops = [
             zero(fmt),
@@ -250,32 +224,36 @@ class ZkfModelLayoutTest(unittest.TestCase):
         return ops
 
     def test_model_operations_match_numpy(self) -> None:
-        """Cross-check the model's mul/add/div against the IEEE FPU (via NumPy) for the two formats
-        where ZKF coincides with IEEE 754. The model is the oracle for every other format, so a
-        disagreement here would mean the oracle itself is wrong - a high-severity finding."""
+        """
+        Cross-check the model's mul/add/div against the IEEE FPU (NumPy) for the two IEEE-754-coincident
+        formats. The model is the oracle for every other format, so a mismatch here means the oracle is wrong.
+        """
         for fmt, seed in ((BINARY32, 0x32A11), (BINARY64, 0x64A11)):
             w = fmt.wfull
             ops = self._canonical_operands(fmt, seed, n_random=28)
             for a in ops:
                 for b in ops:
-                    want_mul = numpy_mul_reference(fmt, a, b)
+                    za, zb = fmt.wrap(a), fmt.wrap(b)
+                    want_mul = mul(za, zb)
                     if want_mul is not None:
-                        got = mul_reference(fmt, a, b)
-                        self.assertEqual(got, want_mul,
+                        got = (za * zb).bits
+                        self.assertEqual(got, want_mul.bits,
                                          f"mul {hex_bits(a, w)}*{hex_bits(b, w)}: "
-                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_mul, w)}")
-                    want_add = numpy_add_reference(fmt, a, b)
+                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_mul.bits, w)}")
+                    want_add = add(za, zb)
                     if want_add is not None:
-                        got = add_reference(fmt, a, b)
-                        self.assertEqual(got, want_add,
+                        got = (za + zb).bits
+                        self.assertEqual(got, want_add.bits,
                                          f"add {hex_bits(a, w)}+{hex_bits(b, w)}: "
-                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_add, w)}")
-                    want_div = numpy_div_reference(fmt, a, b)
+                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_add.bits, w)}")
+                    want_div = div(za, zb)
                     if want_div is not None:
-                        got = div_reference(fmt, a, b)
-                        self.assertEqual(got, want_div,
+                        dr = za.div(zb)
+                        got = (dr.quotient.bits, int(dr.div_by_zero))
+                        want = (want_div.quotient.bits, int(want_div.div_by_zero))
+                        self.assertEqual(got, want,
                                          f"div {hex_bits(a, w)}/{hex_bits(b, w)}: "
-                                         f"model={got} numpy={want_div}")
+                                         f"model={got} numpy={want}")
 
     def test_random_binary32_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY32, np.float32, count=5000, seed=0x32F17A)
@@ -323,11 +301,9 @@ class ZkfModelLayoutTest(unittest.TestCase):
             self.assertTrue(np.isfinite(value), f"bits=0x{bits:0{fmt.wfull // 4}x}")
             self.assertNotEqual(value, dtype(0), f"bits=0x{bits:0{fmt.wfull // 4}x}")
             self.assertEqual(numpy_to_bits(value, dtype), bits)
-            self.assertEqual(_numpy_to_bits(value, dtype), bits)
-            self.assertEqual(numpy_to_bits(_bits_to_numpy(bits, dtype), dtype), bits)
 
-            decoded = decode(fmt, bits)
-            self.assertEqual((decoded.sign, decoded.exp, decoded.frac), (sign, exp, frac))
+            decoded = Zkf(fmt, bits)
+            self.assertEqual((decoded.negative, decoded.exp, decoded.frac), (sign, exp, frac))
             self.assertTrue(decoded.is_normal)
             self.assertEqual(
                 round_fraction_to_zkf(fmt, sign, exact_normal_magnitude(fmt, exp, frac)),

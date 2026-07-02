@@ -1,4 +1,5 @@
-"""Verilog measurement-harness generators for the float synthesis suite.
+"""
+Verilog measurement-harness generators for the float synthesis suite.
 
 Each write_*_wrapper emits a synthesis top that registers every DUT input and output, so the reported
 f max is a register-to-register limit rather than ignoring primary I/O paths. The harness is identical

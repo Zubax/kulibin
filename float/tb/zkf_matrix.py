@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Single source of truth for the float verification matrix.
+"""
+Single source of truth for the float verification matrix.
 
-Every simulation the suite runs is one `Run` here: a module, a simulator (icarus/verilator), a set of
+Every simulation the suite runs is one Run here: a module, a simulator (icarus/verilator), a set of
 fusesoc parameters, and a tier. The tiers gate selection:
 
-  pr          per-PR set (runs by default; what `make verify-float` exercises)
+  pr          per-PR set (runs by default; what make verify-float exercises)
   deep        full parameter-equivalence-class sweep (correctness on icarus, coverage on verilator)
   properties  algebraic-property tests (test_properties.py) on the add/addsub/mul toplevels
   fast        the smallest-config smoke set
 
-`test_float_matrix.py` parametrizes pytest over `build_matrix()`, tagging each Run with its tier and
-simulator as markers; `pytest.ini` deselects deep/properties/fast by default, so the deep work skips
-unless explicitly selected (`pytest -m deep`, etc.). This replaces the former Makefile recipe loops and
-float/tb/run_extended.sh, which duplicated the same fusesoc-invocation logic in three places.
+test_float_matrix.py parametrizes pytest over build_matrix(), tagging each Run with its tier and
+simulator as markers; pytest.ini deselects deep/properties/fast by default, so the deep work skips
+unless explicitly selected (pytest -m deep, etc.).
 
-Running this module directly prints the matrix (counts per tier/sim, or the full list with --list) so it
-can be diffed against the suite it replaces.
+Running this module directly prints the matrix (counts per tier/sim, or the full list with --list).
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from dataclasses import dataclass, field
 SEED = os.environ.get("FLOAT_SEED", "0x9e3779b97f4a7c15")
 CORE = "zubax:kulibin:float"
 
-# --- matrix data (formerly the FLOAT_*_MATRIX make variables) -------------------------------------
 # pack:     (config, wexp, wman, wexp_unbiased, kind, count)
 PACK = [
     ("w2_m4_u4_exhaustive", 2, 4, 4, "exhaustive", 0),
@@ -46,8 +44,7 @@ BINARY = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
 ]
-# fma (ternary a*b+c): exhaustive only at the smallest format (64^3 = 262144 triples); every wider format is
-# random because ternary-exhaustive explodes (128^3 = 2M at wfull=7, 512^3 = 134M at wfull=9).
+# fma (ternary a*b+c): exhaustive only at the smallest format; wider formats random (ternary-exhaustive explodes).
 # (config, wexp, wman, kind, count)
 FMA = [
     ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
@@ -59,8 +56,8 @@ FMA = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m36_random", 8, 36, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 512),
-    # Small WEXP with large WMAN: the close-cancellation corrected exponent underflows far below the product
-    # exponent range, so this guards the sub-path exponent width (the directed w4m30 cancellation witnesses run here).
+    # Small WEXP, large WMAN: the close-cancellation corrected exponent underflows far below the product exponent
+    # range, so this guards the sub-path exponent width (directed w4m30 cancellation witnesses run here).
     ("w4_m30_random", 4, 30, "random", 512),
 ]
 # unary:    (config, wexp, wman, kind, count)
@@ -71,27 +68,26 @@ UNARY = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
 ]
-# exp2/log2 table+polynomial unary ops; tables exist only for the generator's supported WMAN
-# (16,18,24,27,32,36,48,53 -- min is WMAN=16, see SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every config
-# here must use one of those. The smallest exhaustive format is therefore w<WEXP>_m16.
+# exp2/log2: tables exist only for the supported WMAN {16,18,24,27,32,36,48,53} (min 16; see
+# SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every config must use one of those.
 # (config, wexp, wman, kind, count)
 TRANS_EXPLOG = [
-    ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),    # wfull=18: exhaustive at the minimum WMAN
-    ("w6_m16_random", 6, 16, "random", 512),          # minimum exp2/log2 table width with a wider exponent
+    ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),    # exhaustive at the minimum WMAN
+    ("w6_m16_random", 6, 16, "random", 512),          # min table width, wider exponent
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
-    # Wide-exponent guard: WMAN=16 (the minimum) keeps the datapath small while WEXP=20 (vs <=11 elsewhere) and the
-    # directed overflow/underflow/inf/pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
+    # Wide-exponent guard: min WMAN keeps the datapath small while WEXP=20 and the directed overflow/underflow/inf/
+    # pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
     ("w20_m16_random", 20, 16, "random", 2000),
 ]
 TRANS_EXPLOG_EXT = [
-    (2, 16, "exhaustive", 0), (3, 16, "exhaustive", 0),   # exhaustive at the minimum WMAN, two WEXP
-    (8, 27, "random", 512), (8, 32, "random", 512),       # mid-range supported WMAN
-    (14, 16, "random", 2000),  # wide exponent field (exhaustive infeasible above tiny WEXP), random sweep instead
+    (2, 16, "exhaustive", 0), (3, 16, "exhaustive", 0),
+    (8, 27, "random", 512), (8, 32, "random", 512),
+    (14, 16, "random", 2000),  # wide-exponent guard (exhaustive infeasible)
 ]
 
-# sincos/atan2 still support WMAN=11 via the CORDIC generator, so their low-cost coverage stays at WMAN=11.
+# sincos/atan2 support WMAN=11 via the CORDIC generator, so their low-cost coverage uses WMAN=11.
 TRANS_TRIG = [
     ("w2_m11_exhaustive", 2, 11, "exhaustive", 0),
     ("w3_m11_exhaustive", 3, 11, "exhaustive", 0),
@@ -107,9 +103,8 @@ TRANS_TRIG_EXT = [
     (14, 11, "random", 2000),
 ]
 
-# zkf_atan2 is two-input, so joint-exhaustive (2**(2*wfull)) is infeasible even at the minimum WMAN -- every format
-# uses directed (the full special/axis/diagonal pair table) + random pairs. Covers the two synthesized formats (6/18,
-# 8/36) plus the wide-exponent guard.
+# zkf_atan2 is two-input, so joint-exhaustive is infeasible even at min WMAN: every format uses directed (the full
+# special/axis/diagonal pair table) + random pairs. Covers the synthesized 6/18 and 8/36 plus the wide-exponent guard.
 TRANS_ATAN2 = [
     ("w6_m18_random", 6, 18, "random", 1536),
     ("w8_m24_random", 8, 24, "random", 1024),
@@ -127,17 +122,15 @@ FROM_INT = [
     ("w5_m11_int16_random", 5, 11, 16, "random", 512),
     ("w6_m18_int32_random", 6, 18, 32, "random", 768),
     ("w8_m24_int32_random", 8, 24, 32, "random", 1024),
-    # Wide WINT (>= ~98 here) makes the leading-one position + BIAS exceed a position-only-sized exponent field; the
-    # directed extremes (int_max etc.) overflow to +inf and would regress to +0 if WEU is mis-sized. Exhaustive is
-    # infeasible at this width, so directed covers the boundary deterministically.
+    # Wide WINT makes the leading-one position + BIAS exceed a position-only-sized exponent field; the directed
+    # extremes (int_max etc.) overflow to +inf and would regress to +0 if WEU is mis-sized. Exhaustive is infeasible
+    # at this width, so directed covers the boundary deterministically.
     ("w6_m18_int128_directed", 6, 18, 128, "directed", 0),
 ]
 TO_INT = FROM_INT + [("w11_m53_int32_random", 11, 53, 32, "random", 384)]
-# resize: (config, wexp_in, wman_in, wexp_out, wman_out, kind, count). Covers every (WMAN, WEXP) relation
-# quadrant so each elaboration-time branch in zkf_resize is exercised: widen-only fast path (3/4->3/4
-# same, 3/4->4/4, 3/4->4/6, 3/4->3/6, 5/11->6/18); pack/g_widen slow path (5/4->3/4 g_same_width,
-# 5/4->3/6 g_zero_pad); pack/g_narrow slow path (3/5->3/4 DROP=1, 4/6->3/4 DROP=2, 6/18->5/11 DROP=7,
-# plus deep 8/24->6/18 and 11/53->8/24).
+# resize: (config, wexp_in, wman_in, wexp_out, wman_out, kind, count). Covers every (WMAN, WEXP) quadrant so each
+# zkf_resize elaboration-time branch runs: widen-only fast path, pack/g_widen (g_same_width, g_zero_pad), and
+# pack/g_narrow (DROP=1/2/7).
 RESIZE = [
     ("w3_m4_to_w3_m4_exhaustive", 3, 4, 3, 4, "exhaustive", 0),
     ("w3_m4_to_w4_m4_exhaustive", 3, 4, 4, 4, "exhaustive", 0),
@@ -153,7 +146,7 @@ RESIZE = [
     ("w11_m53_to_w8_m24_random", 11, 53, 8, 24, "random", 384),
 ]
 
-# extended (deep) format lists (formerly BIN_EXT / DIV_EXT / UNARY_EXT in run_extended.sh).
+# extended (deep) format lists.
 BIN_EXT = [
     (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (2, 7, "exhaustive", 0), (3, 6, "exhaustive", 0),
     (5, 4, "exhaustive", 0), (4, 6, "exhaustive", 0), (3, 7, "random", 512), (6, 17, "random", 768),
@@ -167,7 +160,7 @@ UNARY_EXT = [
     (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (3, 6, "exhaustive", 0),
     (6, 17, "random", 512), (8, 23, "random", 512),
 ]
-# fma deep formats: all random (ternary-exhaustive is infeasible above wfull=6). (wexp, wman, kind, count)
+# fma deep formats: all random (ternary-exhaustive infeasible above wfull=6). (wexp, wman, kind, count)
 FMA_EXT = [
     (4, 5, "random", 512), (3, 6, "random", 512), (5, 4, "random", 512), (3, 7, "random", 512),
     (6, 17, "random", 768), (8, 23, "random", 512), (7, 12, "random", 512), (9, 24, "random", 512),
@@ -176,12 +169,12 @@ FMA_EXT = [
 
 @dataclass
 class Run:
-    module: str          # mul, add, pack, to_int, pipe, lod, rshift, ...
+    module: str          # mul, add, pack, to_int, pipe, ...
     sim: str             # icarus | verilator
     tier: str            # pr | deep | properties | fast
-    config: str          # final config name (with knob suffixes)
+    config: str          # config name including knob suffixes
     target: str          # fusesoc target, e.g. sim_mul_icarus
-    root: str            # build root
+    root: str
     vlog: list           # [(name, value), ...]  -> --NAME value
     plus: list           # [(name, value), ...]  -> --ZKF_... value
     defines: list = field(default_factory=list)   # [(name, value), ...] -> vlogdefine parameters
@@ -220,10 +213,9 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
     return Run(module, sim, tier, config, target, root, vlog, plus, list(defines or []))
 
 
-# --- builders that mirror the former bash helpers -------------------------------------------------
 def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None,
             pa=None, so=None, wm=None, target=None, root_module=None) -> Run:
-    # wm (WMULTIPLIER) is only meaningful for the multiply (zkf_mul); the other _binary ops do not declare it.
+    # wm (WMULTIPLIER) is only meaningful for the multiply (zkf_mul); other _binary ops do not declare it.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
@@ -247,8 +239,8 @@ def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=
 
 
 def _ilog2(sim, tier, base, w, m, kind, count, *, wk=None, si=None, sd=None) -> Run:
-    # zkf_mul_ilog2: k is a runtime port of width WK (default WEXP+1). WK is always passed so the RTL parameter and the
-    # bench (ZKF_WK) agree; the default width already reaches shifts that saturate to inf / flush to zero.
+    # zkf_mul_ilog2: k is a runtime port of width WK (default WEXP+1). WK is always passed so the RTL parameter and
+    # the bench (ZKF_WK) agree; the default width already reaches shifts that saturate to inf / flush to zero.
     wk = wk if wk is not None else w + 1
     vlog = [("WEXP", w), ("WMAN", m), ("WK", wk)]
     suffix = f"_wk{wk}"
@@ -336,10 +328,10 @@ def _pipe(sim, tier, config, w, n, count) -> Run:
 def _trans(module, sim, tier, base, w, m, kind, count, *,
            si=None, sr=None, sd=None, sp=None, spf=None, sn=None, sno=None, pa=None, so=None, un=None, parallel=None,
            wm=None) -> Run:
-    # Each module takes only its own knobs (passing an undeclared parameter makes fusesoc error). exp2/log2 use
-    # si/sp/so (STAGE_INPUT/PRODUCT/OUTPUT) and wm (WMULTIPLIER, the _zkf_pmul DSP-tile-grid hint); exp2 also uses
-    # sr (STAGE_REDUCE); log2 also uses sd/spf/sno (STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT); sincos and atan2 use
-    # un (UNROLL100), parallel (PARALLEL, decoupled z-path), si/so, sp, sn, pa, wm.
+    # Each module takes only its own knobs (an undeclared parameter makes fusesoc error). Knob legend: si/sp/so =
+    # STAGE_INPUT/PRODUCT/OUTPUT, wm = WMULTIPLIER (_zkf_pmul DSP-tile-grid hint), sr = STAGE_REDUCE (exp2),
+    # sd/spf/sno = STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT (log2), un = UNROLL100, parallel = PARALLEL
+    # (decoupled z-path), sn = STAGE_NORMALIZE, pa = STAGE_PACK.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if un is not None:
@@ -371,33 +363,28 @@ def _trans(module, sim, tier, base, w, m, kind, count, *,
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
-# --- the matrix -----------------------------------------------------------------------------------
 def _per_pr(sim, out: list) -> None:
     for cfg, w, m, u, k, c in PACK:
         out.append(_pack(sim, "pr", cfg, w, m, u, k, c))
     for op in ("cmp", "sort"):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-        # New uniform STAGE_INPUT knob for cmp/sort: exercise on a fast exhaustive format.
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     for op in ("add", "addsub"):
         for sd in (0, 1):
             for sa in (0, 1):
                 for cfg, w, m, k, c in BINARY:
                     out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
-        # New uniform STAGE_INPUT and STAGE_PACK knobs for add/addsub: exercise each on a fast exhaustive format,
-        # plus the all-on combination so a future register-stage change cannot silently break the latency bookkeeping.
+        # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
         out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1,
                            si=2, so=1))
-        # Arbitrary STAGE_INPUT (>1 dummy input stages): isolated exhaustive (si=3) + a wider random (si=2) exercise
-        # the counted-latency bookkeeping and the multi-stage input pipe beyond the former {0,1} range.
+        # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
         out.append(_binary(op, sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
-        # STAGE_NORMALIZE knob (new): forwards to _zkf_normshift.STAGE_SPLIT for the close-cancel path. SN=1
-        # matches today's silent SS=1 (same latency, different register placement); SN=2 adds an s2x catch-up
-        # cycle. The normshift needs NL4 >= 3 for SN=2, which requires NINPUT = WMAN+3 >= 11 -> WMAN >= 8.
+        # STAGE_NORMALIZE forwards to _zkf_normshift.STAGE_SPLIT (close-cancel path); SN=2 adds an s2x catch-up cycle
+        # and needs NL4 >= 3, i.e. NINPUT = WMAN+3 >= 11 -> WMAN >= 8 (hence the w8_m18 sn2 row).
         for sn in (1,):
             out.append(_binary(op, sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=sn))
         out.append(_binary(op, sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
@@ -405,46 +392,39 @@ def _per_pr(sim, out: list) -> None:
         for si in (0, 1):
             for cfg, w, m, k, c in BINARY:
                 out.append(_binary("mul", sim, "pr", cfg, w, m, k, c, sp=sp, si=si))
-    # New uniform STAGE_PACK knob (forwards to _zkf_pack.STAGE_INPUT) for mul: standalone and full-shield check.
+    # STAGE_PACK forwards to _zkf_pack.STAGE_INPUT.
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_binary("mul", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sp=1, si=1, pa=1, so=1))
-    # STAGE_PRODUCT 2/3 (widened from {0,1}) forward to _zkf_pmul's 2x2 / 3x3 split grids; exercise both split depths
-    # for bit-exactness + the latency bookkeeping on a fast exhaustive format.
+    # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=3))
     for si in (0, 1):
         for cfg, w, m, k, c in BINARY:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
-    # New uniform STAGE_PACK knob for div: standalone exercise.
     out.append(_binary("div", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_binary("div", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
     for cfg, w, m, k, c in FMA:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
-    # Each pipeline knob exercised once (plus all-on) on a fast format. Results are staging-independent, so this
-    # validates the out_valid timing of every STAGE_* register without re-running the slow formats.
+    # Each pipeline knob once (plus all-on) on a fast format; results are staging-independent, so this checks the
+    # out_valid timing of every STAGE_* register without re-running the slow formats.
     for si, sp, sd, sa, sn, pa, so in [(0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0, 0),
                                        (0, 0, 1, 0, 0, 0, 0), (0, 0, 0, 1, 0, 0, 0), (0, 0, 0, 0, 1, 0, 0),
                                        (0, 0, 0, 0, 0, 1, 0), (0, 0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1, 1)]:
         out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256,
                         sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
-    # STAGE_PRODUCT 2/3 (widened from {0,1}) forward to _zkf_pmul's 2x2 / 3x3 split grids; exercise both on the fast
-    # format for bit-exactness + the latency bookkeeping.
+    # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
     out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=2))
     out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=3))
-    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 = ($clog2(2*WMAN+3)+1)/2 >= 3, i.e. WMAN >= 7
-    # (smaller WMAN collapses its two register barriers and is rejected at elaboration), so it cannot use the w4/m6
-    # knob format above. Exercise it at the WMAN=7 guard boundary - the smallest format permitted, and a WINDEX-
-    # dominated WEU corner - and at a wider WMAN=18 so CI covers both the guard edge and the +1-stage timing.
+    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 >= 3, i.e. WMAN >= 7 (smaller is rejected at
+    # elaboration), so it cannot use the w4/m6 format above: run the WMAN=7 guard edge and a wider WMAN=18.
     out.append(_fma(sim, "pr", "w4m7_sn2", 4, 7, "random", 384, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(sim, "pr", "w6m18_sn2", 6, 18, "random", 384, sp=1, sd=1, sa=1, sn=2))
-    # STAGE_NORMALIZE=2 with STAGE_OUTPUT=1 is otherwise untested (every other sn=2 entry has so=0): guard the
-    # deepest pipeline - the 3-segment normalizer's payload realignment feeding the registered packer output - with
-    # every stage knob on at once, so a future packer/output-register change cannot silently break it.
+    # sn=2 with so=1 is otherwise untested (other sn=2 rows have so=0): all-on guards the 3-segment normalizer's
+    # payload realignment feeding the registered packer output.
     out.append(_fma(sim, "pr", "w6m18_maxpipe", 6, 18, "random", 384, sp=1, si=1, sd=1, sa=1, sn=2, so=1))
-    # The narrow synth/CI config ships as STAGE_INPUT=1 + STAGE_ALIGN=1 + STAGE_NORMALIZE=2 (closes every W6/M18
-    # datapath cone on both Yosys and the more pessimistic Diamond/LSE with a single MULT18X18D - STAGE_PRODUCT=1
-    # would split the 18x18 into a 2x2 grid costing 4 DSPs for no timing gain); gate that exact stage combination so
-    # the shipped config's correctness is tested directly, not just inferred from the per-knob sweeps.
+    # Shipped narrow synth config: si=1 + sa=1 + sn=2 (closes the W6/M18 cones on Yosys and Diamond/LSE with one
+    # MULT18X18D; sp=1 would split the 18x18 into a 2x2 grid = 4 DSPs for no timing gain). Gated so it is tested
+    # directly, not just inferred from the per-knob sweeps.
     out.append(_fma(sim, "pr", "w6m18_si1_sa1_sn2", 6, 18, "random", 384, si=1, sa=1, sn=2))
     for op in ("abs", "neg", "is_finite", "saturate"):
         for cfg, w, m, k, c in UNARY:
@@ -456,10 +436,8 @@ def _per_pr(sim, out: list) -> None:
         for op in ("sincos",):
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
     for op in ("exp2", "log2"):
-        # STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT timing coverage on the cheapest exhaustive format (results
-        # are staging-independent, so these only exercise the register-stage bookkeeping and the optional registers).
-        # sincos shares STAGE_INPUT/STAGE_PRODUCT/STAGE_OUTPUT, plus its own UNROLL100 / STAGE_NORMALIZE / STAGE_PACK
-        # staging (the decode and wide-datapath register stages are always-on) -- all covered in its own rows below.
+        # STAGE_INPUT/PRODUCT/OUTPUT timing on the cheapest exhaustive format; results are staging-independent, so
+        # these only exercise the register-stage bookkeeping. sincos's own knobs (UNROLL100/NORMALIZE/PACK) are below.
         out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1))
         out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, so=1))
         out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=1))
@@ -469,62 +447,53 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sr=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, spf=2))
-    # sincos throughput knob UNROLL100 (iterations/cycle x100): 50 = half-rate 2-cycle engine, 100 = the synthesized
-    # M18 rate, 200 = 2/cycle. Each changes the published II, so exercise it -- the test asserts measured == model.
+    # UNROLL100 (iterations/cycle x100): 50 = half-rate, 100 = synthesized M18 rate, 200 = 2/cycle. Each changes the
+    # published II; the test asserts measured == model.
     out.append(_trans("sincos", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=50))
     out.append(_trans("sincos", sim, "pr", "w5_m11_unroll", 5, 11, "random", 256, un=200))
-    # sincos staging knobs (all bit-transparent vs the unstaged path; the test verifies bit-exactness + the latency
-    # model for each). Exercise on the cheap 5/11 format. STAGE_INPUT / STAGE_OUTPUT are the standard sequential-module
-    # register stages; the decode and wide-datapath stages are always-on (the synthesized WMAN=36 profile is un=50 +
-    # sp=3 + wmultiplier=18).
+    # sincos staging knobs, bit-transparent vs the unstaged path (the test checks bit-exactness + latency). si/so are
+    # the standard sequential register stages; the decode and wide-datapath stages are always-on.
     out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, so=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_stage", 5, 11, "random", 256, si=1, so=1))
-    # STAGE_PRODUCT: the shared correction multiply (_zkf_pmul) depth -- 1 = native + operand capture, 2 = 2x2 +
-    # capture, 3 = 3x3 + capture + row-sum. Bit-transparent; each adds 2*STAGE_PRODUCT cycles. Exercises every grid.
+    # STAGE_PRODUCT: shared _zkf_pmul depth (1 = native, 2 = 2x2, 3 = 3x3). Bit-transparent; each adds
+    # 2*STAGE_PRODUCT cycles.
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2))
     out.append(_trans("sincos", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=3))
     out.append(_trans("sincos", sim, "pr", "w5_m11_un50_prod", 5, 11, "random", 256, un=50, parallel=0, sp=2))
-    # Decoupled z-path (PARALLEL): the engine runs the narrow z-recurrence at full rate ahead of the half-rate x/y
-    # rotator and issues PHI early -- bit-identical to lock-step but with the latency dropped by min(1+STAGE_PRODUCT,
-    # gap). PARALLEL is only legal/useful half-rate (it mirrors the synthesized M36 profile), so exercise un=50 with
-    # PARALLEL=1 across STAGE_PRODUCT and pin the lock-step half-rate fallback with explicit PARALLEL=0. The test
-    # asserts bit-exactness vs the unchanged model AND measured II == model, catching a decouple bug or a latency drift.
-    # (Full-rate + PARALLEL is rejected at elaboration -- a full-rate z-chain can't get ahead -- so it is not swept.)
+    # PARALLEL decouples the z-recurrence (runs at full rate ahead of the half-rate x/y rotator, issues PHI early):
+    # bit-identical to lock-step, lower latency. Only legal half-rate (full-rate + PARALLEL is rejected at
+    # elaboration), so sweep un=50 with PARALLEL=1/0. The test asserts bit-exactness + II == model.
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=2))
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=1, sp=3))
     out.append(_trans("sincos", sim, "pr", "w5_m11_dec", 5, 11, "random", 256, un=50, parallel=0, sp=3))
-    # STAGE_NORMALIZE for log2 / sincos controls the normalizer's STAGE_SPLIT. Cover log2 at the minimum supported
-    # table width and sincos on the cheap 5/11 CORDIC format.
+    # STAGE_NORMALIZE (log2/sincos) drives the normalizer's STAGE_SPLIT.
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sp=1, sn=1))
     out.append(_trans("log2", sim, "pr", "w8_m24_sncheck", 8, 24, "random", 256, sn=2, pa=1))
-    # Exercise log2's STAGE_NORMALIZE_OUTPUT integration (the registered _zkf_normshift output + its pole/domain
-    # sideband alignment); no other matrix row drives sno, and no shipped synth config uses it.
+    # log2 STAGE_NORMALIZE_OUTPUT: registered _zkf_normshift output + pole/domain sideband alignment; no other row
+    # drives sno.
     out.append(_trans("log2", sim, "pr", "w6_m16_sno", 6, 16, "random", 256, sn=1, sno=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=2))
-    # STAGE_PACK is a uniform knob (forwards to _zkf_pack.STAGE_INPUT) on exp2/log2/sincos. Exercise it on the
-    # cheapest exhaustive format: standalone and in combination with the other staging knobs.
+    # STAGE_PACK forwards to _zkf_pack.STAGE_INPUT (exp2/log2/sincos), standalone and combined with other knobs.
     out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
     out.append(_trans("sincos", sim, "pr", "w2_m11_exhaustive", 2, 11, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m11_sncheck", 5, 11, "random", 256, sn=1, pa=1))
-    # Exact small log2 synthesis presets: the shipped 6/18 rows use STAGE_NORMALIZE=1 + the final-multiply
-    # operand-capture (STAGE_PRODUCT_FINAL=1), so cover them at PR depth to pin the latency and the pole/domain-error
-    # sideband alignment under those exact knobs.
+    # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
+    # sideband alignment under the exact shipped knobs.
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
     out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
-    # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random across formats, then the shared knob sweeps
-    # (UNROLL100 throughput; STAGE_INPUT/OUTPUT/NORMALIZE/PACK staging). Each row asserts bit-exactness vs the model and
-    # measured II == atan2_latency. Directed alone exercises every special/axis/diagonal/bypass-boundary pair.
+    # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random, then the shared knob sweeps. Each row
+    # checks bit-exactness + II == atan2_latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", sim, "pr", cfg, w, m, k, c))
-    # Tiny WEXP (2, 3): random covers the generic path (the narrow exponent-difference width) AND the directed special
-    # pairs (the axis/diagonal turn constants that underflow the normal range at small BIAS).
+    # Tiny WEXP (2, 3): random covers the narrow exponent-difference path plus the axis/diagonal turn constants that
+    # underflow the normal range at small BIAS.
     out.append(_trans("atan2", sim, "pr", "w2_m11_random", 2, 11, "random", 512))
     out.append(_trans("atan2", sim, "pr", "w3_m11_random", 3, 11, "random", 512))
     out.append(_trans("atan2", sim, "pr", "w6_m18_directed", 6, 18, "directed", 0))
@@ -538,31 +507,28 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("atan2", sim, "pr", "w5_m11_norm", 5, 11, "random", 256, sn=2))
     out.append(_trans("atan2", sim, "pr", "w5_m11_pack", 5, 11, "random", 256, pa=1))
     out.append(_trans("atan2", sim, "pr", "w5_m11_full", 5, 11, "random", 256, si=1, sn=2, pa=1, so=1))
-    # STAGE_PRODUCT / WMULTIPLIER: the shared _zkf_pmul (magnitude x_K*KINV and the residual/bypass Q*INV_TAU). Each
-    # adds STAGE_PRODUCT cycles; bit-transparent. Exercise the native (sp=1) and the 2x2 (sp=2) tile-grid splits, plus
-    # the synthesized 6/18 operating point (half-rate engine + the staged DSP-tile-grid product + back-end stages).
+    # STAGE_PRODUCT / WMULTIPLIER: shared _zkf_pmul (magnitude x_K*KINV, residual/bypass Q*INV_TAU); bit-transparent,
+    # each adds STAGE_PRODUCT cycles. Native (sp=1), 2x2 (sp=2), plus the synthesized 6/18 operating point.
     out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=1))
     out.append(_trans("atan2", sim, "pr", "w5_m11_prod", 5, 11, "random", 256, sp=2, wm=16))
     out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256,
                       un=50, sp=2, wm=18, sn=2, pa=1))
-    # The shipped zkf_atan2_w8m36 synth config (UNROLL100=50, STAGE_PRODUCT=4, WMULTIPLIER=18, STAGE_NORMALIZE=2,
-    # STAGE_PACK=1, STAGE_OUTPUT=1) tested directly so its correctness + data-independent latency
-    # are checked, not just inferred from the knob sweeps.
+    # Shipped zkf_atan2_w8m36 synth config tested directly (correctness + data-independent latency, not just
+    # inferred from the knob sweeps).
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256,
                       un=50, sp=4, wm=18, sn=2, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
-    # New uniform STAGE_INPUT knob for mul_ilog2_const: standalone and combined with STAGE_DECODE.
     out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
-    # zkf_mul_ilog2 (runtime k): same format sweep as the const module, both decode depths. The default WK=WEXP+1 range
-    # already covers shifts that overflow to inf / underflow to zero for every input class.
+    # zkf_mul_ilog2 (runtime k): same format sweep, both decode depths. Default WK=WEXP+1 already covers shifts that
+    # overflow to inf / underflow to zero for every input class.
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_ilog2(sim, "pr", cfg, w, m, k, c, sd=sd))
-    # STAGE_INPUT (incl. dummy >1) and non-default WK (narrow, so k cannot leave the normal range; and wide, so large
-    # |k| exercises the saturating boundaries) on a fast exhaustive format.
+    # STAGE_INPUT (incl. >1) and non-default WK: narrow (k cannot leave the normal range) and wide (large |k| hits
+    # the saturating boundaries).
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
@@ -575,15 +541,13 @@ def _per_pr(sim, out: list) -> None:
             out.append(_cast("to_int", sim, "pr", cfg, w, m, wint, k, c, si))
         for cfg, wi, mi, wo, mo, k, c in RESIZE:
             out.append(_resize(sim, "pr", cfg, wi, mi, wo, mo, k, c, si))
-    # New uniform knobs on zkf_from_int (STAGE_NORMALIZE forwarded to _zkf_normshift.STAGE_SPLIT, STAGE_PACK
-    # forwarded to _zkf_pack.STAGE_INPUT). Exercise on a fast exhaustive format.
+    # zkf_from_int knobs: STAGE_NORMALIZE -> _zkf_normshift.STAGE_SPLIT, STAGE_PACK -> _zkf_pack.STAGE_INPUT.
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, sn=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, pa=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=1, sn=1, pa=1))
-    # zkf_round: every operand is swept across all four rounding modes by the bench. UNARY covers the formats
-    # (w2_m4 exhaustive reaches the round-up-overflows-to-inf corner). The stage knobs (STAGE_INPUT via zkf_pipe,
-    # STAGE_PACK -> _zkf_pack.STAGE_INPUT, STAGE_OUTPUT -> _zkf_pack.STAGE_OUTPUT) are exercised once each plus
-    # all-on on a fast exhaustive format so a latency-bookkeeping regression is caught cheaply.
+    # zkf_round: the bench sweeps every operand across all four rounding modes; UNARY covers the formats (w2_m4
+    # reaches the round-up-overflows-to-inf corner). Stage knobs: STAGE_INPUT via zkf_pipe, STAGE_PACK/OUTPUT ->
+    # _zkf_pack; exercised once each plus all-on to catch latency-bookkeeping regressions.
     for cfg, w, m, k, c in UNARY:
         out.append(_round(sim, "pr", cfg, w, m, k, c))
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
@@ -591,12 +555,11 @@ def _per_pr(sim, out: list) -> None:
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
     out.append(_round(sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, sd=1, pa=1, so=1))
-    out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))  # one-off
+    out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
-    # Arbitrary STAGE_INPUT (>1 dummy input stages) across the generalized public modules: a latency-checked si=2 per
-    # module (+ si=3 on the multiplier) confirms the widened input pipe and the _count(stage_input) latency model agree
-    # beyond the former {0,1}. sincos/atan2 are excluded (handshake-entangled input stage; deferred).
+    # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks the widened input
+    # pipe against the _count(stage_input) latency model. sincos/atan2 excluded (handshake-entangled input stage).
     for op in ("mul", "div", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
@@ -611,12 +574,10 @@ def _per_pr(sim, out: list) -> None:
 
 
 def _deep_correctness(out: list) -> None:
-    # Full Cartesian product of each module's structural knobs, swept across every format in its deep list, so every
-    # parameter combination is exercised for correctness. (Coverage closure lives in _deep_coverage under merged-union
-    # semantics.) Knob axes: mul = STAGE_INPUT x STAGE_PRODUCT x STAGE_OUTPUT;
-    # add/addsub = STAGE_DECODE x STAGE_ALIGN x STAGE_OUTPUT;
-    # div/from_int/resize = STAGE_INPUT x STAGE_OUTPUT; to_int = STAGE_INPUT only (no STAGE_OUTPUT); pack = STAGE_OUTPUT
-    # x EXP_IS_BIASED; mul_ilog2_const = STAGE_DECODE x K (K already fanned out by its wrapper).
+    # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
+    # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
+    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; div/from_int/resize = STAGE_INPUT x OUTPUT; to_int = STAGE_INPUT
+    # only; pack = STAGE_OUTPUT x EXP_IS_BIASED; mul_ilog2_const = STAGE_DECODE x K.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
@@ -631,9 +592,8 @@ def _deep_correctness(out: list) -> None:
                         out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
         out.append(_binary("sort", s, "deep", base, w, m, k, c))
-    # fma: each deep format once for correctness (results are staging-independent), the full pipeline-knob
-    # cartesian on one fast format to validate every STAGE_* timing combination, the WEXP=8/WMAN=36 gated synth
-    # config, and the smallest format exhaustively at the staging extremes.
+    # fma: each deep format once (results are staging-independent), the full pipeline-knob cartesian on one fast
+    # format, the WEXP=8/WMAN=36 synth config, and the smallest format at the staging extremes.
     for w, m, k, c in FMA_EXT:
         out.append(_fma(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
     for sp in (0, 1):
@@ -646,9 +606,8 @@ def _deep_correctness(out: list) -> None:
                                             sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
-    # Widened STAGE_PRODUCT split depths (2 = 2x2, 3 = 3x3) on the wide WMAN=36 format where the multi-tile grid
-    # actually matters, with a WMULTIPLIER=18 pin so _zkf_pmul derives the 18-bit DSP-tile grid rather than symmetric.
-    # sp=2 is the depth the synthesized zkf_fma_w8m36 ships; sp=3 additionally exercises the 3x3 grid end to end.
+    # STAGE_PRODUCT 2/3 (2x2/3x3) on wide WMAN=36 with WMULTIPLIER=18 so _zkf_pmul derives the 18-bit DSP-tile grid.
+    # sp=2 is what zkf_fma_w8m36 ships; sp=3 also exercises the 3x3 grid end to end.
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=2, wm=18, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
@@ -658,7 +617,7 @@ def _deep_correctness(out: list) -> None:
         for si in (0, 1):
             for so in (0, 1):
                 out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
-    # div at WMAN=48 (it uses no transcendental tables, so a wide format is cheap and otherwise untested in CI).
+    # div at WMAN=48: no transcendental tables, so a wide format is cheap and otherwise untested.
     out.append(_binary("div", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
@@ -667,8 +626,7 @@ def _deep_correctness(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
             out.append(_ilog2(s, "deep", base, w, m, k, c, sd=sd))
-    # exp2/log2: STAGE_INPUT / STAGE_PRODUCT / STAGE_OUTPUT staging (one knob at a time off the baseline) across the
-    # deep transcendental format list.
+    # exp2/log2 staging (one knob at a time off the baseline) across the deep transcendental formats.
     for w, m, k, c in TRANS_EXPLOG_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("exp2", "log2"):
@@ -678,8 +636,7 @@ def _deep_correctness(out: list) -> None:
         out.append(_trans("log2", s, "deep", base + "_decode", w, m, k, c, sd=1))
         out.append(_trans("log2", s, "deep", base + "_split_final", w, m, k, c, sp=1, spf=2))
 
-    # sincos sweeps STAGE_PRODUCT (its shared _zkf_pmul split) plus its UNROLL100 throughput knob and
-    # STAGE_NORMALIZE / STAGE_PACK; the testbench asserts measured II == model each time.
+    # sincos: STAGE_PRODUCT (_zkf_pmul split), UNROLL100, STAGE_NORMALIZE/PACK; the testbench asserts II == model.
     for w, m, k, c in TRANS_TRIG_EXT:
         base = f"w{w}m{m}_{k}"
         for un in (50, 100, 200, 400):
@@ -687,34 +644,29 @@ def _deep_correctness(out: list) -> None:
         for sp in (1, 2, 3):
             out.append(_trans("sincos", s, "deep", base, w, m, k, c, sp=sp))
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, si=1, so=1, sn=1, pa=1))
-        # The synthesized wide profile's multiply (half-rate engine + 3x3 product split pinned to the WMULTIPLIER=18
-        # 18-bit DSP-tile grid, as zkf_sincos_w8m36 ships), bit-transparent vs the unstaged path, across the deep wide
-        # formats. STAGE_NORMALIZE / STAGE_PACK are swept separately above; here the focus is the wide multiplier grid.
+        # Synthesized wide profile: half-rate + 3x3 split pinned to WMULTIPLIER=18 (as zkf_sincos_w8m36 ships),
+        # bit-transparent, across the deep wide formats; focus is the wide multiplier grid.
         out.append(_trans("sincos", s, "deep", base, w, m, k, c, un=50, sp=3, wm=18))
-    # The exact synthesized WEXP=8/WMAN=36 multiply-bearing operating points, end to end with WMULTIPLIER=18 (the
-    # 18-bit DSP-tile grid the Diamond/LSE flow needs): mul at STAGE_PRODUCT=2, exp2 at STAGE_PRODUCT=3, log2 Horner
-    # and the wider final multiply at STAGE_PRODUCT=3, and log2's normalize-shift split at STAGE_NORMALIZE=2 (the row
-    # sets sn=2; the normalizer output-register stage STAGE_NORMALIZE_OUTPUT is not used here). WMULTIPLIER is
-    # bit-transparent, but pinning the shipped grid here exercises the full datapath at the operating point that
-    # synthesis actually builds rather than only the symmetric default.
+    # Exact synthesized WEXP=8/WMAN=36 operating points with WMULTIPLIER=18 (the 18-bit DSP-tile grid the Diamond/LSE
+    # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
+    # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512,
                       si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
-    # zkf_atan2 deep: a baseline per format, the UNROLL100 throughput sweep + full staging on the cheap 5/11 format,
-    # and the exact synthesized 6/18 + 8/36 operating points (half-rate engine + staged back-end).
-    # Each asserts II == model.
+    # zkf_atan2 deep: baseline per format, UNROLL100 sweep + full staging on 5/11, and the synthesized 6/18 + 8/36
+    # operating points. Each asserts II == model.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", s, "deep", f"atan2_{cfg}", w, m, k, c))
     for un in (50, 100, 200, 400):
         out.append(_trans("atan2", s, "deep", "atan2_w5m11_un", 5, 11, "random", 512, un=un))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11_stage", 5, 11, "random", 512, si=1, so=1, sn=2, pa=1))
     out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512,
-                      un=50, sp=2, wm=18, sn=2, pa=1))              # the synthesized 6/18 operating point
+                      un=50, sp=2, wm=18, sn=2, pa=1))
     out.append(_trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512,
-                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))  # the synthesized 8/36 operating point
-    # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 stimulus is exhaustive-only (test_pack iterates the biased
-    # field directly); random formats stay EXP_IS_BIASED=0, which is also exercised transitively via add/from_int.
+                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))
+    # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 is exhaustive-only (test_pack iterates the biased field);
+    # random formats stay EXP_IS_BIASED=0 (also exercised transitively via add/from_int).
     for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
                           (4, 5, 8, "random", 768), (6, 17, 10, "random", 1024), (4, 4, 8, "random", 512)]:
         base = f"w{w}m{m}u{u}_{k}"
@@ -730,8 +682,8 @@ def _deep_correctness(out: list) -> None:
             out.append(_cast("to_int", s, "deep", base, w, m, i, k, c, si))
             for so in (0, 1):
                 out.append(_cast("from_int", s, "deep", base, w, m, i, k, c, si, so=so))
-    # from_int at the widest WMAN and at STAGE_NORMALIZE=2: its WX/WEU sizing, carry-to-inf wiring, and the sn=2
-    # normalize-shift split are otherwise unexercised (the loop above tops out at WMAN=24 with sn<=1).
+    # from_int at the widest WMAN and sn=2: its WX/WEU sizing, carry-to-inf wiring, and the sn=2 normalize-shift
+    # split are otherwise unexercised (the loop above tops out at WMAN=24, sn<=1).
     out.append(_cast("from_int", s, "deep", "w11m53i32", 11, 53, 32, "random", 384, 0))
     out.append(_cast("from_int", s, "deep", "w6m18i32_sn2", 6, 18, 32, "random", 256, 0, sn=2))
     for wi, mi, wo, mo, k, c in [(4, 5, 4, 4, "exhaustive", 0), (4, 4, 4, 5, "exhaustive", 0),
@@ -742,12 +694,12 @@ def _deep_correctness(out: list) -> None:
         for si in (0, 1):
             for so in (0, 1):
                 out.append(_resize(s, "deep", base, wi, mi, wo, mo, k, c, si, so=so))
-    # resize across a wide WMAN=48 (narrow then widen): the WMAN-shrink GRS rounding and the WMAN-grow zero-fill at a
-    # wide format are otherwise untested in CI.
+    # resize at wide WMAN=48 (narrow then widen): the WMAN-shrink GRS rounding and WMAN-grow zero-fill, otherwise
+    # untested.
     out.append(_resize(s, "deep", "w8m48_to_w8m24", 8, 48, 8, 24, "random", 384, 0))
     out.append(_resize(s, "deep", "w8m24_to_w8m48", 8, 24, 8, 48, "random", 384, 0))
-    # round: each unary deep format once for correctness, the full STAGE_INPUT x STAGE_PACK x STAGE_OUTPUT knob
-    # cartesian on a small exhaustive format, and the WEXP=8/WMAN=36 wide format (shared with the synth gate).
+    # round: each unary deep format once, the full si x pa x so knob cartesian on a small exhaustive format, and the
+    # WEXP=8/WMAN=36 wide format.
     for w, m, k, c in UNARY_EXT:
         out.append(_round(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
     for si in (0, 1):
@@ -773,9 +725,9 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
         out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
-    # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default and all-on staging toggles
-    # the product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
-    # far-shift saturation path that the tiny W2/M4 exponent range cannot reach.
+    # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default + all-on toggles the
+    # product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
+    # far-shift saturation path the tiny W2/M4 exponent range cannot reach.
     out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=0, sd=0, sa=0, sn=0, so=0))
     out.append(_fma(s, "deep", "w2m4", 2, 4, "exhaustive", 0, sp=1, sd=1, sa=1, sn=1, so=1))
     out.append(_fma(s, "deep", "w3m4", 3, 4, "random", 4096, sp=1, sd=1, sa=1, sn=1, so=1))
@@ -792,9 +744,8 @@ def _deep_coverage(out: list) -> None:
         for sd in (0, 1):
             out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
             out.append(_ilog2(s, "deep", base, w, m, "exhaustive", 0, sd=sd))
-    # exp2/log2 coverage: cheapest exhaustive WMAN=16 formats toggle the ROM/Horner; the so=1 run covers the
-    # registered pack output, and the sp=2/3/4 runs toggle the shared _zkf_pmul split-product paths via the Horner
-    # multiply. The split-final row exercises log2's independent final f*C(f) multiply staging.
+    # exp2/log2 coverage: WMAN=16 exhaustive toggles the ROM/Horner; so=1 covers the registered pack output;
+    # sp=2/3/4 toggle the shared _zkf_pmul split-product paths; split-final exercises log2's final f*C(f) multiply.
     for w, m in [(2, 16), (3, 16)]:
         for op in ("exp2", "log2"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
@@ -805,58 +756,49 @@ def _deep_coverage(out: list) -> None:
         out.append(_trans("exp2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
         out.append(_trans("log2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
     out.append(_trans("log2", s, "deep", "w3m16_split_final", 3, 16, "exhaustive", 0, sp=2, spf=3))
-    # Wide-format split-product coverage (bona fide, not suppression): the w3m16 sp=2/3/4 rows above instrument the
-    # shared _zkf_pmul g_flat/g_rows/g_rows2 reduction trees, but their bounded products leave the high accumulator
-    # bits (csum/r_p/rowc/s_row/s_col MSB region) dark. The w8m36 products fill the full WP, so those bits toggle to
-    # full width. exp2 drives the unsigned grids, log2 the signed grids (matches the known-good icarus _deep_correctness
-    # w8m36 rows). These also widen exp2/log2's significand so its hidden-bit MSB becomes an ordinary toggling bit.
+    # Wide-format split-product coverage (bona fide): w3m16 sp=2/3/4 instruments _zkf_pmul's g_flat/g_rows/g_rows2
+    # trees but leaves the high accumulator bits (csum/r_p/rowc/s_row/s_col MSB) dark; w8m36 fills the full WP.
+    # exp2 drives the unsigned grids, log2 the signed grids. Also widens the significand so the hidden-bit MSB toggles.
     for sp in (2, 3, 4):
         out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
     for sp in (3, 4):
         out.append(_trans("log2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
-    # sincos keeps WMAN=11 coverage via the CORDIC table family. It also runs w5_m11 so the tiny-input bypass
-    # (e <= -(GUARD_FF+2), only reached once the exponent field is wide enough) toggles too.
+    # sincos WMAN=11 coverage via the CORDIC table family; w5_m11 also reaches the tiny-input bypass
+    # (e <= -(GUARD_FF+2), needs a wide enough exponent field).
     for w, m in [(2, 11), (3, 11)]:
         out.append(_trans("sincos", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
-    # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover its UNROLL100 throughput knob
-    # and the shared fixed-to-float normshift-barrier / pack-register toggles.
+    # sincos: exhaustive w5_m11 reaches the bypass path; un=200 and sn=1/pa=1 cover UNROLL100 and the
+    # normshift-barrier / pack-register toggles.
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=200))
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, sn=1, pa=1))
-    # Lock-step (DECOUPLE=0, un=50) and decoupled (PARALLEL=1, par1) sincos together exercise the line+branch of BOTH
-    # CORDIC handoff modes -- the coupled g_zadv path and the half-rate sigma-replay engine. Keep both: each mode's
-    # branches (and the phi_seen if/else legs) are reachable only in its own row. The structurally-dead P_PHI
-    # implicit-else and FSM default arm are coverage_off in zkf_sincos.v.
+    # Lock-step (un=50) and decoupled (PARALLEL=1) sincos exercise both CORDIC handoff modes (coupled g_zadv +
+    # half-rate sigma-replay); each mode's branches (and the phi_seen if/else legs) are reachable only in its own row.
+    # The structurally-dead P_PHI implicit-else and FSM default arm are coverage_off in zkf_sincos.v.
     out.append(_trans("sincos", s, "deep", "w5m11", 5, 11, "exhaustive", 0, un=50))
     out.append(_trans("sincos", s, "deep", "w5m11_par1", 5, 11, "exhaustive", 0, un=50, parallel=1))
-    # Wide-format sincos (bona fide): at w5m11 the CORDIC X/Y carry / local-magnitude / local-exponent high bits sit
-    # above the format ceiling (guard bits above XF, or a magnitude/exponent the narrow datapath never reaches). The
-    # w8m24 CORDIC (table _zkf_cordic_m24) makes them ordinary mid-bits the random phase stream toggles, covering
-    # cd_xn/e_xn/b2_cos, sin/cos_loc_mag, sin/cos_mag, sh_mag and the loc/cos exponent high bits.
+    # Wide-format sincos (bona fide): at w5m11 the CORDIC X/Y carry / local-mag / local-exp high bits sit above the
+    # format ceiling; w8m24 (table _zkf_cordic_m24) makes them ordinary toggling mid-bits (cd_xn/e_xn/b2_cos,
+    # sin/cos_loc_mag, sin/cos_mag, sh_mag, loc/cos exponent high bits).
     out.append(_trans("sincos", s, "deep", "w8m24", 8, 24, "random", 768))
-    # zkf_atan2 coverage: random + the directed pair table at the cheap 5/11 format reach the small-ratio bypass,
-    # the residual divide, and every special/axis/diagonal pair; un=200 and sn/pa toggle the throughput and back-end
-    # staging.
-    # (Joint-exhaustive is infeasible for a two-input op even at the minimum WMAN, so coverage is random + directed.)
+    # zkf_atan2 coverage: random + directed pair table at 5/11 reach the small-ratio bypass, the residual divide, and
+    # every special/axis/diagonal pair; un=200 and sn/pa toggle throughput + back-end staging. (Joint-exhaustive is
+    # infeasible for a two-input op, so coverage is random + directed.)
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 4000))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11_directed", 5, 11, "directed", 0))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, un=200))
     out.append(_trans("atan2", s, "deep", "atan2_w5m11", 5, 11, "random", 2000, sn=1, pa=1))
     # Wide-format atan2 (bona fide): at w5m11 the divider/shamt/significand/magnitude high bits sit above the format
-    # ceiling (e.g. bit 10 is the significand hidden bit and bit 15 the magnitude sign only because WMAN=11/WFULL=16).
-    # At w8m24 those become ordinary mid-bits the random stream toggles, covering d_shamt[5], dv_den/dv_rem/dv_den3, and
-    # the be/d significand and output-magnitude high bits -- so they need no suppression. (Replaces a w5m11 "resdiv" row
-    # that could not reach them.)
+    # ceiling; w8m24 makes them ordinary toggling mid-bits (d_shamt[5], dv_den/dv_rem/dv_den3, be/d significand and
+    # output-magnitude high bits), needing no suppression.
     out.append(_trans("atan2", s, "deep", "atan2_w8m24", 8, 24, "random", 4000))
     for cfg, w, n in [("w8_n2", 8, 2), ("w8_n4", 8, 4), ("w24_n3", 24, 3)]:
         out.append(_pipe(s, "deep", cfg, w, n, 96))
-    # w56s1 is a wide directed sweep: its one-hot/low-magnitude vectors drive the full leading-zero-count range, so the
-    # high count bits, the split digit registers, and the top-level z3 detect (whose group only fits for W>=49) toggle.
-    # w130s1 pushes the internal radix-4 count to its top bit: CNTW = 8 only for clog2(W) in {7,8}, and a count of
-    # W-1 = 129 (the one-hot at bit 0) sets cnt[7], which no narrower W and no embedded instance (all count < 128) can.
-    # STAGE_OUTPUT sweep (output register + the streaming out_valid/sb_out path) and the standalone STAGE_SPLIT=2 path
-    # (w32s2*, NL4>=3) which only the wide log2 back-end exercised end-to-end before. The bench drives in_valid/sb_in
-    # and checks out_valid/sb_out are delayed by STAGE_SPLIT + STAGE_OUTPUT.
+    # w56s1 (wide directed): one-hot/low-magnitude vectors drive the full leading-zero-count range, toggling the high
+    # count bits, the split digit registers, and the top-level z3 detect (its group only fits for W>=49). w130s1
+    # pushes the radix-4 count to cnt[7] (CNTW=8 only for clog2(W) in {7,8}; count W-1=129 sets it, unreachable at
+    # narrower W or any embedded instance). STAGE_OUTPUT and standalone STAGE_SPLIT=2 (w32s2, NL4>=3); the bench
+    # checks out_valid/sb_out are delayed by STAGE_SPLIT + STAGE_OUTPUT.
     for cfg, w, split, output, kind in [("w8s0", 8, 0, 0, "exhaustive"), ("w8s1", 8, 1, 0, "exhaustive"),
                                         ("w9s1", 9, 1, 0, "exhaustive"), ("w32s1", 32, 1, 0, "directed"),
                                         ("w56s1", 56, 1, 0, "directed"), ("w130s1", 130, 1, 0, "directed"),
@@ -878,31 +820,29 @@ def _deep_coverage(out: list) -> None:
     for wi, mi, wo, mo in [(3, 4, 5, 6), (5, 6, 3, 4), (4, 5, 4, 4), (4, 4, 4, 5), (5, 4, 3, 6), (3, 6, 5, 4)]:
         for si in (0, 1):
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
-    # round coverage: cheap exhaustive formats toggle the rounder and the specials path (w2_m4 reaches the
-    # round-up overflow); the all-on knob run toggles the input/pack/output registers; the wide w8_m36 random run
-    # toggles the wide boundary-mask decoder and exponent-difference bits the tiny formats cannot reach.
+    # round coverage: cheap exhaustive formats toggle the rounder + specials path (w2_m4 reaches round-up overflow);
+    # all-on toggles the input/pack/output registers; wide w8_m36 toggles the boundary-mask decoder and
+    # exponent-difference bits the tiny formats cannot reach.
     for w, m in [(2, 4), (4, 5), (3, 6)]:
         out.append(_round(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_round(s, "deep", "w4m5_maxpipe", 4, 5, "exhaustive", 0, si=1, pa=1, so=1))
     out.append(_round(s, "deep", "w8m36", 8, 36, "random", 1024))
-    # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches that stay dark under the defaults, so the merged gate can
-    # measure them: _zkf_pack g_out_reg (every packer op), zkf_pipe g_registered (div, via _zkf_pack_delay),
-    # zkf_resize g_owr (widen path), and the standalone packer's registered-output and biased-exponent cones. One
-    # config per branch suffices under merged-union; small exhaustive formats toggle the new registers.
+    # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches dark under the defaults: _zkf_pack g_out_reg, zkf_pipe
+    # g_registered (div, via _zkf_pack_delay), zkf_resize g_owr (widen path), and the standalone packer's
+    # registered-output / biased-exponent cones. One config per branch suffices under merged-union.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
     out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
     out.append(_binary("div", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
-    # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0) so the registered s_y has no structurally-zero padding bits and every
-    # bit toggles under the exhaustive input sweep; a padding-bearing widen would leave low s_y bits permanently 0.
+    # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
+    # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
     out.append(_resize(s, "deep", "w4m5_to_w4m5", 4, 5, 4, 5, "exhaustive", 0, 0, so=1))   # widen-only -> g_owr
     out.append(_resize(s, "deep", "w5m6_to_w3m4", 5, 6, 3, 4, "exhaustive", 0, 0, so=1))   # narrow -> g_out_reg
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, so=1))
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, eb=1))
-    # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to a constant 0). This config regresses
-    # the pruned-mode datapath: the case generator drops out-of-range exponents (the caller-undefined region), so the
-    # surviving in-range / force_inf / round-carry cases must still match the overflow-detecting reference exactly.
+    # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to 0): the case generator drops
+    # out-of-range exponents, so the surviving in-range / force_inf / round-carry cases must still match the reference.
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, nov=1))
 
 
@@ -921,7 +861,7 @@ def _properties(out: list) -> None:
                                target="sim_properties_mul_icarus", root_module="mul"))
 
 
-# Smoke set (formerly verify-float-fast): (name, module, extra-vlog).
+# Smoke set: (name, module, extra-vlog).
 _FAST = [
     ("pack", "pack", [("WEXP", 2), ("WMAN", 4), ("WEXP_UNBIASED", 4)]),
     ("cmp", "cmp", [("WEXP", 2), ("WMAN", 4)]),
@@ -959,8 +899,7 @@ _FAST = [
 def _fast(out: list) -> None:
     for name, module, vlog in _FAST:
         out.append(_run(module, "icarus", "fast", name, vlog, kind="exhaustive", count=0))
-    # zkf_atan2 is two-input, so joint-exhaustive is infeasible; the smoke uses the directed special/axis/diagonal
-    # pairs.
+    # zkf_atan2 is two-input (joint-exhaustive infeasible): the smoke uses the directed special/axis/diagonal pairs.
     out.append(_run("atan2", "icarus", "fast", "atan2",
                     [("WEXP", 5), ("WMAN", 11), ("UNROLL100", 50)], kind="directed", count=0))
 

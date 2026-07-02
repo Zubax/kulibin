@@ -7,13 +7,11 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import (
-    ROUND_MODES,
-    ZkfFormat,
-    hex_bits,
-    mask,
-    round_reference,
-)
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+
+# zkf_round round_mode port codes (hdl/zkf_round.v) -> the Zkf integral-rounding method modelling each.
+_ROUND_BY_MODE = ("round", "floor", "ceil", "trunc")  # 0=RNTE, 1=floor, 2=ceil, 3=trunc
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -47,13 +45,13 @@ def add_unique(cases: list[RoundCase], seen: set[int], label: str, fmt: ZkfForma
     if key in seen:
         return
     seen.add(key)
-    for mode in ROUND_MODES:
-        cases.append(RoundCase(label, key, mode, round_reference(fmt, mode, key)))
+    for mode, method in enumerate(_ROUND_BY_MODE):
+        cases.append(RoundCase(label, key, mode, getattr(fmt.wrap(key), method)().bits))
 
 
 def directed_case_inputs(fmt: ZkfFormat) -> list[tuple[str, int]]:
     cases: list[tuple[str, int]] = []
-    # Named values (one, half, one_and_half tie-to-even, quarters, two, min/max_finite, +-inf, ...) need WEXP>=3.
+    # Named values (tie-to-even one_and_half, quarters, min/max_finite, +-inf, ...) need WEXP>=3.
     if fmt.wexp >= 3:
         for label, value in directed_numbers(fmt).items():
             cases.append((label, value))
@@ -118,7 +116,7 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[RoundCas
         return cases
 
     rng = np.random.default_rng(seed)
-    target_operands = len(seen) + count  # `count` counts random operands; each yields one case per mode
+    target_operands = len(seen) + count  # count counts random operands; each yields one case per mode
     while len(seen) < target_operands:
         add_unique(cases, seen, "random", fmt, random_case(fmt, rng))
     return cases

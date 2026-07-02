@@ -9,7 +9,9 @@ import numpy as np
 from cocotb.triggers import RisingEdge
 
 from zkf_latency import atan2_latency
-from zkf_model import ZkfFormat, atan2_reference, hex_bits, mask, normal
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import directed_numbers, random_inf, random_normal_near, random_operand, random_zero
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, start_clock
@@ -32,8 +34,8 @@ def add_unique(cases: list[Atan2Case], seen: set[tuple[int, int]], label: str, f
     if key in seen:
         return
     seen.add(key)
-    theta, mag = atan2_reference(fmt, key[0], key[1])
-    cases.append(Atan2Case(label, key[0], key[1], theta, mag))
+    r = fmt.wrap(key[0]).atan2(fmt.wrap(key[1]))
+    cases.append(Atan2Case(label, key[0], key[1], r.theta.bits, r.magnitude.bits))
 
 
 def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
@@ -69,9 +71,8 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             # |y| << |x| (theta -> 0 or near 1/4 after swap) and |x| << |y|.
             out.append((f"ysmall_{s}", tiny | sb, big))
             out.append((f"xsmall_{s}", big | sb, tiny))
-            # Finite x<0 with |y| -> 0: the generic theta rounds to the 1/2-turn endpoint and must canonicalize to the
-            # in-range +1/2, never the out-of-range -1/2 (regression guard for the negative-x-axis range fix; the
-            # y<0,x<0 case is the one that used to emit -0.5).
+            # Finite x<0 with |y| -> 0: theta rounds to the 1/2-turn endpoint and must canonicalize to the in-range
+            # +1/2, never the out-of-range -1/2.
             out.append((f"xnegbig_ytiny_{s}", tiny | sb, big | sgn))
             out.append((f"xnegone_ytiny_{s}", tiny | sb, mone))
             out.append((f"ybig_xone_{s}", big | sb, one))
@@ -137,13 +138,12 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[Atan2Cas
 
 @cocotb.test()
 async def atan2_runtime_cases(dut) -> None:
-    # Iterative (single-transaction) two-operand handshake: assert in_valid for one cycle while in_ready is high, drive
-    # (y, x), then wait for out_valid and sample (theta, mag). The accept->out_valid latency is a fixed published
-    # quantity, asserted equal to atan2_latency() so the latency model cannot drift from the hardware.
+    # Latency is data-independent and published: measure accept->out_valid and assert it equals atan2_latency() so the
+    # model cannot drift from the RTL.
     context = float_context("atan2")
     fmt = ZkfFormat(context.wexp, context.wman)
     expected_latency = atan2_latency(
-        context.wman,
+        fmt,
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
@@ -160,7 +160,7 @@ async def atan2_runtime_cases(dut) -> None:
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
-    dut.out_ready.value = 1                                      # always ready: the latency measurement assumes this
+    dut.out_ready.value = 1                                      # latency measurement assumes always-ready
     drive_unsigned(dut.y, 0)
     drive_unsigned(dut.x, 0)
     for _ in range(4):
@@ -173,7 +173,7 @@ async def atan2_runtime_cases(dut) -> None:
     checked = 0
     for index, case in enumerate(cases):
         guard = 0
-        while int(dut.in_ready.value) == 0:                     # wait until the engine can accept
+        while int(dut.in_ready.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: in_ready stuck low (case {index})"
@@ -185,7 +185,7 @@ async def atan2_runtime_cases(dut) -> None:
         drive_unsigned(dut.y, mask(fmt.wfull))                  # garbage between transactions
         drive_unsigned(dut.x, mask(fmt.wfull))
         guard = 0
-        while int(dut.out_valid.value) == 0:                    # wait for the result pulse
+        while int(dut.out_valid.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
@@ -211,9 +211,8 @@ async def atan2_runtime_cases(dut) -> None:
 
 @cocotb.test()
 async def atan2_backpressure(dut) -> None:
-    # out_ready back-pressure: with out_ready low, out_valid and (theta, mag) must persist after the engine finishes,
-    # in_ready must stay low (the finished transaction occupies the pipe), and the result is taken only on a cycle where
-    # out_valid & out_ready. Then a fresh transaction must run correctly.
+    # Back-pressure: while out_ready is low, out_valid and (theta, mag) persist and in_ready stays low; the result is
+    # taken only on a cycle with out_valid & out_ready.
     context = float_context("atan2")
     fmt = ZkfFormat(context.wexp, context.wman)
     cases = cases_for(fmt, "directed", context.seed, 0)[:2]
@@ -250,15 +249,15 @@ async def atan2_backpressure(dut) -> None:
             guard += 1
             assert guard < timeout, f"{context.prefix()} bp: out_valid timeout (case {index})"
         exp = {"theta": case.theta, "mag": case.mag}
-        for hold in range(5):                                   # held low: result + out_valid persist, in_ready low
+        for hold in range(5):
             got = {"theta": int(dut.theta.value), "mag": int(dut.mag.value)}
             assert int(dut.out_valid.value) == 1, f"{context.prefix()} bp case={index}: out_valid dropped while stalled"
             assert int(dut.in_ready.value) == 0, f"{context.prefix()} bp case={index}: in_ready high while result unread"
             assert got == exp, f"{context.prefix()} bp case={index} hold={hold}: result changed: {got} != {exp}"
             await RisingEdge(dut.clk)
-        dut.out_ready.value = 1                                 # accept the result on this edge
+        dut.out_ready.value = 1
         await RisingEdge(dut.clk)
-        dut.out_ready.value = 0                                 # back to stalled for the next transaction
+        dut.out_ready.value = 0
     guard = 0
     while int(dut.in_ready.value) == 0:
         await RisingEdge(dut.clk)

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, mask, sort_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import cmp_latency
 from zkf_params import check_width, float_context
@@ -38,7 +39,7 @@ def raw_directed_values(fmt: ZkfFormat) -> list[int]:
 
 
 def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
-    """Non-canonical zero and infinity bit patterns at a few representative fractions; same shape as test_cmp."""
+    """Non-canonical zero/inf patterns at representative fractions; mirrors test_cmp."""
     frac_bits = [0, 1, fmt.frac_mask >> 1, fmt.frac_mask] if fmt.wfrac >= 2 else [0, fmt.frac_mask]
     frac_bits = sorted({f & fmt.frac_mask for f in frac_bits})
     cases: list[tuple[str, int]] = []
@@ -51,7 +52,7 @@ def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
 
 
 def corner_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
-    """Exercise the same special-class transitions that test_cmp covers, plus equal-operand reflexivity."""
+    """Special-class transitions (mirrors test_cmp) plus equal-operand reflexivity."""
     pairs: list[tuple[str, int, int]] = []
     specials = special_class_representatives(fmt)
     for left_label, left in specials:
@@ -157,8 +158,8 @@ async def sort_runtime_cases(dut) -> None:
     def drive_case(case: SortCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
         drive_unsigned(dut.b, case.b)
-        expected_min, expected_max = sort_reference(fmt, case.a, case.b)
-        return {"min": expected_min, "max": expected_max}
+        lo, hi = fmt.wrap(case.a).sort(fmt.wrap(case.b))
+        return {"min": lo.bits, "max": hi.bits}
 
     def invalid_drive() -> None:
         dut.in_valid.value = 0

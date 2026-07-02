@@ -1,4 +1,5 @@
-"""Device-agnostic Yosys + nextpnr synthesis engine.
+"""
+Device-agnostic Yosys + nextpnr synthesis engine.
 
 The flow skeleton (emit harness, run Yosys, run nextpnr, parse the report JSON, drive the worker pool,
 emit HTML, gate on PASS) is identical across nextpnr targets; only a small device profile differs. That
@@ -510,7 +511,8 @@ module in a new tab.</p>
 
 
 def failed_result(spec: ModuleSpec, target: YosysTarget, note: str, module_dir: Path) -> dict[str, str]:
-    """A FAIL result for a module whose toolchain run crashed, so one bad module cannot abort the flow.
+    """
+    A FAIL result for a module whose toolchain run crashed, so one bad module cannot abort the flow.
 
     Used only by the optional (non-gating) path; it links whatever logs were written before the crash and
     fills the device resource columns with the extractor's empty-input defaults so write_html stays happy.
@@ -542,7 +544,8 @@ def failed_result(spec: ModuleSpec, target: YosysTarget, note: str, module_dir: 
 
 
 def run_flow(target: YosysTarget, modules: list[ModuleSpec], *, gate: bool = True, optional: bool = False) -> None:
-    """Run the Yosys + nextpnr flow for one device target.
+    """
+    Run the Yosys + nextpnr flow for one device target.
 
     gate=True (default) exits nonzero if any module fails or misses timing. optional=True downgrades a
     missing nextpnr binary to a graceful skip and turns a per-module toolchain crash into a FAIL row

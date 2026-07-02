@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Yosys + nextpnr-ecp5 synthesis of the float modules, targeting the Lattice ECP5.
+"""
+Yosys + nextpnr-ecp5 synthesis of the float modules, targeting the Lattice ECP5.
 
 This is a thin entry point: it defines the ECP5 device profile (synth_ecp5 command, nextpnr-ecp5
 device flags, resource columns) and hands it to the shared engine in yosys.py. A future Spartan-7

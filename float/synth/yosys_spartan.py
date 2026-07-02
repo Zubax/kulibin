@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Yosys + nextpnr-xilinx synthesis of the float modules, targeting the AMD/Xilinx Spartan-7.
+"""
+Yosys + nextpnr-xilinx synthesis of the float modules, targeting the AMD/Xilinx Spartan-7.
 
 A thin entry point (sibling of yosys_ecp5.py) that defines the Spartan-7 device profile (synth_xilinx
 command, nextpnr-xilinx device flags, resource columns) and hands it to the shared engine in yosys.py.
@@ -121,7 +122,8 @@ _NOTES = (
 
 
 def _write_port_xdc(netlist: Path, xdc_path: Path) -> None:
-    """Write an XDC giving every top-level port an IOSTANDARD so nextpnr-xilinx will place its IOBs.
+    """
+    Write an XDC giving every top-level port an IOSTANDARD so nextpnr-xilinx will place its IOBs.
 
     nextpnr-xilinx refuses to run unless every top port carries an IOSTANDARD (and, unlike nextpnr-ecp5,
     has no --lpf-allow-unconstrained escape hatch). We assign IOSTANDARD but no package pin, leaving the
@@ -185,7 +187,8 @@ def build_target(chipdb: Path) -> yosys.YosysTarget:
 
 
 def resolve_chipdb() -> tuple[Path | None, str]:
-    """Locate or build the nextpnr-xilinx chip database for DEVICE; return (path, "") or (None, reason).
+    """
+    Locate or build the nextpnr-xilinx chip database for DEVICE; return (path, "") or (None, reason).
 
     A previously built database is reused from the cache; failing that, one is built with bbaexport.py
     + bbasm. The bundled bbaexport.py ships its prjxray-db and metadata submodules alongside, so its own

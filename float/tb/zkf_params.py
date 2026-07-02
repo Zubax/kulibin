@@ -31,20 +31,20 @@ class TestContext:
     wexp_out: int | None = None
     wman_out: int | None = None
     wk: int | None = None    # zkf_mul_ilog2: width of the signed runtime shift k
-    stage_input: int = 0     # input register knob for sequential float operators
-    stage_reduce: int = 0    # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input
+    stage_input: int = 0     # input-register knob for sequential float operators
+    stage_reduce: int = 0    # zkf_exp2: register the reduced fixed-point before the evaluator ROM
     stage_product: int = 0   # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
-    stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma (alignment shifter split)
-    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma / zkf_log2 (decoded-signal pipeline register)
-    stage_normalize: int = 0 # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int (normshift internal barriers)
+    stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma
+    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma / zkf_log2
+    stage_normalize: int = 0 # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
     stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
-    stage_output: int = 0    # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle)
-    unroll100: int = 100     # zkf_sincos: CORDIC iterations per engine cycle x100 (mirrors the UNROLL100 vlogparam)
+    stage_output: int = 0    # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
+    unroll100: int = 100     # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0        # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
-    exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input is already biased (packer skips its own bias add)
-    assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees an in-range exponent)
+    exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
+    assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
 
     @property
     def params(self) -> str:
@@ -163,9 +163,8 @@ def _stage_product() -> int:
 
 
 def _stage_product_final(stage_product: int) -> int:
-    # STAGE_PRODUCT_FINAL mirrors STAGE_PRODUCT when not explicitly provided. The matrix passes it alongside
-    # STAGE_PRODUCT whenever STAGE_PRODUCT is set, and the core defaults both to 0, so the plusarg fallback here
-    # (stage_product) only applies to direct cocotb runs without FuseSoC.
+    # Defaults to STAGE_PRODUCT when the plusarg is absent (the matrix always passes it; this fallback covers direct
+    # cocotb runs without FuseSoC).
     return plusarg_int("ZKF_STAGE_PRODUCT_FINAL", stage_product)
 
 
@@ -212,7 +211,7 @@ def _stage_output() -> int:
 
 
 def _unroll100() -> int:
-    # Mirror the RTL UNROLL100 vlogparam (iterations/cycle x100, default 100) so the latency model matches the engine.
+    # Mirror the RTL UNROLL100 vlogparam (iterations/cycle x100) so the latency model matches the engine.
     value = plusarg_int("ZKF_UNROLL100", 100)
     if value != 50 and (value < 100 or value % 100 != 0):
         raise ValueError(f"ZKF_UNROLL100 must be 50 or a positive multiple of 100, got {value}")

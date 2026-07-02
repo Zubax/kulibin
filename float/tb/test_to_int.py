@@ -7,15 +7,9 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import (
-    ZkfFormat,
-    hex_bits,
-    mask,
-    signed_int_max,
-    signed_int_min,
-    signed_to_bits,
-    to_int_reference,
-)
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_bits import signed_int_max, signed_int_min, signed_to_bits
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -51,7 +45,7 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    cases.append(ToIntCase(label, key, to_int_reference(fmt, wint, key)))
+    cases.append(ToIntCase(label, key, fmt.wrap(key).to_int(wint)))
 
 
 def directed_case_inputs(fmt: ZkfFormat) -> list[tuple[str, int]]:
@@ -98,10 +92,10 @@ def random_case(fmt: ZkfFormat, rng: np.random.Generator) -> int:
 
 
 def rcarry_overflow_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:
-    """Construct floats that force the rounding carry to flip bit WINT of the rounded magnitude.
-    This drives mag_pre[WINT-1:0] = all-1s with guard=1, so mag_pre + 1 sets the rcarry bit in
-    zkf_to_int. Only reachable when WMAN > WINT (otherwise mag_pre cannot fill all low WINT bits)
-    and the corresponding exp_unbiased fits inside the format's normal range.
+    """
+    Floats that force the rounding carry to flip bit WINT of the rounded magnitude: mag_pre[WINT-1:0]
+    all-1s with guard=1, so mag_pre + 1 sets the rcarry bit in zkf_to_int. Only reachable when WMAN > WINT
+    (else mag_pre cannot fill the low WINT bits) and exp_unbiased fits the format's normal range.
     """
     cases: list[tuple[str, int]] = []
     if fmt.wman <= wint:
@@ -112,9 +106,8 @@ def rcarry_overflow_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:
     exp_unbiased = fmt.wfrac - shamt
     if not (fmt.min_exp_unbiased <= exp_unbiased <= fmt.max_exp_unbiased):
         return cases
-    # sig = (2^WINT - 1) << shamt + 2^(shamt-1)
-    #     = 2^WMAN - 2^(shamt-1)
-    # This makes mag_pre = 2^WINT - 1, guard = sig[shamt-1] = 1, sticky = 0.
+    # sig = (2^WINT - 1) << shamt + 2^(shamt-1) = 2^WMAN - 2^(shamt-1)
+    # => mag_pre = 2^WINT - 1, guard = sig[shamt-1] = 1, sticky = 0.
     sig = (1 << fmt.wman) - (1 << (shamt - 1))
     frac = sig - (1 << fmt.wfrac)
     exp_biased = exp_unbiased + fmt.bias

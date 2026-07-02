@@ -8,7 +8,10 @@ from typing import Callable
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, decode, div_reference, hex_bits, mask, normal, numpy_div_reference
+from zkf import Zkf, ZkfFormat
+from zkf.oracle import div
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import (
     directed_numbers,
     normal_from_significands,
@@ -65,13 +68,14 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    expected, div0 = div_reference(fmt, a, b)
-    np_ref = numpy_div_reference(fmt, a, b)
-    if np_ref is not None and np_ref != (expected, div0):
+    result = fmt.wrap(a).div(fmt.wrap(b))
+    expected, div0 = result.quotient.bits, int(result.div_by_zero)
+    np_ref = div(fmt.wrap(a), fmt.wrap(b))
+    if np_ref is not None and (np_ref.quotient.bits, int(np_ref.div_by_zero)) != (expected, div0):
         raise AssertionError(
             f"NumPy cross-check failed for div {fmt}: a={hex_bits(a, fmt.wfull)} "
             f"b={hex_bits(b, fmt.wfull)} exact=({hex_bits(expected, fmt.wfull)}, {div0}) "
-            f"numpy=({hex_bits(np_ref[0], fmt.wfull)}, {np_ref[1]})"
+            f"numpy=({hex_bits(np_ref.quotient.bits, fmt.wfull)}, {int(np_ref.div_by_zero)})"
         )
     cases.append(BinaryCase(label, a, b, expected, div0))
 
@@ -120,8 +124,8 @@ def qfrac(fmt: ZkfFormat) -> int:
 
 
 def div_observation(fmt: ZkfFormat, a: int, b: int) -> DivObservation | None:
-    da = decode(fmt, a)
-    db = decode(fmt, b)
+    da = Zkf(fmt, a)
+    db = Zkf(fmt, b)
     if not da.is_normal or not db.is_normal:
         return None
 
@@ -315,7 +319,8 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[BinaryCa
 
     if (fmt.wexp, fmt.wman) == (8, 24):
         for label, a, b, expected, expected_div0 in binary32_manual_cases():
-            actual, actual_div0 = div_reference(fmt, a, b)
+            result = fmt.wrap(a).div(fmt.wrap(b))
+            actual, actual_div0 = result.quotient.bits, int(result.div_by_zero)
             if (actual, actual_div0) != (expected, expected_div0):
                 raise AssertionError(
                     f"{label}: expected ({expected:08x}, {expected_div0}), "

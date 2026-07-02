@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, hex_bits, mask, normal, resize_reference
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -46,7 +48,7 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    cases.append(ResizeCase(label, key, resize_reference(fmt_in, fmt_out, key)))
+    cases.append(ResizeCase(label, key, fmt_in.wrap(key).resize(fmt_out).bits))
 
 
 def directed_case_inputs(fmt_in: ZkfFormat) -> list[tuple[str, int]]:
@@ -54,7 +56,7 @@ def directed_case_inputs(fmt_in: ZkfFormat) -> list[tuple[str, int]]:
     if fmt_in.wexp >= 3:
         for label, value in directed_numbers(fmt_in).items():
             cases.append((label, value))
-    # Raw boundary patterns that exercise canonicalization regardless of WEXP.
+    # Raw boundary patterns exercising canonicalization for any WEXP.
     cases.extend(
         [
             ("raw_zero_clean", 0),

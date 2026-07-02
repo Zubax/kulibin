@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""Algebraic-property simulation tests.
-
-Complement to the formal proofs under float/proof/ and to the per-module test_*.py files. Where the
-per-module tests compare DUT outputs against a Python golden reference, these tests exercise
-self-consistency properties that hold for any correct implementation regardless of the model. That
-makes them a useful sanity check against the unlikely case where both the model and the RTL share a
-bug.
-
-The test scaffolding picks a property based on the DUT's port shape, so a single file works for any
-binary toplevel that exposes (clk, rst, in_valid, a, b, out_valid, y) — currently zkf_mul, zkf_add,
-zkf_addsub. The property exercised is commutativity:  op(a, b) == op(b, a).
-
-The FuseSoC sim_properties_<op>_<sim> targets parameterize this with the standard ZKF_* matrix.
+"""
+Model-independent algebraic-property tests: self-consistency identities (commutativity, algebraic
+identities) that hold for any correct implementation, so a failure flags an RTL bug even when the Python
+model shares it. The scaffolding dispatches by DUT port shape, so one file serves any binary toplevel
+exposing (clk, rst, in_valid, a, b, out_valid, y): zkf_mul, zkf_add, zkf_addsub.
 """
 
 from __future__ import annotations
@@ -20,17 +12,9 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge, Timer
 
-from zkf_model import (
-    ZkfFormat,
-    canonical_inf,
-    canonicalize_special,
-    hex_bits,
-    neg_reference,
-    normal,
-    pack_bits,
-    zero,
-)
-from zkf_operands import directed_numbers, random_operand
+from zkf import ZkfFormat
+from zkf_bits import hex_bits
+from zkf_operands import canonical_inf, directed_numbers, normal, pack_bits, random_operand, zero
 from zkf_latency import add_latency, mul_latency
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, is_resolvable, start_clock
@@ -65,8 +49,10 @@ async def reset_dut(dut, stages: int) -> None:
 
 
 async def drive_and_capture(dut, a: int, b: int, stages: int, op_sub: int = 0) -> int:
-    """Drive (a, b) one cycle; expect out_valid=1 after exactly `stages` clock edges.
-    op_sub selects subtraction on toplevels that expose it (zkf_addsub); ignored otherwise."""
+    """
+    Drive (a, b) one cycle; expect out_valid=1 after exactly stages clock edges.
+    op_sub selects subtraction on toplevels that expose it (zkf_addsub); ignored otherwise.
+    """
     drive_unsigned(dut.a, a)
     drive_unsigned(dut.b, b)
     if hasattr(dut, "op_sub"):
@@ -88,9 +74,10 @@ async def drive_and_capture(dut, a: int, b: int, stages: int, op_sub: int = 0) -
 
 def infer_stages(dut, stage_product: int = 0, stage_decode: int = 0, stage_align: int = 0,
                  stage_output: int = 0) -> int:
-    """Map module name → pipeline depth. Knobs are hardcoded per supported toplevel.
-    zkf_mul has STAGE_PRODUCT; zkf_add and zkf_addsub have STAGE_DECODE and STAGE_ALIGN; all carry STAGE_OUTPUT
-    (0 = combinational output, default; 1 = registered output)."""
+    """
+    Pipeline depth per toplevel (knobs hardcoded): zkf_mul has STAGE_PRODUCT; zkf_add/zkf_addsub have
+    STAGE_DECODE and STAGE_ALIGN; all carry STAGE_OUTPUT (0=combinational, 1=registered).
+    """
     name = str(dut._name)
     if "mul" in name:
         return mul_latency(stage_product=stage_product, stage_output=stage_output)
@@ -155,8 +142,10 @@ def special_operands(fmt: ZkfFormat) -> list[int]:
 
 @cocotb.test()
 async def algebraic_identities(dut) -> None:
-    """Model-independent algebraic identities. Each holds for any correct implementation, so a
-    violation flags an RTL bug even if the Python model shares it. Dispatched by toplevel."""
+    """
+    Model-independent algebraic identities. Each holds for any correct implementation, so a
+    violation flags an RTL bug even if the Python model shares it. Dispatched by toplevel.
+    """
     context = float_context("properties")
     fmt = ZkfFormat(context.wexp, context.wman)
     check_width("a", dut.a, fmt.wfull, context)
@@ -181,8 +170,8 @@ async def algebraic_identities(dut) -> None:
     one = normal(fmt, 0, fmt.bias, 0)
 
     def neg_or_zero(y: int) -> int:
-        # Negating a canonical result flips the sign unless the result is +0 (always canonical +0).
-        return pos_zero if y == pos_zero else neg_reference(fmt, y)
+        # Flip the sign of a canonical result, but +0 stays canonical +0.
+        return pos_zero if y == pos_zero else (-fmt.wrap(y)).bits
 
     fails: list[str] = []
 
@@ -194,17 +183,16 @@ async def algebraic_identities(dut) -> None:
                 f"got={hex_bits(got, fmt.wfull)} want={hex_bits(want, fmt.wfull)}"
             )
 
-    # Single-operand identities.
     for a in operands:
         if is_mul:
-            await expect("mul_identity a*1==a", a, one, 0, canonicalize_special(fmt, a))
+            await expect("mul_identity a*1==a", a, one, 0, fmt.wrap(a).canonicalize().bits)
             await expect("mul_annihilator a*0==+0", a, pos_zero, 0, pos_zero)
         if is_add or is_addsub:
-            await expect("add_identity a+0==a", a, pos_zero, 0, canonicalize_special(fmt, a))
-            await expect("add_inverse a+(-a)==+0", a, neg_reference(fmt, a), 0, pos_zero)
+            await expect("add_identity a+0==a", a, pos_zero, 0, fmt.wrap(a).canonicalize().bits)
+            await expect("add_inverse a+(-a)==+0", a, (-fmt.wrap(a)).bits, 0, pos_zero)
         if is_addsub and has_sub:
             await expect("sub_self a-a==+0", a, a, 1, pos_zero)
-            await expect("sub_identity a-0==a", a, pos_zero, 1, canonicalize_special(fmt, a))
+            await expect("sub_identity a-0==a", a, pos_zero, 1, fmt.wrap(a).canonicalize().bits)
 
     # Pair identities over specials only (O(n^2)) plus a few random pairs.
     pairs = [(a, b) for a in special_operands(fmt) for b in special_operands(fmt)]
@@ -212,13 +200,13 @@ async def algebraic_identities(dut) -> None:
     for a, b in pairs:
         if is_mul:
             y_ab = await drive_and_capture(dut, a, b, stages, 0)
-            await expect("mul_sign (-a)*b==-(a*b)", neg_reference(fmt, a), b, 0, neg_or_zero(y_ab))
+            await expect("mul_sign (-a)*b==-(a*b)", (-fmt.wrap(a)).bits, b, 0, neg_or_zero(y_ab))
         if is_add or is_addsub:
             y_ab = await drive_and_capture(dut, a, b, stages, 0)
-            await expect("add_neg (-a)+(-b)==-(a+b)", neg_reference(fmt, a), neg_reference(fmt, b), 0,
+            await expect("add_neg (-a)+(-b)==-(a+b)", (-fmt.wrap(a)).bits, (-fmt.wrap(b)).bits, 0,
                          neg_or_zero(y_ab))
         if is_addsub and has_sub:
-            y_addnegb = await drive_and_capture(dut, a, neg_reference(fmt, b), stages, 0)
+            y_addnegb = await drive_and_capture(dut, a, (-fmt.wrap(b)).bits, stages, 0)
             await expect("sub_via_neg a-b==a+(-b)", a, b, 1, y_addnegb)
 
     for line in fails[:8]:

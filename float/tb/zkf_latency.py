@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Latency formulas shared by the ZKF verification suite and synthesis reports.
+"""
+Latency formulas shared by the cocotb scoreboard and the synthesis reports.
 
-The cocotb tests use these values as the scoreboard delay, so a wrong value fails
-simulation. The synthesis reports import the same helpers so the published latency
-is the latency verified by the test suite, not a second copy of the arithmetic.
+The tests use these values as the scoreboard delay (a wrong value fails simulation), and the reports import the same
+helpers, so the published latency is exactly the one the suite verifies.
 """
 
 from __future__ import annotations
 
-from zkf_trans_tables import SPECS as TRANS_SPECS
-from zkf_trig_tables import SPECS as TRIG_SPECS
+from zkf import ZkfFormat
 
 
 def _enabled(value: int) -> int:
@@ -40,7 +39,7 @@ def mul_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    # stage_product (0..4) forwards to _zkf_pmul, whose latency is 1 + stage_product, so it contributes its raw count.
+    # stage_product forwards to _zkf_pmul (latency 1 + stage_product), so it contributes its raw count.
     return 1 + _count(stage_input) + _count(stage_product) + _enabled(stage_pack) + _enabled(stage_output)
 
 
@@ -55,7 +54,7 @@ def add_latency(
 ) -> int:
     return (
         4
-        + _count(stage_input)  # STAGE_INPUT is an unbounded count of input register stages (matches RTL LATENCY_REF)
+        + _count(stage_input)  # unbounded count of input stages (matches RTL LATENCY_REF)
         + _enabled(stage_decode)
         + _enabled(stage_align)
         + _count(stage_normalize)
@@ -135,7 +134,7 @@ def round_latency(*, stage_input: int = 0, stage_decode: int = 0, stage_pack: in
 
 
 def exp2_latency(
-    wman: int,
+    fmt: ZkfFormat,
     *,
     stage_input: int = 0,
     stage_reduce: int = 0,
@@ -143,7 +142,7 @@ def exp2_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    degree = TRANS_SPECS[("exp2", wman)]["d"]
+    degree = fmt.exp2_poly_degree
     product_stages = _count(stage_product)
     return (
         _count(stage_input)
@@ -156,7 +155,7 @@ def exp2_latency(
 
 
 def log2_latency(
-    wman: int,
+    fmt: ZkfFormat,
     *,
     stage_input: int = 0,
     stage_decode: int = 0,
@@ -167,7 +166,7 @@ def log2_latency(
     stage_pack: int = 0,
     stage_output: int = 0,
 ) -> int:
-    degree = TRANS_SPECS[("log2", wman)]["d"]
+    degree = fmt.log2_poly_degree
     product_stages = _count(stage_product)
     final_product_raw = stage_product if stage_product_final in (None, -1) else stage_product_final
     final_product_stages = _count(final_product_raw)
@@ -185,7 +184,7 @@ def log2_latency(
 
 
 def sincos_latency(
-    wman: int,
+    fmt: ZkfFormat,
     *,
     unroll100: int = 100,
     parallel: int = 0,
@@ -196,25 +195,21 @@ def sincos_latency(
     stage_pack: int = 0,
     **_ignored: int,
 ) -> int:
-    # Iterative (folded) CORDIC initiation interval = latency, measured accept -> out_valid. The cocotb testbench
-    # asserts the RTL matches this exactly, and the RTL LATENCY parameter (zkf_sincos.v) is the same closed form.
-    # Constant 11 = 1 (R1 decode) + 1 (R2 barrel shift) + 1 (engine start) + 1 (engine done)
-    #   + 4 (shared-multiply micro-sequence at STAGE_PRODUCT=0: PHI (issued on the cd_zdone cycle off cd_zn) + S/C
-    #        pipelined two-deep, the C product folding straight into sin/cos; no separate PACK cycle)
-    #   + 2 (always-on wide-datapath stages: octant-fold + merge-B3)
-    #   + 1 (shared fixed-to-float back-end issues cos one cycle after sin). The exponent decode is combinational.
-    # Each STAGE_PRODUCT unit adds one cycle to PHI and one across the pipelined S/C pair = 2*STAGE_PRODUCT.
-    # Then: rotation cycles = ceil(K*100/UNROLL100) (UNROLL100 = iterations/cycle x100: 50 = half-rate 2-cycle engine,
-    # 100 = 1/cycle, 200/300/400 = 2/3/4 per cycle); the optional STAGE_INPUT / STAGE_OUTPUT register stages (+1 each);
-    # plus STAGE_NORMALIZE + STAGE_PACK. out_ready adds nothing when held high.
-    # Decoupled z-path (parallel): the z-recurrence runs at full rate (k cycles), reaching z_done ZGAP = iter_cycles - k
-    # ahead of done, so PHI is issued early and its PMUL_L = 1+STAGE_PRODUCT pipeline overlaps the CORDIC; the back-end
-    # skips the P_PHI wait, cutting SAVED = min(PMUL_L, ZGAP). Only legal half-rate. Mirrors zkf_sincos LATENCY_REF.
+    # Folded-CORDIC initiation interval = latency (accept -> out_valid). The cocotb bench asserts the RTL matches this,
+    # and zkf_sincos.v's LATENCY parameter is the same closed form.
+    # 11 = 1 (R1 decode) + 1 (R2 barrel shift) + 1 (engine start) + 1 (engine done) + 4 (shared-multiply micro-sequence)
+    #      + 2 (octant-fold + merge-B3) + 1 (fixed-to-float back-end: cos one cycle after sin).
+    # Each STAGE_PRODUCT adds one cycle to PHI and one across the pipelined S/C pair => 2*STAGE_PRODUCT.
+    # iter_cycles = ceil(K*100/UNROLL100); UNROLL100 = iterations/cycle x100 (50 = half-rate, 100 = 1/cycle,
+    # 200/300/400 = 2/3/4 per cycle). STAGE_INPUT/STAGE_OUTPUT add +1 each; STAGE_NORMALIZE + STAGE_PACK add counts.
+    # Decoupled z-path (parallel, half-rate only): the z-recurrence finishes ZGAP = iter_cycles - k early, so the PHI
+    # PMUL_L = 1+STAGE_PRODUCT pipeline overlaps the CORDIC and the back-end saves SAVED = min(PMUL_L, ZGAP).
+    # Mirrors zkf_sincos LATENCY_REF.
     if stage_product not in (0, 1, 2, 3, 4):
         raise ValueError(f"stage_product must be 0..4, got {stage_product}")
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
-    k = TRIG_SPECS[wman]["n_sincos"]                       # sincos iteration count (== table n today)
+    k = fmt.sincos_iterations
     iter_cycles = (k * 100 + unroll100 - 1) // unroll100
     saved = 0
     if parallel:
@@ -229,7 +224,7 @@ def sincos_latency(
 
 
 def atan2_latency(
-    wman: int,
+    fmt: ZkfFormat,
     *,
     unroll100: int = 100,
     stage_input: int = 0,
@@ -239,27 +234,21 @@ def atan2_latency(
     stage_output: int = 0,
     **_ignored: int,
 ) -> int:
-    # Iterative vectoring-CORDIC initiation interval = latency, measured accept -> out_valid. The cocotb testbench
-    # asserts the RTL matches this exactly, and the RTL LATENCY parameter (zkf_atan2.v) is the same closed form.
-    # Constant 8 = the front-end pipeline (D0 half-compare register + D order/align register + F2 seed register -- the
-    # |x|-vs-|y| compare and the seed barrel-shift are split across these) + the B1 divide-setup register + the
-    # QT-product base register (the shared _zkf_pmul's own first stage) + the two post-divide registers (P2 captures the
-    # correction operands, B2 does the single unmap add + packer-input assembly -- split so the wide signed unmap add
-    # does not chain behind the multiplier) + the output stage. The magnitude product shares the same _zkf_pmul but is
-    # issued DURING the divide, so it never adds latency.
-    # Then: rotation cycles = ceil(N*100/UNROLL100) (UNROLL100 as in sincos); STEPS = ceil(XF/2) folded radix-4 divider
-    # cycles (data-independent: the same divide runs for the bypass and the residual, F = 2*STEPS >= XF quotient bits);
-    # STAGE_PRODUCT extra cycles in the shared _zkf_pmul (on the post-divide QT product, the only one on the critical
-    # path); the optional STAGE_INPUT register (+1); STAGE_NORMALIZE + STAGE_PACK in the shared _zkf_fixed_to_float
-    # back-end; plus the public theta/mag/out_valid STAGE_OUTPUT register. Mirrors zkf_atan2 LATENCY_REF exactly.
+    # Vectoring-CORDIC initiation interval = latency (accept -> out_valid). The cocotb bench asserts the RTL matches
+    # this, and zkf_atan2.v's LATENCY parameter is the same closed form.
+    # 8 = front-end pipeline (3) + divide-setup (1) + QT-product base (1, the shared _zkf_pmul's first stage)
+    #     + two post-divide (2) + output (1). The magnitude product shares _zkf_pmul but issues during the divide,
+    #     so it never adds latency.
+    # iter_cycles = ceil(N*100/UNROLL100) (UNROLL100 as in sincos). STEPS = ceil(XF/2) folded radix-4 divider cycles
+    # (data-independent). STAGE_PRODUCT adds cycles in the shared _zkf_pmul (post-divide QT product, the only one on the
+    # critical path); STAGE_INPUT +1; STAGE_NORMALIZE + STAGE_PACK in the shared _zkf_fixed_to_float back-end;
+    # STAGE_OUTPUT on the public theta/mag outputs. Mirrors zkf_atan2 LATENCY_REF.
     if unroll100 != 50 and (unroll100 < 100 or unroll100 % 100 != 0):
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
-    spec = TRIG_SPECS[wman]
-    n, xf = spec["n_atan2"], spec["xf_atan2"]             # atan2's own iteration count and x/y (divider) width
+    n, xf = fmt.atan2_iterations, fmt.atan2_divider_width
     iter_cycles = (n * 100 + unroll100 - 1) // unroll100
     steps = (xf + 1) // 2                                  # folded radix-4 divider: 2 quotient bits per cycle
-    # The folded radix-4 divider runs one digit per cycle (stock _zkf_div_radix4_step) for STEPS cycles, plus a one-cycle
-    # setup that forms 3*den off the registered divisor. Mirrors `ZKF_ATAN2_DIVCYC = STEPS + 1.
+    # STEPS divider digit-cycles + a one-cycle setup that forms 3*den. Mirrors ZKF_ATAN2_DIVCYC = STEPS + 1.
     div_cycles = steps + 1
     return (
         8 + iter_cycles + div_cycles + _count(stage_product)
@@ -271,6 +260,7 @@ def atan2_latency(
 def module_latency(
     kind: str,
     *,
+    wexp: int = 2,   # valid minimum; transcendental latencies depend only on WMAN
     wman: int = 0,
     unroll100: int = 100,
     parallel: int = 0,
@@ -339,7 +329,7 @@ def module_latency(
                              stage_pack=stage_pack, stage_output=stage_output)
     if kind == "exp2":
         return exp2_latency(
-            wman,
+            ZkfFormat(wexp, wman),
             stage_input=stage_input,
             stage_reduce=stage_reduce,
             stage_product=stage_product,
@@ -348,7 +338,7 @@ def module_latency(
         )
     if kind == "log2":
         return log2_latency(
-            wman,
+            ZkfFormat(wexp, wman),
             stage_input=stage_input,
             stage_decode=stage_decode,
             stage_product=stage_product,
@@ -360,7 +350,7 @@ def module_latency(
         )
     if kind == "sincos":
         return sincos_latency(
-            wman,
+            ZkfFormat(wexp, wman),
             unroll100=unroll100,
             parallel=parallel,
             stage_input=stage_input,
@@ -371,7 +361,7 @@ def module_latency(
         )
     if kind == "atan2":
         return atan2_latency(
-            wman,
+            ZkfFormat(wexp, wman),
             unroll100=unroll100,
             stage_input=stage_input,
             stage_product=stage_product,

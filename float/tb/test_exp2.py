@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, exp2_reference, hex_bits, mask, normal
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import exp2_latency
 from zkf_params import check_width, float_context
@@ -29,7 +31,7 @@ def add_unique(cases: list[UnaryCase], seen: set[int], label: str, fmt: ZkfForma
     if key in seen:
         return
     seen.add(key)
-    cases.append(UnaryCase(label, x, exp2_reference(fmt, x)))
+    cases.append(UnaryCase(label, x, fmt.wrap(x).exp2().bits))
 
 
 def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
@@ -45,7 +47,7 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
     if fmt.wexp >= 3:
         for label, value in directed_numbers(fmt).items():
             out.append((f"num_{label}", value))
-        # Integer exponents: 2**x is an exact power of two -> exercises the f == 0 path and pack overflow/underflow.
+        # Integer exponents: 2**x is an exact power of two -> exercises the f==0 path and pack overflow/underflow.
         for k in (1, 2, 3, -1, -2, -3):
             exp = fmt.bias + k
             if 1 <= exp <= fmt.exp_max_finite:
@@ -94,7 +96,7 @@ async def exp2_runtime_cases(dut) -> None:
     dut.x.value = 0
 
     register_stages = exp2_latency(
-        context.wman,
+        fmt,
         stage_input=context.stage_input,
         stage_reduce=context.stage_reduce,
         stage_product=context.stage_product,

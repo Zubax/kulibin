@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, add_reference, hex_bits, mask
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_latency import add_latency
 from zkf_params import check_width, float_context
@@ -29,7 +30,7 @@ class AddSubCase:
 
 def addsub_reference(fmt: ZkfFormat, a: int, b: int, op_sub: int) -> int:
     b_effective = b ^ ((op_sub & 1) << fmt.sign_shift)
-    return add_reference(fmt, a, b_effective)
+    return (fmt.wrap(a) + fmt.wrap(b_effective)).bits
 
 
 def raw_directed_values(fmt: ZkfFormat) -> list[int]:

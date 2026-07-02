@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""Standalone bench for the fused leading-zero-normalizing shifter _zkf_normshift.
+"""
+Standalone bench for the fused leading-zero-normalizing shifter _zkf_normshift.
 
-_zkf_normshift replaced the former _zkf_lod-plus-separate-barrel-shift pair shared by zkf_add and
-zkf_from_int. Embedded callers drive it with narrow, zero-padded inputs over a limited leading-one
-range, so this bench sweeps x exhaustively at small widths (so every reachable cascade node toggles)
-and checks (zero, count, y) against the model, across STAGE_SPLIT and STAGE_OUTPUT.
+Embedded callers (zkf_add, zkf_from_int) drive it with narrow, zero-padded inputs over a limited leading-one range, so
+this bench sweeps x exhaustively at small widths -- every reachable cascade node toggles -- and checks (zero, count, y)
+against the model across STAGE_SPLIT and STAGE_OUTPUT.
 
-Two tests:
-  - normshift_runtime_cases: the (zero, count, y) datapath, swept over x, read after the module's
-    STAGE_SPLIT + STAGE_OUTPUT output latency.
-  - normshift_sideband_stream: the streaming sideband. It drives a fresh in_valid/sb_in every cycle and
-    uses RegisterStageScoreboard to assert out_valid/sb_out are delayed by EXACTLY STAGE_SPLIT +
-    STAGE_OUTPUT cycles (with valid gaps and a flush), which pins the latency an input-holding sweep
-    cannot.
+normshift_sideband_stream additionally pins the streaming sideband latency: it drives a fresh in_valid/sb_in every
+cycle and asserts out_valid/sb_out are delayed by EXACTLY STAGE_SPLIT + STAGE_OUTPUT (with valid gaps and a flush),
+which an input-holding sweep cannot.
 """
 
 from __future__ import annotations
@@ -21,7 +17,7 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge, Timer
 
-from zkf_model import mask, normshift_reference
+from zkf_bits import mask
 from zkf_params import TestContext, plusarg_int, plusarg_str
 from zkf_stream import (
     RegisterStageScoreboard,
@@ -30,6 +26,18 @@ from zkf_stream import (
     run_stream_cases,
     start_clock,
 )
+
+
+def normshift_reference(width: int, value: int) -> tuple[int, int, int]:
+    """
+    Independent bench reference for _zkf_normshift: returns (zero, count, y). count = (width-1) - leading_one_pos,
+    the left-shift bringing the leading 1 to the MSB; y = value << count. count and y are don't-care when zero.
+    """
+    value &= mask(width)
+    if value == 0:
+        return 1, 0, 0
+    count = (width - 1) - (value.bit_length() - 1)
+    return 0, count, (value << count) & mask(width)
 
 
 def cases_for(width: int, kind: str, seed: int, count: int) -> list[int]:
@@ -59,22 +67,22 @@ async def normshift_runtime_cases(dut) -> None:
     if len(dut.x) != width:
         raise AssertionError(f"{cfg}: x width {len(dut.x)} != ZKF_NS_W={width}")
 
-    # Total output latency: the STAGE_SPLIT cascade barriers plus the optional STAGE_OUTPUT register. zero/count/y land
-    # after exactly this many cycles. (out_valid/sb_out latency is pinned separately by normshift_sideband_stream.)
+    # Output latency = STAGE_SPLIT cascade barriers + optional STAGE_OUTPUT register. (out_valid/sb_out latency is
+    # pinned separately by normshift_sideband_stream.)
     latency = split + output
 
     cases = cases_for(width, kind, seed, count)
     start_clock(dut)
-    # The (zero, count, y) outputs are pure datapath (independent of in_valid/sb_in/rst), so this sweep leaves the
-    # streaming controls idle and reads the settled result after the module's output latency.
+    # (zero, count, y) are pure datapath (independent of in_valid/sb_in/rst), so this sweep leaves the streaming
+    # controls idle and reads the settled result after the output latency.
     dut.rst.value = 0
     dut.in_valid.value = 0
     checked = 0
     for x in cases:
         drive_unsigned(dut.x, x)
-        # Settle the combinational path (the result for latency==0), then advance `latency` real clock edges holding x
-        # stable across the cascade-internal register barriers and the output register. Settling before the first edge
-        # avoids a t=0 drive/clock race on the un-reset datapath registers.
+        # Settle the combinational path (the latency==0 result), then advance latency clock edges holding x stable
+        # across the register barriers. Settling before the first edge avoids a t=0 drive/clock race on the un-reset
+        # datapath registers.
         await Timer(1, unit="ns")
         for _ in range(latency):
             await RisingEdge(dut.clk)
@@ -100,10 +108,9 @@ async def normshift_runtime_cases(dut) -> None:
 
 @cocotb.test()
 async def normshift_sideband_stream(dut) -> None:
-    """Pin the streaming sideband latency: out_valid/sb_out must be delayed by exactly STAGE_SPLIT + STAGE_OUTPUT.
-
-    Unlike the input-holding sweep above, this drives a fresh in_valid/sb_in every cycle, so a wrong delay (one stage
-    too few or too many) makes the alternating sb_out bit -- or the gated out_valid under a valid gap -- mismatch.
+    """
+    Pin the streaming sideband latency: out_valid/sb_out must be delayed by exactly STAGE_SPLIT + STAGE_OUTPUT. A
+    fresh in_valid/sb_in every cycle makes a wrong delay mismatch the alternating sb_out (or the gated out_valid).
     """
     width = plusarg_int("ZKF_NS_W")
     split = plusarg_int("ZKF_NS_SPLIT", 0)
@@ -121,8 +128,8 @@ async def normshift_sideband_stream(dut) -> None:
     sample_count = max(64, latency * 8)
 
     if latency == 0:
-        # Purely combinational: out_valid follows in_valid and sb_out follows sb_in with no rst gating, so the
-        # RegisterStageScoreboard's reset-flush model does not apply -- check passthrough directly (mirrors test_pipe).
+        # Purely combinational (no rst gating), so RegisterStageScoreboard's reset-flush model doesn't apply -- check
+        # passthrough directly (mirrors test_pipe).
         dut.rst.value = 0
         for i in range(sample_count):
             valid = (i % 3) != 0

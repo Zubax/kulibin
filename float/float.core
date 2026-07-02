@@ -285,9 +285,9 @@ filesets:
     file_type: verilogSource
 
   tb_cocotb:
+    # The zkf reference-model package (float/zkf/) is resolved via PYTHONPATH (see test_float_matrix.py and Makefile),
+    # not staged here. Only the cocotb harness modules are listed.
     files:
-      - tb/zkf_model.py:
-          file_type: user
       - tb/zkf_params.py:
           file_type: user
       - tb/zkf_latency.py:
@@ -295,10 +295,6 @@ filesets:
       - tb/zkf_stream.py:
           file_type: user
       - tb/zkf_operands.py:
-          file_type: user
-      - tb/zkf_trig_tables.py:
-          file_type: user
-      - tb/zkf_trans_tables.py:
           file_type: user
       - tb/zkf_results.py:
           file_type: user

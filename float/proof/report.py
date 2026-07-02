@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Render a colourful HTML report from the JSON summary produced by run_proofs.py.
+"""
+Render a colourful HTML report from the JSON summary produced by run_proofs.py.
 
 Style matches float/tb/zkf_coverage.py's dark-theme fallback for visual consistency.
 """

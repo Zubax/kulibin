@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Drive every .sby flow under float/proof/sby/ and aggregate the results.
+"""
+Drive every .sby flow under float/proof/sby/ and aggregate the results.
 
 For each .sby file (skipping *_cover.sby and *_explore.sby which are run separately when needed),
 this script:

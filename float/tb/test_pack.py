@@ -7,18 +7,101 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import (
-    ZkfFormat,
-    hex_bits,
-    mask,
-    pack_from_mag_scale_case,
-    pack_reference,
-    signed_range,
-)
-from zkf_operands import random_pack_mag_scale
+from zkf import ZkfFormat
+from zkf_bits import hex_bits, mask, signed_range
+from zkf_operands import canonical_inf, normal, pack_bits, random_pack_mag_scale, zero
 from zkf_params import check_width, float_context
 from zkf_latency import pack_latency
 from zkf_stream import RegisterStageScoreboard, drive_signed, drive_unsigned, run_stream_cases, start_clock
+
+
+# Independent bench reference for the RTL _zkf_pack primitive (mirrors hdl/zkf_pack.v). Separate from the package's
+# own packing kernel so drift between the two is caught by the DUT comparison.
+def pack_reference(
+    fmt: ZkfFormat,
+    sign: int,
+    force_zero: int,
+    force_inf: int,
+    exp_unbiased: int,
+    significand_value: int,
+    guard: int,
+    round_bit: int,
+    sticky: int,
+) -> int:
+    exp_biased = exp_unbiased + fmt.bias
+    exp_underflow_zero = exp_unbiased < (fmt.min_exp_unbiased - 1)
+    exp_one_below_min = exp_unbiased == (fmt.min_exp_unbiased - 1)
+    exp_overflow = exp_unbiased > fmt.max_exp_unbiased
+
+    round_increment = bool(guard and (round_bit or sticky or (significand_value & 1)))
+    rounded_ext = (significand_value & mask(fmt.wman)) + (1 if round_increment else 0)
+    round_carry = (rounded_ext >> fmt.wman) & 1
+    rounded_significand = (rounded_ext >> 1) if round_carry else (rounded_ext & mask(fmt.wman))
+    exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
+    infinity = bool(force_inf or exp_overflow or exp_round_overflow)
+
+    result_zero = bool(force_zero or ((not force_inf) and exp_underflow_zero))
+    result_infinity = (not result_zero) and infinity
+    result_min_normal = (not result_zero) and (not result_infinity) and (not force_inf) and exp_one_below_min
+
+    if result_zero:
+        return zero(fmt)
+    if result_infinity:
+        return canonical_inf(fmt, sign)
+    if result_min_normal:
+        return normal(fmt, sign, 1, 0)
+
+    exp_rounded = (exp_biased + round_carry) & mask(fmt.wexp)
+    return pack_bits(fmt, sign, exp_rounded, rounded_significand & fmt.frac_mask)
+
+
+def pack_from_mag_scale(
+    fmt: ZkfFormat,
+    sign: int,
+    mag: int,
+    scale: int,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Adapt (sign, mag, scale) test vectors to direct _zkf_pack inputs."""
+    if mag == 0:
+        return sign & 1, 1, 0, scale, 0, 0, 0
+
+    log2_mag = mag.bit_length() - 1
+    exp_unbiased = scale + log2_mag
+    aligned = (mag << (fmt.wman + 1)) >> log2_mag
+    significand_value = (aligned >> 2) & mask(fmt.wman)
+    guard = (aligned >> 1) & 1
+    round_bit = aligned & 1
+
+    sticky_width = log2_mag - fmt.wman - 1
+    sticky = 0
+    if sticky_width > 0:
+        sticky = 1 if (mag & mask(sticky_width)) != 0 else 0
+
+    return sign & 1, 0, 0, exp_unbiased, significand_value, guard, round_bit | (sticky << 1)
+
+
+def pack_from_mag_scale_case(
+    fmt: ZkfFormat,
+    sign: int,
+    mag: int,
+    scale: int,
+) -> tuple[int, int, int, int, int, int, int, int]:
+    sign, force_zero, force_inf, exp_unbiased, significand_value, guard, round_sticky = pack_from_mag_scale(
+        fmt,
+        sign,
+        mag,
+        scale,
+    )
+    return (
+        sign,
+        force_zero,
+        force_inf,
+        exp_unbiased,
+        significand_value,
+        guard,
+        round_sticky & 1,
+        (round_sticky >> 1) & 1,
+    )
 
 
 @dataclass(frozen=True)
@@ -148,8 +231,8 @@ def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int, exp_is_biased: int = 0)
         for force_zero in (0, 1):
             for force_inf in (0, 1):
                 for exp_field in signed_range(wexp_unbiased):
-                    # In biased mode the DUT consumes this field directly as the signed biased exponent, so iterate the
-                    # field and recover the unbiased value the reference expects; drive_case re-adds the bias on drive.
+                    # Biased mode: the DUT consumes this field as the signed biased exponent, so iterate the field and
+                    # recover the unbiased value the reference expects (drive_case re-adds the bias).
                     exp_unbiased = exp_field - fmt.bias if exp_is_biased else exp_field
                     for significand_value in range(1 << fmt.wman):
                         for grs in range(8):
@@ -173,11 +256,9 @@ def exhaustive_cases(fmt: ZkfFormat, wexp_unbiased: int, exp_is_biased: int = 0)
 def _filter_no_overflow(fmt: ZkfFormat, cases: list[PackCase], assume_no_overflow: int) -> list[PackCase]:
     if not assume_no_overflow:
         return cases
-    # Under ASSUME_NO_OVERFLOW=1 the packer prunes its overflow detector, so its result diverges from the
-    # overflow-detecting reference only for a genuine exponent overflow with no force flag: force_inf / force_zero
-    # dominate (converge), and a round-carry from EXP_MAX_FINITE up to EXP_INF rides the rounding adder, not the
-    # detector (converges). An exp_unbiased strictly above the finite range is the caller's-responsibility / undefined
-    # region for this mode, so drop it from the stimulus.
+    # ASSUME_NO_OVERFLOW=1 prunes the packer's overflow detector, so it diverges from the overflow-detecting reference
+    # only for a genuine exponent overflow with no force flag; that region is caller's-responsibility/undefined here, so
+    # drop exp_unbiased above the finite range.
     return [
         case for case in cases
         if case.force_inf or case.force_zero or case.exp_unbiased <= fmt.max_exp_unbiased
@@ -191,8 +272,8 @@ def cases_for(
     if kind == "exhaustive":
         return _filter_no_overflow(fmt, exhaustive_cases(fmt, wexp_unbiased, exp_is_biased), assume_no_overflow)
     if exp_is_biased:
-        # The directed/random generators choose unbiased exponents around the format's range; re-biasing those for the
-        # EXP_IS_BIASED port can exceed the signed field, so EXP_IS_BIASED=1 is only swept with the exhaustive kind.
+        # Re-biasing directed/random unbiased exponents for the EXP_IS_BIASED port can exceed the signed field, so
+        # EXP_IS_BIASED=1 is only swept with the exhaustive kind.
         raise ValueError("EXP_IS_BIASED=1 pack stimulus is only generated for the exhaustive kind")
 
     cases = directed_cases(fmt)
@@ -265,8 +346,8 @@ async def pack_runtime_cases(dut) -> None:
         dut.sign.value = case.sign
         dut.force_zero.value = case.force_zero
         dut.force_inf.value = case.force_inf
-        # EXP_IS_BIASED=1 expects the already-biased exponent on the port; the exhaustive generator chose exp_unbiased
-        # so that exp_unbiased + bias stays inside the signed field.
+        # EXP_IS_BIASED=1 expects the already-biased exponent; the exhaustive generator chose exp_unbiased so that
+        # exp_unbiased + bias stays inside the signed field.
         drive_signed(dut.exp_unbiased, case.exp_unbiased + (fmt.bias if exp_is_biased else 0))
         drive_unsigned(dut.significand, case.significand)
         dut.guard.value = case.guard

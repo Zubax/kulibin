@@ -7,17 +7,10 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import (
-    ZkfFormat,
-    fma_reference,
-    hex_bits,
-    mask,
-    mul_reference,
-    neg_reference,
-    normal,
-    numpy_fma_reference,
-    zero,
-)
+from zkf import ZkfFormat
+from zkf.oracle import fma
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -59,13 +52,13 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    expected = fma_reference(fmt, a, b, c)
-    np_ref = numpy_fma_reference(fmt, a, b, c)
-    if np_ref is not None and np_ref != expected:
+    expected = fmt.wrap(a).fma(fmt.wrap(b), fmt.wrap(c)).bits
+    np_ref = fma(fmt.wrap(a), fmt.wrap(b), fmt.wrap(c))
+    if np_ref is not None and np_ref.bits != expected:
         raise AssertionError(
             f"math.fma cross-check failed for fma {fmt}: a={hex_bits(a, fmt.wfull)} "
             f"b={hex_bits(b, fmt.wfull)} c={hex_bits(c, fmt.wfull)} "
-            f"exact={hex_bits(expected, fmt.wfull)} fma={hex_bits(np_ref, fmt.wfull)}"
+            f"exact={hex_bits(expected, fmt.wfull)} fma={hex_bits(np_ref.bits, fmt.wfull)}"
         )
     cases.append(FmaCase(label, a, b, c, expected))
 
@@ -74,27 +67,24 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
     v = directed_numbers(fmt)
     one = v["one"]
     cases: list[tuple[str, int, int, int]] = [
-        # Plain products plus an addend; c=0 reduces to a rounded product.
+        # c=0 reduces to a rounded product.
         ("one_times_one_plus_zero", one, one, v["zero"]),
         ("two_times_one_plus_one", v["two"], one, one),
         ("one_times_one_plus_one", one, one, one),
         ("one_times_one_minus_one", one, one, v["minus_one"]),
         ("half_times_half_plus_zero", v["half"], v["half"], v["zero"]),
         ("max_times_one_plus_one", v["max_finite"], one, one),
-        # Overflow of the product / of the sum to infinity.
         ("max_times_max_overflow", v["max_finite"], v["max_finite"], v["zero"]),
         ("max_times_max_plus_neg_max", v["max_finite"], v["max_finite"], v["neg_max_finite"]),
         ("neg_max_times_max_overflow", v["neg_max_finite"], v["max_finite"], v["zero"]),
-        # Underflow / min-normal boundary of the product.
         ("min_normal_times_half_underflow", v["min_normal"], v["half"], v["zero"]),
         ("min_times_min_underflow_plus_min", v["min_normal"], v["min_normal"], v["min_normal"]),
-        # Product is zero (including 0*inf=+0); result is c canonicalized.
+        # Zero product (incl. 0*inf=+0); result is c canonicalized.
         ("zero_times_one_plus_one", v["zero"], one, one),
         ("zero_times_inf_plus_two", v["zero"], v["pos_inf"], v["two"]),
         ("neg_zero_times_inf_plus_one", v["neg_zero"], v["noncanonical_pos_inf"], one),
         ("one_times_zero_plus_neg_one", one, v["zero"], v["minus_one"]),
         ("zero_times_zero_plus_zero", v["zero"], v["zero"], v["zero"]),
-        # Infinite product / infinite addend combinations.
         ("inf_times_one_plus_one", v["pos_inf"], one, one),
         ("inf_times_one_minus_inf", v["pos_inf"], one, v["neg_inf"]),
         ("neg_inf_times_one_plus_inf", v["neg_inf"], one, v["pos_inf"]),
@@ -102,24 +92,23 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
         ("finite_product_plus_inf", v["two"], v["two"], v["noncanonical_neg_inf"]),
         ("inf_times_inf_plus_neg_inf", v["pos_inf"], v["pos_inf"], v["neg_inf"]),
         ("inf_times_zero_plus_inf", v["pos_inf"], v["zero"], v["pos_inf"]),
-        # Sign handling on the product.
         ("neg_times_neg_plus_zero", v["minus_one"], v["minus_one"], v["zero"]),
         ("pos_times_neg_plus_zero", one, v["minus_one"], v["zero"]),
-        # Rounding boundary: product is exact, the addend pushes a tie/round on the sum.
+        # Product exact; the addend forces a tie/round on the sum.
         ("one_and_half_times_one_plus_quarter", v["one_and_half"], one, v["one_and_quarter"]),
         ("three_quarters_carry", v["one_and_three_quarters"], v["one_and_three_quarters"], v["zero"]),
     ]
 
-    # Catastrophic cancellation: c = -(rounded product). a*b + c then equals the exact product minus its rounded
-    # value, a tiny residual that drives the leading one deep into the product's low half - the case that forces the
-    # full-width normalize and that a chained mul->add would have thrown away.
+    # Catastrophic cancellation: c = -(rounded product), so a*b + c is the tiny exact-minus-rounded residual that
+    # drives the leading one deep into the product's low half and forces the full-width normalize a single-rounded FMA
+    # must keep but a chained mul->add would discard.
     for label, a, b in (
         ("cancel_one_half", v["one_and_half"], v["one_and_quarter"]),
         ("cancel_three_q", v["one_and_three_quarters"], v["one_and_three_quarters"]),
         ("cancel_max", v["max_finite"], v["one_and_half"]),
         ("cancel_min", v["min_normal"], v["one_and_three_quarters"]),
     ):
-        cases.append((label, a, b, neg_reference(fmt, mul_reference(fmt, a, b))))
+        cases.append((label, a, b, (-(fmt.wrap(a) * fmt.wrap(b))).bits))
 
     # Exponent-difference sweep between the product (~bias) and the addend, both signs.
     high_exp = min(fmt.exp_max_finite, fmt.bias + 4)
@@ -128,7 +117,7 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
         cases.append((f"prod_vs_c_exp_diff_{exp_diff}_same", one, one, normal(fmt, 0, c_exp, fmt.frac_mask)))
         cases.append((f"prod_vs_c_exp_diff_{exp_diff}_opp", one, one, normal(fmt, 1, c_exp, fmt.frac_mask)))
 
-    # (6,18) regression witnesses where single-rounding provably differs from add(mul(a,b),c).
+    # (6,18) witnesses where single-rounding provably differs from add(mul(a,b),c).
     if (fmt.wexp, fmt.wman) == (6, 18):
         for label, a, b, c in (
             ("w6m18_witness0", 0x128B2F, 0xD23F08, 0x892F90),
@@ -137,9 +126,8 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
         ):
             cases.append((label, a, b, c))
 
-    # (4,30) regression: deep cancellation whose corrected exponent (anchor - normalize_shift) underflows far below
-    # the product exponent range. A sub-path exponent field sized only for the exponent range (WEXP+2) wraps the
-    # tiny residual to a spurious large finite; these must round to canonical +0.
+    # (4,30) deep cancellation whose corrected exponent underflows far below the product range: a sub-path exponent
+    # field sized only WEXP+2 would wrap the tiny residual to a spurious large finite; these must round to +0.
     if (fmt.wexp, fmt.wman) == (4, 30):
         for label, a, b, c in (
             ("w4m30_cancel_underflow0", 0x08EA99F89, 0x07AEC4FCE, 0x22AF60440),
@@ -168,10 +156,10 @@ def random_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int
         # Addend close to the product magnitude (drives close cancellation / small alignment).
         a = random_normal(fmt, rng)
         b = random_normal(fmt, rng)
-        product = mul_reference(fmt, a, b)
+        product = fmt.wrap(a) * fmt.wrap(b)
         if int(rng.integers(0, 2)):
-            return a, b, neg_reference(fmt, product)
-        return a, b, product
+            return a, b, (-product).bits
+        return a, b, product.bits
     if mode == 7:
         # Addend near the product exponent with an independent fraction/sign.
         a = random_normal(fmt, rng)

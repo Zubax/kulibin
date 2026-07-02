@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import cocotb
 import numpy as np
 
-from zkf_model import ZkfFormat, add_reference, hex_bits, mask, normal, numpy_add_reference, zero
+from zkf import ZkfFormat
+from zkf.oracle import add
+from zkf_bits import hex_bits, mask
+from zkf_operands import normal, zero
 from zkf_operands import (
     directed_numbers,
     random_inf,
@@ -44,13 +47,13 @@ def add_unique(
     if key in seen:
         return
     seen.add(key)
-    expected = add_reference(fmt, a, b)
-    np_ref = numpy_add_reference(fmt, a, b)
-    if np_ref is not None and np_ref != expected:
+    expected = (fmt.wrap(a) + fmt.wrap(b)).bits
+    np_ref = add(fmt.wrap(a), fmt.wrap(b))
+    if np_ref is not None and np_ref.bits != expected:
         raise AssertionError(
             f"NumPy cross-check failed for add {fmt}: a={hex_bits(a, fmt.wfull)} + "
             f"b={hex_bits(b, fmt.wfull)} exact={hex_bits(expected, fmt.wfull)} "
-            f"numpy={hex_bits(np_ref, fmt.wfull)}"
+            f"numpy={hex_bits(np_ref.bits, fmt.wfull)}"
         )
     cases.append(AddCase(label, a, b, expected))
 
@@ -326,7 +329,7 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddCase]
 
     if (fmt.wexp, fmt.wman) == (8, 24):
         for label, a, b, expected in binary32_manual_cases():
-            actual = add_reference(fmt, a, b)
+            actual = (fmt.wrap(a) + fmt.wrap(b)).bits
             if actual != expected:
                 raise AssertionError(f"{label}: expected {expected:08x}, model returned {actual:08x}")
             add_unique(cases, seen, label, fmt, a, b)

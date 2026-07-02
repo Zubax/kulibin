@@ -2,32 +2,22 @@
 """
 Constant generator for the ZKF CORDIC trigonometric operators: zkf_sincos, zkf_atan2.
 
-The phase ``x`` is measured in turns, so ``sin = sin(2*pi*x)`` and ``cos = cos(2*pi*x)``. The streamed module reduces
-``x`` mod 1 to a fixed-point fraction ``frac(x) in [0,1)``, splits it into the 2-bit ``quadrant`` (top two fractional
-bits) and a quadrant-local coordinate ``t in [0,1)`` (local angle ``theta = (pi/2)*t``), folds the half-quadrant
-symmetry to bring the angle into ``[0, pi/4]`` (one octant), runs a fixed-point CORDIC rotation to get
-``(cos theta', sin theta')``, then unmaps the octant/quadrant and packs the two magnitudes as ZKF floats.
+Phase ``x`` is in turns (``sin = sin(2*pi*x)``). The module reduces ``x`` mod 1 to ``frac(x) in [0,1)``, takes the top
+two bits as the ``quadrant`` and folds the rest to one octant angle ``t' in [0, pi/4]``, runs a fixed-point CORDIC
+rotation, then unmaps and packs. Why CORDIC: faithful sin/cos needs relative accuracy near each zero, and CORDIC gets it
+with adds/shifts only (no small-coefficient cancellation; inverse-gain folded into the seed). KEY DESIGN: the SAME
+engine (``hdl/_zkf_cordic.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing the arctan
+LUT (stored in *turns*), datapath, iteration count, and quadrant pre/post-processing; only MODE differs.
 
-Why CORDIC? Faithful sin/cos needs relative accuracy near each zero; the only multiply-free way to get that across the
-whole range is CORDIC (the rotation is exact up to the iteration count, no small-coefficient cancellation). It uses no
-multipliers in the iteration array (adds and shifts only) -- the inverse-gain is folded into the seed.
-Critically the SAME engine, run in *vectoring* mode, computes ``atan2`` (and the vector magnitude) from a vector,
-reusing the arctan LUT (stored here in *turns* so atan2's result is already in turns), the add/shift datapath,
-the iteration count, and the quadrant pre/post-processing. The engine ``hdl/_zkf_cordic.v`` is therefore generic and
-mode-parameterized; this file only generates the per-WMAN constants.
+Angle units: the arctan LUT is ``L[i] = atan(2**-i)/(2*pi)`` at scale ``2**-ZF``, ``ZF = WT + 2 + GUARD_ZF``. The octant
+coordinate ``t'`` is at scale ``2**-WT``, so the angle accumulator seed is ``z0 = t' << GUARD_ZF`` (no multiply).
 
-Angle units: The arctan LUT is stored in turns: ``L[i] = atan(2**-i) / (2*pi)`` at scale ``2**-ZF``. With the
-octant-reduced coordinate ``t'`` (scale ``2**-WT``) the local angle in turns is ``theta'/(2*pi) = t'/4``, so the CORDIC
-angle accumulator seed is simply ``z0 = t'`` read at scale ``2**-(WT+2) == 2**-ZF`` (no conversion multiply).
+Tiny angles: below the CORDIC's smallest resolvable step a linear path returns ``sin ~= 2*pi*x`` (one multiply by a
+generated ``2*pi``), ``cos = +1``; ``GUARD_FF(WMAN)`` places that handoff where it holds <= 1 ULP. After the octant fold
+``cos`` is never small, so only sin needs it.
 
-Tiny / near-boundary angles: for ``theta'`` below the CORDIC's smallest resolvable step the rotation cannot place the
-small sine, so a small-angle path returns ``sin ~= 2*pi*x`` (one multiply against a generated high-precision ``2*pi``)
-and ``cos = +1``; ``GUARD_FF(WMAN)`` places that boundary where the linear small-angle approximation already holds to
-<= 1 ULP. After the octant fold ``cos`` is never small (theta' <= pi/4 => cos >= cos(pi/4)), so only sin needs it.
-
-``--emit`` writes, per supported WMAN, ``hdl/_tables/_zkf_cordic_m<WMAN>.v`` (the LUT + seed + widths bound to the
-generic engine) plus the Python data ``tb/zkf_trig_tables.py`` the bit-exact reference model imports; ``--check``
-verifies both outputs and the quadrant against an ``mpmath`` ground truth (faithful rounding, <= 1 ULP).
+``--emit`` writes the per-WMAN Verilog cores and the Python data table; ``--check`` verifies both (and the quadrant)
+against an ``mpmath`` ground truth (<= 1 ULP).
 """
 
 from __future__ import annotations
@@ -35,69 +25,55 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass, field
-from math import ceil, log2
+from math import ceil
 from pathlib import Path
 from textwrap import dedent
 
 import mpmath as mp
 
-mp.mp.prec = 400  # generous working precision for the gain/LUT constants and ground-truth rounding
+mp.mp.prec = 400  # generous headroom for the gain/LUT constants and ground-truth rounding
 
 REPO = Path(__file__).resolve().parent
 HDL = REPO / "hdl"
 TABLES = HDL / "_tables"
-TB = REPO / "tb"
+PKG_TABLES = REPO / "zkf" / "_tables"
 
 FUNC = "sincos"
 
-# MIXED CORDIC: run only K ~ WMAN/2 rotation iterations, then finish the small residual angle with ONE linear rotation
-# (the "Taylor / final-rotation" termination): cos = x_K - y_K*phi, sin = y_K + x_K*phi, phi = residual (radians). The
-# linear step's dropped phi^2/2 term is < 1 ULP once the residual <= ~2**-(WMAN/2), i.e. after ~WMAN/2 iterations, so
-# the pipeline is K ~ WMAN/2 stages instead of ~1.5*WMAN -- the LUT/FF win, traded for the two correction multiplies.
-# (The correction only fixes the ANGLE residual; the iteration array's own truncation still limits the small sines the
-# CORDIC must place, so the datapath keeps ~1.5*WMAN fractional bits and the small-angle linear bypass below TSA stays.)
+# MIXED CORDIC: run K ~ WMAN/2 rotation iterations, then ONE linear rotation for the residual (cos = x_K - y_K*phi,
+# sin = y_K + x_K*phi). The dropped phi^2/2 term is < 1 ULP once the residual is <= ~2**-(WMAN/2), so the pipeline is
+# ~WMAN/2 stages instead of ~1.5*WMAN, traded for two correction multiplies. (The correction fixes only the ANGLE
+# residual; the iteration array's truncation still bounds the small sines, so the datapath keeps ~1.5*WMAN frac bits.)
 GUARD_XY = 6     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
-# NOTE on GUARD_XY: this is the SHARED engine x/y guard, consumed by BOTH operators (it sizes the table's baked WX and
-# KINV, and -- equal atm -- atan2's divider F = 2*ceil(XF/2) and the INV_TAU scale). sincos is faithful down to
-# GUARD_XY=3, but atan2's theta is XF-bound (its residual-divide angle precision lives at scale 2**-XF, and the linear
-# divide-termination's cubic residual is dominated by it), and at WMAN=11 it needs GUARD_XY>=6 to stay <= 1 ULP -- more
-# iterations do NOT help, only XF does. 6 is the smallest value that keeps atan2 (theta AND mag) faithful across every
-# supported WMAN while sincos keeps ample margin, so the engine table stays fully SHARED (no per-operator XF split). The
-# --check gate is authoritative here; do not lower it below 6 without re-running --check for all WMAN.
-# Iterations before the linear termination: N = (WMAN+1)//2 + GUARD_ITER_*. The guard pushes the residual a couple bits
-# below the precision the linear termination needs (and drives the reduced angle down to it), covering iteration rounding.
-# The guard is kept PER OPERATOR even though both currently floor at +1 (so the angle LUT + gain/KINV are identical and
-# the per-WMAN _zkf_cordic_m table stays fully shared, one KINV/LUT). They are independent because the two terminations
-# leave residuals of different order: sincos's linear final rotation drops a QUADRATIC term (~z^2/2), atan2's residual
-# DIVIDE drops a CUBIC term (~r^3/3). Both happen to need +1; keeping them separate lets them diverge later without
-# silently coupling the two operators' depths.
+# GOTCHA: GUARD_XY is SHARED by both operators (sizes WX/KINV and atan2's divider F / INV_TAU scale). sincos is faithful
+# at 3, but atan2's theta is XF-bound and needs >= 6 at WMAN=11 (more iterations don't help, only XF does). 6 is the
+# smallest keeping atan2 faithful everywhere while sincos keeps margin, so the engine table stays fully SHARED -- do not
+# lower without re-running --check for all WMAN.
+# Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Kept PER OPERATOR (both +1 today) because the two
+# terminations leave residuals of different order -- sincos's linear rotation drops a QUADRATIC term, atan2's residual
+# divide a CUBIC one; separate guards let them diverge later without silently coupling the shared table's depth.
 GUARD_ITER_SINCOS = 1
 GUARD_ITER_ATAN2  = 1
 # Angle accumulator integer headroom above the ZF fractional bits (z stays within +-(1/4 turn) through the rotation).
 GUARD_Z = 3
-# Angle fractional precision past the coordinate's own (WT+2) turns bits: the rotation sums K rounded LUT entries, each
-# quantized to 2**-ZF, accumulating ~K*2**-ZF of angle error, and the residual feeds the correction multiply, so it
-# must keep the full small-angle precision. The seed is z0 = t' << GUARD_ZF (coordinate shifted into the finer scale).
+# Extra angle fractional bits past the coordinate's (WT+2) turns bits: the rotation sums K LUT entries each rounded to
+# 2**-ZF (~K*2**-ZF error) and the residual feeds the correction multiply, so it must keep full small-angle precision.
 GUARD_ZF = 6
-# atan2 residual-divide guard: extra quotient fractional bits kept below the WMAN significand so the linear
-# divide-termination (atan(y_K/x_K) ~= y_K/x_K) and the small-ratio bypass round to <= 1 ULP. Paired with GUARD_XY,
-# this mirrors the sincos correction-operand budget; consumed by the atan2 reference model and zkf_atan2.v.
+# atan2 residual-divide guard: extra quotient fractional bits so the divide-termination and small-ratio bypass round to
+# <= 1 ULP. Consumed by the atan2 model and zkf_atan2.v.
 GUARD_DIV = 8
 
 WMAN_MIN, WMAN_MAX = 11, 53
 SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
 
-# Random faithful-rounding samples per (format, operator) drawn in --check for non-exhaustive formats. The RNG is
-# UNSEEDED (true randomness) so every run explores fresh inputs and repeated runs accumulate coverage; any miss prints
-# the offending input bits for reproduction. The default is deliberately thorough -- override with the environment
-# variable ZKF_CHECK_SAMPLES=<n> for a quicker run.
+# Random --check samples per (format, operator) for non-exhaustive formats. UNSEEDED, so repeated runs accumulate
+# coverage; override with ZKF_CHECK_SAMPLES=<n>.
 RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 
 def guard_ff(wman: int) -> int:
-    # Reduced-fraction guard placing the small-angle handoff e_b = -(GUARD_FF+2) where the linear small-angle path
-    # holds <= 1 ULP (binding term: |1 - cos(2*pi*2**e_b)| ~= (2*pi*2**e_b)**2/2 <= 2**-WMAN -> GUARD_FF >= WMAN//2+2).
-    # Floored at 12 so the common small formats keep a modest reduced fraction. Mirrored in hdl/zkf_sincos.v.
+    # Small-angle handoff guard: places the linear-path boundary where |1 - cos(2*pi*2**e_b)| <= 2**-WMAN, i.e.
+    # GUARD_FF >= WMAN//2 + 2; floored at 12. Mirrored in hdl/zkf_sincos.v.
     return max(12, wman // 2 + 2)
 
 
@@ -122,9 +98,10 @@ def n_atan2(wman: int) -> int:
 
 
 def n_iters(wman: int) -> int:
-    """Shared CORDIC depth baked into the per-WMAN _zkf_cordic_m table (the LUT length, KINV, and gain). The table is
-    shared between the two operators, so this REQUIRES the per-operator depths to agree; they do now (both guards are
-    +1). Should they ever diverge, the table can no longer be shared and the emission must split per operator."""
+    """
+    Shared CORDIC depth baked into the per-WMAN table (LUT length, KINV, gain). REQUIRES the two operators' depths to
+    agree (they do, both guards +1); if they diverge the table can no longer be shared -- split emission per operator.
+    """
     ns, na = n_sincos(wman), n_atan2(wman)
     if ns != na:
         raise ValueError(
@@ -134,9 +111,10 @@ def n_iters(wman: int) -> int:
 
 
 def tsa_bits(wman: int) -> int:
-    """Small-angle handoff: octant-local coordinate t' below 2**TSA_BITS takes the linear small-angle bypass
-    (sin = 2*pi*theta'_turns, cos = 1) instead of the CORDIC. Bound by the cos=1 rounding limit theta'(rad) <
-    2**-(WMAN/2): t' < 2**(ZF - ceil(WMAN/2) - log2(2*pi)), so TSA_BITS = (WT+2) - ceil(WMAN/2) - 3."""
+    """
+    Small-angle handoff: octant coordinate t' below 2**TSA_BITS takes the linear bypass (sin = 2*pi*t', cos = 1).
+    Bound by the cos=1 limit theta'(rad) < 2**-(WMAN/2): TSA_BITS = (WT+2) - ceil(WMAN/2) - 3.
+    """
     return (wt_bits(wman) + 2) - ((wman + 1) // 2) - 3
 
 
@@ -160,9 +138,8 @@ class Spec:
     tsa: int = 0           # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
     lut: list = field(default_factory=list)  # L[i] = round(atan(2**-i)/(2*pi) * 2**zf), i = 0..n-1
     c2: int = 0            # small-angle 2*pi constant scale (== xf)
-    # The multiplier constants are EMITTED PRE-NARROWED at width WMAN+5, each carrying its own native fixed-point scale
-    # 2**-S (S = the scale at which the round-narrowed top WMAN+5 bits represent the constant). Every dependent shift /
-    # exp-offset derives directly from that scale, so the datapath needs no DROP correction tokens.
+    # The multiplier constants are EMITTED PRE-NARROWED to WMAN+5 bits, each at its own native scale 2**-S; every
+    # dependent shift/exp-offset derives from that scale, so the datapath needs no DROP correction tokens.
     const2pi: int = 0      # round(2*pi * 2**CONST2PI_S), narrowed to WMAN+5 bits (sincos small-angle / linear-rotation)
     const2pi_s: int = 0    # native scale of the narrowed const2pi == WMAN+2
     inv_tau: int = 0       # round(2**INVTAU_S / (2*pi)), narrowed to WMAN+5 bits (atan2 residual/bypass turns scaling)
@@ -179,8 +156,10 @@ def cordic_gain(n: int):
 
 
 def choose_spec(wman: int) -> Spec:
-    """All-closed-form: the CORDIC depth and widths are functions of WMAN (so the pipeline depth is too). The arctan
-    LUT is in turns and the inverse gain folds into the x seed; --check validates the resulting faithfulness."""
+    """
+    All-closed-form: the CORDIC depth and widths are functions of WMAN (so the pipeline depth is too). The arctan
+    LUT is in turns and the inverse gain folds into the x seed; --check validates the resulting faithfulness.
+    """
     if not (WMAN_MIN <= wman <= WMAN_MAX):
         raise ValueError(f"Bad {wman=}")
     n = n_iters(wman)                          # shared depth (asserts n_sincos == n_atan2)
@@ -190,10 +169,8 @@ def choose_spec(wman: int) -> Spec:
     zw = zf + GUARD_Z
     kinv = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** xf)))   # full-precision inverse gain (the sincos seed)
     lut = [int(mp.nint(mp.atan(mp.mpf(2) ** (-i)) / (2 * mp.pi) * (mp.mpf(2) ** zf))) for i in range(n)]
-    # Each multiplier constant is round-narrowed to its top WMAN+5 bits and emitted at its native scale 2**-S directly
-    # (round(value * 2**S), round-to-nearest). The native scales come out to clean WMAN-relative values, and because
-    # the constant already carries its scale, the consuming shifts/exp-offsets are plain "product-scale minus
-    # target-scale" with no DROP correction (the former "+DROP" was exactly XF - S).
+    # Each constant is round-narrowed to its top WMAN+5 bits at its native scale 2**-S; consuming shifts are then plain
+    # "product-scale minus target-scale" (no DROP correction).
     const2pi_s = wman + 2                                            # narrowed 2*pi scale (was XF; XF - DROP == WMAN+2)
     invtau_s = wman + 7                                             # narrowed 1/(2*pi) scale (XF - DROP_IT   == WMAN+7)
     kinv_s = wman + 5                                               # narrowed 1/gain scale (XF - DROP_K      == WMAN+5)
@@ -375,8 +352,8 @@ def _emit_consts(s: Spec) -> str:
 
 def _emit_python(all_specs: dict[int, Spec]) -> str:
     w = _Writer()
-    w("# GENERATED by zkf_trig.py -- DO NOT EDIT.")
-    w('"""Bit-exact CORDIC constants for zkf_sincos (and the shared atan2 engine), consumed by zkf_model.py."""')
+    w("# GENERATED by float/zkf_trig.py -- DO NOT EDIT.")
+    w('"""Bit-exact CORDIC constants for zkf_sincos (and the shared atan2 engine), consumed by the zkf package."""')
     w("")
     w("SPECS = {")
     w.push()
@@ -393,19 +370,8 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
     w.pop()
     w("}")
     w("")
-    w(f"GUARD_XY = {GUARD_XY}")
-    w(f"GUARD_ITER_SINCOS = {GUARD_ITER_SINCOS}")
-    w(f"GUARD_ITER_ATAN2 = {GUARD_ITER_ATAN2}")
-    w(f"GUARD_DIV = {GUARD_DIV}")
-    w("# FF (reduced-fraction width) = WMAN + max(12, WMAN//2 + 2); WT = FF - 2; ZF = WT + 2.")
-    w("")
-    w("""
-        def get_spec(wman):
-            try:
-                return SPECS[wman]
-            except KeyError:
-                raise KeyError(f'no sincos CORDIC spec for WMAN={wman}; run zkf_trig.py --emit')
-    """)
+    w(f"GUARD_DIV = {GUARD_DIV}")   # load-bearing: the package derives ZkfFormat.atan2_bypass_shift from it
+    w("# FF (reduced-fraction width) = WMAN + max(12, WMAN//2 + 2); WT = FF - 2; ZF = WT + 2 + GUARD_ZF.")
     return w.render()
 
 
@@ -415,7 +381,7 @@ def emit(all_specs: dict[int, Spec]) -> None:
         path = TABLES / f"{cordic_module(wman)}.v"
         path.write_text(_emit_consts(s))
         print(f"wrote {path.relative_to(REPO)}")
-    path = TB / "zkf_trig_tables.py"
+    path = PKG_TABLES / "trig.py"
     path.write_text(_emit_python(all_specs))
     print(f"wrote {path.relative_to(REPO)}")
 
@@ -430,14 +396,23 @@ def _report(all_specs: dict[int, Spec]) -> None:
         print(f"{wman:>4} {s.n:>4} {s.xf:>4} {s.xw:>4} {s.zf:>4} {s.zw:>4} {s.wt:>4} {lut_bits:>8}")
 
 
-def _check(all_specs: dict[int, Spec]) -> None:
-    """End-to-end faithful-rounding check vs mpmath via the bit-exact model. Requires tb/ on sys.path."""
+def _check() -> None:
+    """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
-    sys.path.insert(0, str(TB))
-    import importlib
-    import zkf_model
-    importlib.reload(zkf_model)
-    from zkf_model import ZkfFormat, sincos_reference, sincos_true
+    sys.path.insert(0, str(REPO))
+    import zkf
+    import zkf.oracle
+    from zkf import ZkfFormat
+    # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
+    # without reaching into package internals to reload/clear caches.
+
+    def sincos_reference(fmt, b):
+        r = zkf.Zkf(fmt, b).sincos()
+        return (r.sin.bits, r.cos.bits, r.quadrant)
+
+    def sincos_true(fmt, b):
+        r = zkf.oracle.sincos(zkf.Zkf(fmt, b))
+        return (r.sin.bits, r.cos.bits, r.quadrant)
 
     print("end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(5, 11), (6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
@@ -469,7 +444,6 @@ def _check(all_specs: dict[int, Spec]) -> None:
 
 def _stratified_inputs(fmt) -> list[int]:
     import numpy as np
-    from zkf_model import pack_bits
     rng = np.random.default_rng()                              # unseeded: true randomness, fresh inputs each run
 
     def rand_bits() -> int:
@@ -483,22 +457,20 @@ def _stratified_inputs(fmt) -> list[int]:
     for exp in range(1, fmt.exp_inf):
         for sign in (0, 1):
             for _ in range(6):
-                out.append(pack_bits(fmt, sign, exp, int(rng.integers(0, 1 << fmt.wfrac))))
+                out.append(fmt.pack(sign, exp, int(rng.integers(0, 1 << fmt.wfrac))).bits)
             for fr in quarter_fracs:
-                out.append(pack_bits(fmt, sign, exp, fr))
+                out.append(fmt.pack(sign, exp, fr).bits)
 
-    # --- near-zero-result regression guard (the log2-class hardening; deterministic, swept every run) ---
-    # sin -> 0 as z -> 0, 1/2; cos -> 0 as z -> 1/4, 3/4 (turns). As a result -> 0 its ULP -> 0, and uniform-random z
-    # never lands within ~2**-wman of these turns for wide formats, so random sampling cannot gate faithful rounding
-    # there. Densely sweep the tiny-angle binades and the +/-K*ULP neighborhoods of every result-zero / octant turn so a
-    # future GUARD_FF/GUARD_XY/etc. reduction that regresses near-zero rounding is caught deterministically. (sincos is
-    # verified clean today -- it renormalizes through the packer -- so this is hardening, not a fix.)
+    # --- near-zero-result regression guard (deterministic, swept every run) ---
+    # sin/cos -> 0 at the quadrant/octant turns, where the ULP -> 0 and uniform-random z can't land within ~2**-wman.
+    # Densely sweep the tiny-angle binades and the +/-K*ULP neighborhoods of every result-zero/octant turn so a future
+    # guard reduction that regresses near-zero rounding is caught. (Hardening: sincos is clean today.)
     import math
     K, nf = 96, 1 << fmt.wfrac
     for exp in range(1, min(7, fmt.exp_inf)):                    # z -> 0: tiny angles, dense low/high fracs, both signs
         for sign in (0, 1):
             for fr in set(list(range(min(K, nf))) + list(range(max(0, nf - K), nf))):
-                out.append(pack_bits(fmt, sign, exp, fr))
+                out.append(fmt.pack(sign, exp, fr).bits)
     for T in (0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0):  # result-zero (1/4,1/2,3/4,1) + octant (1/8,3/8,...) turns
         eT = math.floor(math.log2(T))
         for e in (eT - 1, eT):
@@ -509,7 +481,7 @@ def _stratified_inputs(fmt) -> list[int]:
             for f in range(f0 - K, f0 + K + 1):
                 if 0 <= f < nf:
                     for sign in (0, 1):
-                        out.append(pack_bits(fmt, sign, biased, f))
+                        out.append(fmt.pack(sign, biased, f).bits)
     return out
 
 
@@ -521,28 +493,21 @@ def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
 
 
 def _ordered_index(fmt, bits: int) -> int:
-    import zkf_model
-    bits = zkf_model.canonicalize_special(fmt, bits)
+    from zkf import Zkf
+    bits = Zkf(fmt, bits).canonicalize().bits
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
-    # ZKF has no subnormals: the magnitude encoding jumps straight from 0 (zero) to 1<<wfrac (the smallest normal),
-    # leaving (1<<wfrac)-1 non-existent codes in between. Collapse that gap so every pair of adjacent representable
-    # values is exactly one apart (a dense rank). Otherwise a 1-ULP straddle of the zero/underflow boundary -- e.g. a
-    # tiny atan2 angle that one side rounds to +-MIN_NORMAL and the other to 0 -- would measure a full binade (1<<wfrac)
-    # instead of 1. The shift is identical for both operands of any same-sign comparison, so non-boundary distances
-    # (and the mag/sincos checks, whose values never underflow to zero) are unchanged.
+    # ZKF has no subnormals: magnitude jumps from 0 straight to 1<<wfrac (min normal). Collapse that gap to a dense rank
+    # so a 1-ULP straddle of the zero/min-normal boundary (a tiny angle rounding to +-MIN_NORMAL vs 0) measures 1, not a
+    # full binade. The shift is identical for both operands, so non-boundary distances are unchanged.
     dense = 0 if mag == 0 else mag - ((1 << fmt.wfrac) - 1)
     return -dense if sign else dense
 
 
 def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
-    # Circular ULP distance for the atan2 THETA output (turns). +0.5 and -0.5 are the same angle and adjacent on the
-    # circle, so a 1-ULP straddle of that boundary -- reference rounds the magnitude to exactly 1/2 and canonicalizes
-    # to +0.5 while the oracle keeps -0.5+1ULP (or vice versa) -- must measure 1, not ~full-scale via the linear index.
-    # Both reference and oracle canonicalize -0.5 to +0.5, so the representable theta values form a contiguous ring of
-    # 2*index(+0.5) angles over (-0.5, +0.5]; take the short way around it. A genuine >1-ULP error at the boundary
-    # still measures its true (small) circular distance, so this collapses only the spurious wrap, not real misses.
-    # Assumes 1/2 is representable (WEXP >= 3) -- true for every supported trig format.
+    # Circular ULP distance for atan2 THETA (turns): +0.5 and -0.5 are the same angle, so a 1-ULP straddle of that wrap
+    # must measure 1, not full-scale via the linear index. The representable thetas form a ring of 2*index(+0.5) values
+    # over (-0.5, +0.5]; take the short way. A genuine >1-ULP miss still measures its true distance. (Needs WEXP >= 3.)
     if a_bits == b_bits:
         return 0
     d = abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
@@ -551,13 +516,12 @@ def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
 
 
 def _atan2_pairs(fmt) -> list[tuple[int, int]]:
-    """Thorough stratified (y, x) pairs for the atan2 faithful-rounding check. True joint-exhaustive is infeasible (the
-    smallest supported format already has WFULL >= 13, i.e. >= 2**26 pairs), so this combines random pairs with two
-    full single-operand "fans": every (sign, exponent, frac-sample) of one operand crossed with a few central-binade
-    anchors of the other. Because atan2 depends on the exponent DIFFERENCE, the fans cross every small-ratio-bypass
-    threshold and octant/quadrant boundary in both diff directions; the diagonals exercise the |y|==|x| octant edge."""
+    """
+    Stratified (y, x) pairs for the atan2 check (joint-exhaustive is infeasible). Random pairs plus two single-operand
+    "fans" (each operand swept vs central-binade anchors of the other): since atan2 depends on the exponent DIFFERENCE,
+    the fans cross every bypass threshold and quadrant boundary, and the diagonals exercise the |y|==|x| octant edge.
+    """
     import numpy as np
-    from zkf_model import normal
 
     rng = np.random.default_rng()                              # unseeded: true randomness, fresh pairs each run
 
@@ -570,7 +534,7 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     sgn = 1 << fmt.sign_shift
     specials = [0, sgn, fmt.exp_inf << fmt.wfrac, sgn | (fmt.exp_inf << fmt.wfrac)]
     fracs = [0, 1, fmt.frac_mask, 1 << (fmt.wfrac - 1)]
-    anchors = [normal(fmt, s, fmt.bias, fr) for s in (0, 1) for fr in (0, fmt.frac_mask)]
+    anchors = [fmt.normal(s, fmt.bias, fr).bits for s in (0, 1) for fr in (0, fmt.frac_mask)]
 
     pairs: set[tuple[int, int]] = set()
     for _ in range(RANDOM_CHECK_SAMPLES):
@@ -579,39 +543,34 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     for s in (0, 1):
         for e in range(1, fmt.exp_inf):
             for fr in fracs:
-                swept.append(normal(fmt, s, e, fr))
+                swept.append(fmt.normal(s, e, fr).bits)
     for w in swept:
         for a in anchors:
             pairs.add((w, a))                                # operand swept on the y side, x anchored
             pairs.add((a, w))                                # operand swept on the x side, y anchored
     for s in (0, 1):
         for e in range(1, fmt.exp_inf):
-            base = normal(fmt, s, e, 0)
+            base = fmt.normal(s, e, 0).bits
             pairs.add((base, base))                          # |y| == |x| (octant edge)
             pairs.add((base, base ^ sgn))
 
-    # --- near-axis / bypass-seam regression guard (the log2-class hardening; deterministic, swept every run) ---
-    # theta -> 0 as y -> 0 with x > 0 (the +x axis); the small-ratio bypass divide must faithfully round the smallest
-    # thetas, and uniform-random pairs never hit that corner for wide formats. Densely sweep the smallest |y| (smallest
-    # exps, dense fracs, both signs) against several large x, and straddle the small-ratio bypass cutoff (the
-    # residual<->bypass seam), so a regression of the tiny-theta bypass/divide rounding is caught. (atan2 is verified
-    # clean today -- theta renormalizes through the packer -- so this is hardening, not a fix.)
-    import zkf_trig_tables as TBL
+    # --- near-axis / bypass-seam regression guard (deterministic, swept every run) ---
+    # theta -> 0 near the +x axis (small |y|/x); the bypass divide must faithfully round the smallest thetas, which
+    # random pairs never hit. Sweep the smallest |y| against large x and straddle the bypass cutoff. (Hardening.)
     nf = 1 << fmt.wfrac
     yfr = sorted(set(list(range(96)) + list(range(max(0, nf - 48), nf)) + [nf // 2]))
-    # smallest-NONZERO theta band: theta ~ 2**(ey-xe)/(2pi), so it reaches the smallest representable nonzero turn
-    # (and the underflow-to-0 seam) at xe - ey ~ bias. Sweep that shift window densely -- this is the true log2-analog
-    # danger zone (results tiny-but-nonzero, ULP -> 0), NOT xe-ey huge where theta trivially underflows to 0.
+    # smallest-NONZERO theta band: theta ~ 2**(ey-xe)/(2pi) reaches the smallest nonzero turn (and the underflow-to-0
+    # seam) at xe - ey ~ bias -- the danger zone (tiny-but-nonzero, ULP -> 0), not xe-ey huge where it underflows to 0.
     for ey in (1, 2, 3):
         for sy in (0, 1):
             for yf in yfr:
-                y = normal(fmt, sy, ey, yf)
+                y = fmt.normal(sy, ey, yf).bits
                 for dsh in range(fmt.bias - 6, fmt.bias + 3):    # xe-ey across smallest-nonzero theta .. underflow seam
                     xe = ey + dsh
                     if 1 <= xe < fmt.exp_inf:
                         for xf in (0, nf // 2, nf - 1):
-                            pairs.add((y, normal(fmt, 0, xe, xf)))
-    ts = TBL.SPECS[fmt.wman]["zf"] - fmt.wman - TBL.GUARD_DIV    # straddle the small-ratio bypass cutoff
+                            pairs.add((y, fmt.normal(0, xe, xf).bits))
+    ts = fmt.atan2_bypass_shift                                  # straddle the small-ratio bypass cutoff
     for off in (-1, 0, 1, 2):
         for ey in (1, max(1, fmt.bias // 2), max(1, fmt.bias - 3)):
             xe = ey + ts + off
@@ -619,18 +578,27 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
                 for sy in (0, 1):
                     for yf in yfr:
                         for xf in (0, nf // 2, nf - 1):
-                            pairs.add((normal(fmt, sy, ey, yf), normal(fmt, 0, xe, xf)))
+                            pairs.add((fmt.normal(sy, ey, yf).bits, fmt.normal(0, xe, xf).bits))
     return list(pairs)
 
 
-def _check_atan2(all_specs: dict[int, Spec]) -> None:
+def _check_atan2() -> None:
     """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
     import sys
-    sys.path.insert(0, str(TB))
-    import importlib
-    import zkf_model
-    importlib.reload(zkf_model)
-    from zkf_model import ZkfFormat, atan2_reference, atan2_true
+    sys.path.insert(0, str(REPO))
+    import zkf
+    import zkf.oracle
+    from zkf import ZkfFormat
+    # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
+    # without reaching into package internals to reload/clear caches.
+
+    def atan2_reference(fmt, y, x):
+        r = zkf.Zkf(fmt, y).atan2(zkf.Zkf(fmt, x))
+        return (r.theta.bits, r.magnitude.bits)
+
+    def atan2_true(fmt, y, x):
+        r = zkf.oracle.atan2(zkf.Zkf(fmt, y), zkf.Zkf(fmt, x))
+        return (r.theta.bits, r.magnitude.bits)
 
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(5, 11), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
@@ -670,8 +638,8 @@ def main() -> None:
     if args.emit:
         emit(all_specs)
     if args.check:
-        _check(all_specs)
-        _check_atan2(all_specs)
+        _check()
+        _check_atan2()
 
 
 if __name__ == "__main__":

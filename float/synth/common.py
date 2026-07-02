@@ -1,4 +1,5 @@
-"""Shared, tool-agnostic plumbing for the float synthesis suite.
+"""
+Shared, tool-agnostic plumbing for the float synthesis suite.
 
 Holds the repo anchor, subprocess/executable helpers, the parallel worker pool, the pass/fail gate,
 and the HTML reporting toolkit (heatmap palette, metric/table cells, artifact links) used by both the

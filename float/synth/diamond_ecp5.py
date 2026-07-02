@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Lattice Diamond LSE synthesis of the float modules, targeting the Lattice ECP5.
+"""
+Lattice Diamond LSE synthesis of the float modules, targeting the Lattice ECP5.
 
 Diamond is Lattice-only, so unlike the Yosys flow there is no second-device profile to abstract; the whole flow lives
 here. The flow uses LSE exclusively and shares the module catalog, harness generators, and HTML/plumbing toolkit with

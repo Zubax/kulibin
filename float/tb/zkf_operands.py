@@ -5,7 +5,26 @@ from __future__ import annotations
 
 import numpy as np
 
-from zkf_model import ZkfFormat, canonical_inf, mask, normal, pack_bits, zero
+from zkf import ZkfFormat
+from zkf_bits import mask
+
+
+# Raw-bit operand constructors: adapt the public ZkfFormat factories (which return Zkf) to the packed-integer form the
+# DUT-driving benches consume.
+def zero(fmt: ZkfFormat, sign: int = 0) -> int:
+    return fmt.zero(sign).bits
+
+
+def canonical_inf(fmt: ZkfFormat, sign: int) -> int:
+    return fmt.inf(sign).bits
+
+
+def normal(fmt: ZkfFormat, sign: int, exp: int, frac: int) -> int:
+    return fmt.normal(sign, exp, frac).bits
+
+
+def pack_bits(fmt: ZkfFormat, sign: int, exp: int, frac: int) -> int:
+    return fmt.pack(sign, exp, frac).bits
 
 
 def directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
@@ -174,6 +193,5 @@ def random_integer(wint: int, rng: np.random.Generator) -> int:
         candidate = center + offset
         candidate = max(int_min, min(int_max, candidate))
         return -candidate if int(rng.integers(0, 2)) else candidate
-    # Fully random across the signed range using random unsigned bits then sign-extend.
     bits = random_bits(wint, rng)
     return bits - (1 << wint) if bits & (1 << (wint - 1)) else bits

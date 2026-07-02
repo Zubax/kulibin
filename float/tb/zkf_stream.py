@@ -10,7 +10,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-from zkf_model import hex_bits, mask, signed_to_bits
+from zkf_bits import hex_bits, mask, signed_to_bits
 from zkf_params import TestContext
 
 
@@ -50,8 +50,8 @@ class RegisterStageScoreboard:
         if reset_passthrough and register_stages != 0:
             raise ValueError("reset_passthrough is only valid for zero-register combinational paths")
         self._dut = dut
-        # A combinational module (register_stages == 0) is observed exactly like a single-stage one: the driver holds
-        # the inputs across the sampling edge, so the held combinational output is still valid one edge after the drive.
+        # A combinational module (register_stages == 0) is observed like a single-stage one: the driver holds the inputs
+        # across the sampling edge, so the held combinational output is still valid one edge after the drive.
         self._queue_delay = max(0, register_stages - 1)
         self._context = context
         self._outputs = outputs

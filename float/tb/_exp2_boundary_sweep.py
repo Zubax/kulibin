@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""TARGETED dense/exhaustive boundary sweep for zkf_exp2 (read-only discovery; no RTL/source edits).
+"""
+Targeted dense/exhaustive boundary sweep for zkf_exp2 (read-only discovery; no RTL/source edits).
 
-Mirrors the log2 near-1 sweep methodology (dense top/bottom fracs around each rounding-sensitive seam),
-but for exp2's hard regions, which are BOUNDARIES not zeros (2^x has no near-zero result at finite x):
+Mirrors the log2 near-1 sweep methodology, targeting exp2's hard regions -- which are BOUNDARIES not zeros (2^x has no
+near-zero result at finite x), where random sampling rarely lands:
 
-  A. x near each representable INTEGER N  -> result crosses a power-of-two / binade boundary
-                                             (2^N exact at integer x; just-below/above is the seam)
-  B. x -> 0                               -> result -> 1.0 (the 1.0 / binade boundary)
-  C. under/overflow saturation thresholds -> x near +-2^(WEXP-1) (the e >= WEXP-1 gate);
-                                             true overflow-to-+inf seam and underflow-to-min-normal/zero seam
-  D. top/bottom fracs of EACH input binade-> reduced-argument extremes feeding the polynomial (f->0, f->1)
+  A. x near each representable INTEGER N   -> result crosses a power-of-two / binade boundary (2^N exact; the seam is
+                                              just-below/above)
+  B. x -> 0                                -> result -> 1.0 (the 1.0 / binade boundary)
+  C. under/overflow saturation thresholds  -> x near +-2^(WEXP-1) (the e >= WEXP-1 gate): overflow-to-+inf and
+                                              underflow-to-min-normal/zero seams
+  D. top/bottom fracs of EACH input binade -> reduced-argument extremes feeding the polynomial (f->0, f->1)
 
 For all 8 supported exp2/log2 WMAN values, compares exp2_reference (bit-exact RTL) vs exp2_true (mp.prec>=280 oracle,
-ties-to-even faithful rounding) and reports the worst ULP per region per WMAN, flagging any > 1 ULP.
+faithful rounding), reporting the worst ULP per region per WMAN and flagging any > 1 ULP.
 """
 
 from __future__ import annotations
@@ -25,11 +26,28 @@ import mpmath as mp
 REPO_FLOAT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # .../float
 TB = os.path.join(REPO_FLOAT, "tb")
 sys.path.insert(0, TB)
+sys.path.insert(0, REPO_FLOAT)   # the zkf package lives directly under float/
 
 mp.mp.prec = 320  # >= the generator's 280; extra headroom for the oracle
 
-import zkf_model as M  # noqa: E402
-from zkf_model import ZkfFormat, exp2_reference, exp2_true, decode  # noqa: E402
+from zkf import Zkf, ZkfFormat  # noqa: E402
+from zkf.oracle import exp2 as _exp2_true  # noqa: E402
+from zkf_bits import hex_bits, mask  # noqa: E402
+
+
+def _mpf_to_fraction(x):  # local mpf -> exact dyadic Fraction (dev sweep)
+    from fractions import Fraction
+    sign, man, exp, _bc = mp.mpf(x)._mpf_
+    value = Fraction(int(man)) * (Fraction(2) ** int(exp))
+    return -value if sign else value
+
+
+def exp2_reference(fmt, b):
+    return Zkf(fmt, b).exp2().bits
+
+
+def exp2_true(fmt, b):
+    return _exp2_true(Zkf(fmt, b)).bits
 
 SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
 
@@ -37,11 +55,8 @@ SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
 WEXP_FOR = {11: 5, 16: 6, 18: 6, 24: 8, 27: 8, 32: 8, 36: 8, 48: 8, 53: 8}
 
 
-# --------------------------------------------------------------------------------------------------
-# ULP metric (identical to zkf_transcendental._ulp_diff / _ordered_index)
-# --------------------------------------------------------------------------------------------------
 def _ordered_index(fmt: ZkfFormat, bits: int) -> int:
-    bits = M.canonicalize_special(fmt, bits)
+    bits = Zkf(fmt, bits).canonicalize().bits
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
     return -mag if sign else mag
@@ -51,26 +66,22 @@ def ulp_diff(fmt: ZkfFormat, a_bits: int, b_bits: int) -> int:
     return 0 if a_bits == b_bits else abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
 
 
-# --------------------------------------------------------------------------------------------------
-# Input construction helpers
-# --------------------------------------------------------------------------------------------------
 def code(fmt: ZkfFormat, sign: int, exp_biased: int, frac: int) -> int:
-    return M.pack_bits(fmt, sign, exp_biased, frac & fmt.frac_mask)
+    return fmt.pack(sign, exp_biased, frac & fmt.frac_mask).bits
 
 
 def value_of(fmt: ZkfFormat, bits: int):
     """Exact value of a finite ZKF code as an mpf (for diagnostics only)."""
-    d = decode(fmt, bits)
+    d = Zkf(fmt, bits)
     if d.is_zero:
         return mp.mpf(0)
-    sig = M.significand(fmt, bits)
+    sig = d.significand()
     v = mp.mpf(sig) * mp.power(2, d.exp - fmt.bias - fmt.wfrac)
-    return -v if d.sign else v
+    return -v if d.negative else v
 
 
 def in_range_exps(fmt: ZkfFormat):
     """Unbiased exponents e that are NOT auto-saturated by the gate e >= WEXP-1 (i.e. fed to the polynomial)."""
-    # biased exp in [1, exp_max_finite]; e = biased - bias. The gate trips at e >= WEXP-1.
     out = []
     for eb in range(1, fmt.exp_max_finite + 1):
         e = eb - fmt.bias
@@ -80,24 +91,23 @@ def in_range_exps(fmt: ZkfFormat):
 
 
 def codes_around_value(fmt: ZkfFormat, target, half_band: int):
-    """All finite ZKF codes whose value lies within +-half_band ULP-of-encoding of `target` on the ordered line.
-
-    Builds the code nearest to `target` by direct rounding, then walks the encoding neighborhood. This densely
-    covers the just-below / just-above seam around any real `target` (e.g. an integer N)."""
+    """
+    All finite ZKF codes within +-half_band encoding-ULP of target on the ordered line: the code nearest target
+    plus its encoding neighbors, densely covering the just-below/just-above seam around any real target.
+    """
     if target == 0:
-        nearest = M.zero(fmt)
+        nearest = fmt.zero().bits
     else:
-        sign = 1 if target < 0 else 0
-        nearest = M.round_fraction_to_zkf(fmt, sign, abs(M._mpf_to_fraction(mp.mpf(target))))
+        nearest = fmt.encode(_mpf_to_fraction(mp.mpf(target))).bits
     base = _ordered_index(fmt, nearest)
     out = set()
     for d in range(-half_band, half_band + 1):
         idx = base + d
         bits = idx if idx >= 0 else ((-idx) | (1 << fmt.sign_shift))
-        dd = decode(fmt, bits)
+        dd = Zkf(fmt, bits)
         if dd.is_inf:
             continue  # keep the sweep on finite inputs (saturation handled by region C)
-        out.add(bits & M.mask(fmt.wfull))
+        out.add(bits & mask(fmt.wfull))
     return out
 
 
@@ -105,14 +115,11 @@ def top_bottom_fracs(span: int, wfrac: int):
     """Indices for the densest top and bottom fracs of a binade (reduced-argument extremes f->1 and f->0)."""
     fmax = (1 << wfrac) - 1
     s = min(span, 1 << wfrac)
-    lo = list(range(s))                          # frac near 0  (m -> 1.0:  f -> 0 at the binade bottom)
-    hi = list(range(fmax - s + 1, fmax + 1))     # frac near max (m -> 2.0:  f -> 1 at the binade top)
+    lo = list(range(s))                          # frac near 0 (binade bottom, f -> 0)
+    hi = list(range(fmax - s + 1, fmax + 1))     # frac near max (binade top, f -> 1)
     return sorted(set(lo) | set(hi))
 
 
-# --------------------------------------------------------------------------------------------------
-# Region sweeps -> each returns (worst_ulp, n_mismatch, n_inputs, worst_example_or_None)
-# --------------------------------------------------------------------------------------------------
 def _eval(fmt: ZkfFormat, inputs):
     worst = ne = 0
     worst_ex = None
@@ -129,11 +136,11 @@ def _eval(fmt: ZkfFormat, inputs):
 
 
 def region_A_integers(fmt: ZkfFormat, band: int):
-    """x near each representable integer N (both signs) within the polynomial-fed range.
-
-    The largest |x| fed to the polynomial is < 2^(WEXP-1); enumerate every integer N with |N| < 2^(WEXP-1)
-    and densely sweep the ZKF codes straddling it. N=0 is region B; skip it here."""
-    limit = 1 << (fmt.wexp - 1)  # |x| strictly below this is polynomial-fed; integers up to limit-1 are interesting
+    """
+    x near each representable integer N (both signs) in the polynomial-fed range |x| < 2^(WEXP-1). Densely sweeps
+    the ZKF codes straddling each such N; N=0 is region B, skipped here.
+    """
+    limit = 1 << (fmt.wexp - 1)  # |x| below this is polynomial-fed
     inputs = set()
     for n in range(1, limit):
         for tgt in (n, -n):
@@ -142,25 +149,26 @@ def region_A_integers(fmt: ZkfFormat, band: int):
 
 
 def region_B_near_zero(fmt: ZkfFormat, span: int):
-    """x -> 0 (result -> 1.0). Two complementary attacks:
+    """
+    x -> 0 (result -> 1.0). Two complementary attacks:
        (1) the smallest-magnitude finite codes: smallest binade(s), densest fracs, both signs (x literally near 0);
-       (2) the seam in the OUTPUT around 1.0: codes whose 2^x rounds to just-below / at / just-above 1.0."""
+       (2) the seam in the OUTPUT around 1.0: codes whose 2^x rounds to just-below / at / just-above 1.0.
+    """
     inputs = set()
-    # (1) smallest finite inputs: the bottom two input binades, all fracs up to span, both signs, plus +-min-subnormal-ish
-    emin = fmt.min_exp_unbiased
-    for eb in (1, 2):  # biased exp 1 and 2 -> the two smallest normal binades
+    # (1) smallest finite inputs: bottom two binades, all fracs up to span, both signs
+    for eb in (1, 2):  # biased exp 1, 2 -> the two smallest normal binades
         if eb > fmt.exp_max_finite:
             continue
         for f in range(min(span, 1 << fmt.wfrac)):
             inputs.add(code(fmt, 0, eb, f))
             inputs.add(code(fmt, 1, eb, f))
-    # also the absolute extreme tiny magnitudes (top fracs of the smallest binade -> still ~0)
+    # top fracs of the smallest binade (still ~0)
     for f in top_bottom_fracs(span, fmt.wfrac):
         inputs.add(code(fmt, 0, 1, f))
         inputs.add(code(fmt, 1, 1, f))
-    # (2) output seam around 1.0: sweep codes near x = 0 densely on the ordered input line (covers x = +-k ULP-of-x)
+    # (2) output seam around 1.0: dense codes near x=0 on the ordered input line
     inputs |= codes_around_value(fmt, mp.mpf(0), span)
-    # and inputs whose magnitude is ~ 2^-WMAN .. 2^-1 so 2^x straddles 1.0's neighbor floats finely
+    # magnitudes ~2^-WMAN .. 2^-1 so 2^x finely straddles 1.0's neighbors
     for k in range(1, fmt.wman + 4):
         e = -k
         eb = e + fmt.bias
@@ -172,12 +180,12 @@ def region_B_near_zero(fmt: ZkfFormat, span: int):
 
 
 def region_C_saturation(fmt: ZkfFormat, span: int):
-    """Under/overflow saturation seams.
-
-    The hard, polynomial-active edge is e = WEXP-2 (the largest in-range binade): there x ranges over
-    [2^(WEXP-2), 2^(WEXP-1)), feeding the largest finite results and the true overflow-to-+inf (x>0) /
-    underflow-to-min-normal-or-zero (x<0) seams. Sweep that binade densely (both signs), plus a band of integers
-    near +-2^(WEXP-1). Separately verify the gate e >= WEXP-1 saturates exactly as specified."""
+    """
+    Under/overflow saturation seams. The hard polynomial-active edge is e = WEXP-2 (the largest in-range binade):
+    x in [2^(WEXP-2), 2^(WEXP-1)) feeds the largest finite results and the overflow-to-+inf (x>0) /
+    underflow-to-min-normal-or-zero (x<0) seams. Sweeps that binade densely (both signs) plus a band of integers near
+    +-2^(WEXP-1), then verifies the gate e >= WEXP-1 saturates as specified.
+    """
     inputs = set()
     e_edge = fmt.wexp - 2
     eb_edge = e_edge + fmt.bias
@@ -185,19 +193,19 @@ def region_C_saturation(fmt: ZkfFormat, span: int):
         for f in top_bottom_fracs(span, fmt.wfrac):
             inputs.add(code(fmt, 0, eb_edge, f))  # large positive -> overflow seam
             inputs.add(code(fmt, 1, eb_edge, f))  # large negative -> underflow seam
-        # exhaustive over the whole edge binade when it is small enough (densest possible)
+        # exhaustive over the edge binade when it is small enough
         if (1 << fmt.wfrac) <= (1 << 18):
             for f in range(1 << fmt.wfrac):
                 inputs.add(code(fmt, 0, eb_edge, f))
                 inputs.add(code(fmt, 1, eb_edge, f))
-    # dense integer band straddling the overflow/underflow threshold magnitude 2^(WEXP-1)
+    # dense integer band straddling the threshold magnitude 2^(WEXP-1)
     thr = 1 << (fmt.wexp - 1)
     for n in range(thr - max(4, span // 64), thr + 1):
         inputs |= codes_around_value(fmt, mp.mpf(n), max(2, span // 256))
         inputs |= codes_around_value(fmt, mp.mpf(-n), max(2, span // 256))
     worst, ne, ninp, ex = _eval(fmt, sorted(inputs))
 
-    # --- gate verification: every finite code with e >= WEXP-1 must saturate (+inf for x>0, +0 for x<0) ---
+    # gate verification: every finite code with e >= WEXP-1 must saturate (+inf for x>0, +0 for x<0)
     gate_bad = []
     for eb in range(1, fmt.exp_max_finite + 1):
         e = eb - fmt.bias
@@ -207,10 +215,10 @@ def region_C_saturation(fmt: ZkfFormat, span: int):
             for s in (0, 1):
                 b = code(fmt, s, eb, f)
                 got = exp2_reference(fmt, b)
-                want_pos = M.canonical_inf(fmt, 0)
-                want_neg = M.zero(fmt)
+                want_pos = fmt.inf(0).bits
+                want_neg = fmt.zero().bits
                 want = want_neg if s else want_pos
-                # also confirm the oracle agrees with this saturation classification
+                # confirm the oracle agrees with this saturation classification
                 got_t = exp2_true(fmt, b)
                 if got != want or got_t != want:
                     gate_bad.append((b, s, e, f, got, got_t, want))
@@ -227,15 +235,13 @@ def region_D_binade_fracs(fmt: ZkfFormat, span: int):
     return _eval(fmt, sorted(inputs))
 
 
-# --------------------------------------------------------------------------------------------------
 # Driver
-# --------------------------------------------------------------------------------------------------
 def fmt_ex(fmt: ZkfFormat, ex):
     if ex is None:
         return ""
     b, got, want = ex
-    return (f"  x_bits={M.hex_bits(b, fmt.wfull)} x={mp.nstr(value_of(fmt, b), 12)} "
-            f"got={M.hex_bits(got, fmt.wfull)} want={M.hex_bits(want, fmt.wfull)}")
+    return (f"  x_bits={hex_bits(b, fmt.wfull)} x={mp.nstr(value_of(fmt, b), 12)} "
+            f"got={hex_bits(got, fmt.wfull)} want={hex_bits(want, fmt.wfull)}")
 
 
 def main():
@@ -281,7 +287,7 @@ def main():
         if gate_bad:
             print(f"  m{wman} GATE SATURATION MISMATCHES: {len(gate_bad)}")
             for (b, s, e, f, got, got_t, want) in gate_bad[:6]:
-                print(f"      x_bits={M.hex_bits(b, ZkfFormat(wexp, wman).wfull)} sign={s} e={e} frac={f} "
+                print(f"      x_bits={hex_bits(b, ZkfFormat(wexp, wman).wfull)} sign={s} e={e} frac={f} "
                       f"got={got:#x} oracle={got_t:#x} want={want:#x}")
 
     print("\n" + "=" * 80)

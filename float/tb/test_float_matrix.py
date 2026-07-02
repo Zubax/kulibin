@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Pytest orchestrator for the float verification matrix.
+"""
+Pytest orchestrator for the float verification matrix.
 
-This is NOT a cocotb test - it is a thin driver that turns every entry of `zkf_matrix.build_matrix()`
+This is NOT a cocotb test - it is a thin driver that turns every entry of zkf_matrix.build_matrix()
 into a pytest test case, runs it through FuseSoC, and checks the cocotb results.xml. Each case is tagged
 with its tier (pr/deep/properties/fast) and simulator (icarus/verilator) as markers; pytest.ini
-deselects deep/properties/fast by default, so a bare `pytest` (or `make verify-float`) runs only the
-per-PR set and the heavy work skips unless explicitly selected (`pytest -m deep`, `-m properties`, ...).
-
-The Makefile targets are thin wrappers around marker selections; this file plus zkf_matrix.py replace
-the former Makefile recipe loops and run_extended.sh, which duplicated the fusesoc invocation in bash.
+deselects deep/properties/fast by default, so a bare pytest (or make verify-float) runs only the
+per-PR set and the heavy work skips unless explicitly selected (pytest -m deep, -m properties, ...).
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ from zkf_matrix import CORE, build_matrix  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TB_DIR = str(REPO_ROOT / "float" / "tb")
+MODEL_DIR = str(REPO_ROOT / "float")   # parent of the zkf package, so cocotb sims can from zkf import ...
 FUSESOC = os.environ.get("FUSESOC", "fusesoc")
 PYTHON = os.environ.get("PYTHON", sys.executable)
 PRUNE_BUILDS = os.environ.get("FLOAT_PRUNE_BUILDS", "0") not in ("", "0", "false", "False", "no", "No")
@@ -35,7 +34,7 @@ PRUNE_BUILDS = os.environ.get("FLOAT_PRUNE_BUILDS", "0") not in ("", "0", "false
 def _subprocess_env() -> dict:
     env = dict(os.environ)
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = TB_DIR + (os.pathsep + existing if existing else "")
+    env["PYTHONPATH"] = os.pathsep.join([MODEL_DIR, TB_DIR]) + (os.pathsep + existing if existing else "")
     env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"   # keep cocotb's pytest plugin out of the inner sim run
     env["COCOTB_REWRITE_ASSERTION_FILES"] = ""
     return env
@@ -91,16 +90,14 @@ def _prune_successful_build(root: Path, keep_coverage: bool) -> None:
 
 
 def _shard_keep():
-    """Optional deterministic sharding for parallel CI jobs.
+    """
+    Optional deterministic sharding for parallel CI jobs.
 
-    ``FLOAT_SHARD='k/N'`` keeps only configs whose stable hash falls in shard k (1-indexed) of N; unset
-    keeps everything (so a bare ``pytest`` / ``make verify`` is unchanged). The partition uses a stable
-    hash of ``run.id`` -- NOT Python's salted ``hash()`` -- so every shard process (each a separate CI job)
-    partitions identically and the shards exactly tile the matrix with no overlap or gaps. Sharding is
-    applied to the whole matrix, so it composes with any ``-m`` marker selection: each shard runs its
-    slice of whatever tier/sim was selected. Used to fan the long deep+icarus sweep across runners; the
-    Icarus sweep is pure pass/fail correctness (no coverage merge), so no cross-shard reconciliation is
-    needed."""
+    FLOAT_SHARD='k/N' keeps only configs whose stable hash falls in shard k (1-indexed) of N; unset
+    keeps everything. The partition hashes run.id with a stable hash -- NOT Python's salted hash()
+    -- so every shard process partitions identically and the shards tile the matrix with no overlap or
+    gaps. It composes with any -m marker selection: each shard runs its slice of the selected tier/sim.
+    """
     spec = os.environ.get("FLOAT_SHARD", "").strip()
     if not spec:
         return lambda run: True

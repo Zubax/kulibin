@@ -1,4 +1,5 @@
-"""Float synthesis module catalog: the device-independent set of cores to evaluate.
+"""
+Float synthesis module catalog: the device-independent set of cores to evaluate.
 
 Defines what gets synthesized (ModuleSpec + MODULES), the RTL source list per kind, and the derived
 metadata shown in the reports (parameters, pipeline depth, variant grouping). No flow/tool specifics
@@ -898,6 +899,7 @@ def effective_parallel(spec: ModuleSpec) -> int:
 def register_stages(spec: ModuleSpec) -> int:
     return module_latency(
         spec.kind,
+        wexp=spec.wexp,
         wman=spec.wman,
         unroll100=spec.unroll100,
         parallel=effective_parallel(spec),
