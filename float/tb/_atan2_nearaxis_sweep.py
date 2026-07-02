@@ -42,7 +42,7 @@ def atan2_oracle(fmt, y, x):
 # (WEXP, WMAN) cases. WEXP mirrors zkf_trig.py::_check_atan2 where given, else a moderate WEXP with a wide-but-tractable
 # exponent range.
 CASES = [
-    (5, 11), (6, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53),
+    (6, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53),
 ]
 
 

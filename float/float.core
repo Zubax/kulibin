@@ -240,7 +240,6 @@ filesets:
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_pmul.v
       - hdl/_zkf_cordic.v
-      - hdl/_tables/_zkf_cordic_m11.v
       - hdl/_tables/_zkf_cordic_m16.v
       - hdl/_tables/_zkf_cordic_m18.v
       - hdl/_tables/_zkf_cordic_m24.v
@@ -259,7 +258,6 @@ filesets:
       - hdl/_zkf_normshift.v
       - hdl/_zkf_fixed_to_float.v
       - hdl/_zkf_cordic.v
-      - hdl/_tables/_zkf_cordic_m11.v
       - hdl/_tables/_zkf_cordic_m16.v
       - hdl/_tables/_zkf_cordic_m18.v
       - hdl/_tables/_zkf_cordic_m24.v

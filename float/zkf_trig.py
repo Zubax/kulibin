@@ -46,9 +46,11 @@ FUNC = "sincos"
 # residual; the iteration array's truncation still bounds the small sines, so the datapath keeps ~1.5*WMAN frac bits.)
 GUARD_XY = 6     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
 # GOTCHA: GUARD_XY is SHARED by both operators (sizes WX/KINV and atan2's divider F / INV_TAU scale). sincos is faithful
-# at 3, but atan2's theta is XF-bound and needs >= 6 at WMAN=11 (more iterations don't help, only XF does). 6 is the
-# smallest keeping atan2 faithful everywhere while sincos keeps margin, so the engine table stays fully SHARED -- do not
-# lower without re-running --check for all WMAN.
+# at 3; atan2's theta is XF-bound (more iterations don't help, only XF does), so it needs the larger value. GUARD_XY=6
+# keeps atan2 faithful across the supported range (WMAN >= 16, which is the smallest trig format -- see SUPPORTED_WMAN
+# below). WMAN=11 would have needed GUARD_XY=7 (XF=24) and was therefore dropped from the trig operators rather than
+# widen the shared engine for every format; it is still supported by the algebraic operators, which use no CORDIC table.
+# Do not lower GUARD_XY, or add a smaller trig WMAN, without re-running --check for all supported WMAN.
 # Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Kept PER OPERATOR (both +1 today) because the two
 # terminations leave residuals of different order -- sincos's linear rotation drops a QUADRATIC term, atan2's residual
 # divide a CUBIC one; separate guards let them diverge later without silently coupling the shared table's depth.
@@ -63,8 +65,8 @@ GUARD_ZF = 6
 # <= 1 ULP. Consumed by the atan2 model and zkf_atan2.v.
 GUARD_DIV = 8
 
-WMAN_MIN, WMAN_MAX = 11, 53
-SUPPORTED_WMAN = [11, 16, 18, 24, 27, 32, 36, 48, 53]
+WMAN_MIN, WMAN_MAX = 16, 53
+SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
 
 # Random --check samples per (format, operator) for non-exhaustive formats. UNSEEDED, so repeated runs accumulate
 # coverage; override with ZKF_CHECK_SAMPLES=<n>.
@@ -415,7 +417,7 @@ def _check() -> None:
         return (r.sin.bits, r.cos.bits, r.quadrant)
 
     print("end-to-end faithful-rounding check (model vs mpmath):")
-    cases = [(5, 11), (6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
+    cases = [(6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
     worst_overall = 0
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
@@ -601,7 +603,7 @@ def _check_atan2() -> None:
         return (r.theta.bits, r.magnitude.bits)
 
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
-    cases = [(5, 11), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
+    cases = [(6, 16), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
     for wexp, wman in cases:
         if wman not in SUPPORTED_WMAN:
             continue

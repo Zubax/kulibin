@@ -2,11 +2,6 @@
 """Bit-exact CORDIC constants for zkf_sincos (and the shared atan2 engine), consumed by the zkf package."""
 
 SPECS = {
-    11: dict(
-        n=7, xf=23, xw=25, wt=21, zf=29, zw=32, kinv=5094214, tsa=16384, c2=23, const2pi=51472, const2pi_s=13, inv_tau=41722, invtau_s=18,
-        kinv_mag=39799, kinv_s=16, n_sincos=7, n_atan2=7, xf_atan2=23,
-        lut=[67108864, 39616676, 20932363, 10625595, 5333416, 2669308, 1334980],
-    ),
     16: dict(
         n=9, xf=30, xw=32, wt=26, zf=34, zw=37, kinv=652034532, tsa=131072, c2=30, const2pi=1647099, const2pi_s=18, inv_tau=1335088, invtau_s=23,
         kinv_mag=1273505, kinv_s=21, n_sincos=9, n_atan2=9, xf_atan2=30,
