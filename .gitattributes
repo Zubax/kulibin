@@ -1,0 +1,4 @@
+# Keep PDFs out of git's text machinery. Git's binary heuristic only inspects the first 8 kB for NUL bytes, and
+# at least one datasheet here (ug475) has none, so it was being diffed as ~290k lines of text -- and would be
+# eol-mangled on checkout wherever core.autocrlf is enabled.
+*.pdf binary

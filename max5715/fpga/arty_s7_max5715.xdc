@@ -1,7 +1,7 @@
 ## Arty S7-25 rev. E constraints for the max5715 bench harness.
-## Pin assignments come from the Digilent Arty-S7-25 master XDC (see ../doc/Arty-S7-25-Master.xdc), which
-## agrees pin for pin with the rev-E schematic (../arty_s7_sch-rev_e.pdf, page 4) and with reference-manual
-## table 8.1. Note that the -25 and -50 master XDCs are byte-identical for every pin used here.
+## Pin assignments come from the Digilent Arty-S7-25 master XDC (see ../doc/arty_s7/Arty-S7-25-Master.xdc),
+## which agrees pin for pin with the rev-E schematic (../doc/arty_s7/arty_s7_sch-rev_e.pdf, page 4) and with
+## reference-manual table 8.1. The -25 and -50 master XDCs are byte-identical for every pin used here.
 
 set_property -dict { PACKAGE_PIN F14   IOSTANDARD LVCMOS33 } [get_ports { clk12mhz }]
 create_clock -add -name sys_clk_pin -period 83.333 -waveform {0 41.667} [get_ports { clk12mhz }]
