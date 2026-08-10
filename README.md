@@ -45,6 +45,7 @@ graph TD
     fir --> numeric
     freqdiv
     iir --> numeric
+    max5715
     nco
     online_integrator --> fir
     online_integrator --> numeric
