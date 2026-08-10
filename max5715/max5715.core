@@ -1,0 +1,26 @@
+CAPI=2:
+name: zubax:kulibin:max5715:0
+description: Driver for the MAX5715 quad-channel 12-bit voltage-output SPI DAC
+
+filesets:
+  rtl:
+    files:
+      - hdl/max5715.v
+    file_type: verilogSource
+
+  tb:
+    files:
+      - tb/max5715_tb.v
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: max5715_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

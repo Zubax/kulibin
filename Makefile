@@ -33,9 +33,17 @@ TARGETS = \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_scale_delay \
 	zubax:kulibin:online_integrator::sim \
 	zubax:kulibin:pwm::sim_up_down_pwm \
-	zubax:kulibin:sdadc_to_pwm::sim
+	zubax:kulibin:sdadc_to_pwm::sim \
+	zubax:kulibin:max5715::sim
 
-.PHONY: verify lint library clean
+## Testbenches that also build and run under Verilator, as <core dir>:<toplevel>.
+VERILATOR ?= verilator
+VERILATOR_TARGETS = max5715:max5715_tb
+## TIMESCALEMOD fires because only the testbenches carry a `timescale, and DECLFILENAME because a bench holds
+## its helper models alongside the toplevel; both are repository conventions rather than defects.
+VERILATOR_OPTIONS = --binary --timing -Wall -Wno-TIMESCALEMOD -Wno-DECLFILENAME
+
+.PHONY: verify verilate lint library clean
 
 verify: library
 	@set -e; \
@@ -45,6 +53,20 @@ verify: library
 	  $(FUSESOC) run --target=$$target $$core; \
 	done; \
 	echo "All testbenches passed."
+
+## Cross-check the Verilator-capable testbenches with a second simulator. Kept out of `verify` because CI
+## installs only Icarus; run it locally when touching the RTL or the benches it covers.
+verilate:
+	@set -e; \
+	for t in $(VERILATOR_TARGETS); do \
+	  dir="$${t%:*}"; top="$${t##*:}"; out="build/verilator/$$dir"; \
+	  echo "=== $$dir :: $$top (verilator) ==="; \
+	  mkdir -p $$out; \
+	  $(VERILATOR) $(VERILATOR_OPTIONS) --top-module $$top -o $$top --Mdir $$out \
+	    $$dir/hdl/*.v $$dir/tb/$$top.v; \
+	  (cd $$out && ./$$top); \
+	done; \
+	echo "All Verilator testbenches passed."
 
 lint:
 	@find . -name '*.v' -not -path './build/*' -print0 | \
