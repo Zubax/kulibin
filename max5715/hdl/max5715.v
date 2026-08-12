@@ -412,7 +412,6 @@ module max5715#(
                     burst_idx <= {BST_W{1'b0}};
                     gap_cnt   <= GAP_INIT;
                     state     <= ST_GAP;
-                    $fatal;
                 end
             endcase
         end

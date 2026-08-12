@@ -34,11 +34,12 @@ TARGETS = \
 	zubax:kulibin:online_integrator::sim \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim \
-	zubax:kulibin:max5715::sim
+	zubax:kulibin:max5715::sim \
+	zubax:kulibin:max5725::sim
 
 ## Testbenches that also build and run under Verilator, as <core dir>:<toplevel>.
 VERILATOR ?= verilator
-VERILATOR_TARGETS = max5715:max5715_tb
+VERILATOR_TARGETS = max5715:max5715_tb max5725:max5725_tb
 ## TIMESCALEMOD fires because only the testbenches carry a `timescale, and DECLFILENAME because a bench holds
 ## its helper models alongside the toplevel; both are repository conventions rather than defects.
 VERILATOR_OPTIONS = --binary --timing -Wall -Wno-TIMESCALEMOD -Wno-DECLFILENAME
