@@ -1,0 +1,24 @@
+CAPI=2:
+name: zubax:kulibin:max5725:0
+description: Driver for the MAX5723/MAX5724/MAX5725 octal 8-/10-/12-bit SPI DAC over three pins
+
+filesets:
+  rtl:
+    files: [hdl/max5725.v]
+    file_type: verilogSource
+
+  tb:
+    files: [tb/max5725_tb.v]
+    file_type: verilogSource
+
+targets:
+  default:
+    filesets: [rtl]
+
+  sim:
+    filesets: [rtl, tb]
+    toplevel: max5725_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]

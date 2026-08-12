@@ -19,6 +19,8 @@ Auxiliary Python scripts are provided for analysis and parameter derivation;
 they commonly require NumPy, SciPy, SymPy, matplotlib.
 Higher-level modules serve as usage examples for the lower-level ones.
 
+Some documentation such as datasheets can be found in `_docs/`.
+
 ## Verification
 
 Each module is wrapped in a FuseSoC `.core` file. All testbenches are run locally with:
@@ -46,6 +48,7 @@ graph TD
     freqdiv
     iir --> numeric
     max5715
+    max5725
     nco
     online_integrator --> fir
     online_integrator --> numeric
