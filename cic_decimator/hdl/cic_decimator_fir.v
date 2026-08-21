@@ -1,10 +1,10 @@
-/// A wrapper over the cic_decimator module that adds the output FIR filter for better, fine-tuned frequency response.
-/// The differential delay M is fixed to 1 sample.
+/// A wrapper over the cic_decimator module that adds the optional output FIR filter for better,
+/// fine-tuned frequency response. The differential delay M is fixed to 1 sample.
 /// The samples can be fixed-point or signed integers, as the math is invariant to the binary point position.
 ///
 /// The FIR kernel can be designed to both compensate for the CIC droop in the passband and to provide better stopband
 /// attenuation with arbitrarily steep roll-off, and with arbitrary frequency response in general.
-/// The FIR kernel coefficients are provided in a Verilog binary file (memb) as described below.
+/// The FIR kernel coefficients are provided in a Verilog binary file (memb) as described below, unless disabled.
 /// Use the enclosed Python script to design the FIR kernel for arbitrary desired response.
 ///
 /// If the CIC DC gain is not a power of 2, a FIR DC gain > 1 is needed to fully utilize the PCM word dynamic range.
@@ -31,6 +31,7 @@
 /// 4. The CIC output is rounded-to-nearest (LSB-trimmed) to WFIR bits for the FIR input.
 ///
 /// 5. The final FIR output is narrowed to WOUT bits with correct rounding-to-nearest.
+///    If the FIR is disabled, steps 4 and 5 collapse into one.
 ///
 /// The CIC accumulator width is the same as the CIC output width, and it must be large enough to contain
 /// the extreme output values without overflow. The extremes are the minimum and maximum input values multiplied
@@ -95,12 +96,14 @@ module cic_decimator_fir#(
     parameter NCIC = 3,
 
     /// The FIR filter order. The number of taps is (NFIR+1).
+    /// Zero disables the FIR, rendering WK, WFIR, and KERNEL ignored.
     parameter NFIR = 20,
 
     /// The output bit width, including the sign bit. Defaults to the CIC output width.
     /// This is narrowed with rounding-to-nearest, ties-to-even, from the internal FIR MAC width, which is very wide.
     /// If this value happens to be larger than the MAC width (which is unlikely to make sense),
     /// the output will be LSB-zero-padded to match this width.
+    /// If the FIR is disabled, the reference is the saturated CIC width rather than the MAC width.
     parameter WOUT = WIN + `CIC_BIT_GROWTH(RCIC, NCIC),
 
     /// Width of the FIR kernel coefficients, including the sign bit.
@@ -162,7 +165,7 @@ module cic_decimator_fir#(
     // CIC filter stage.
     // The case of WIN=1 is special because we map it to {-1,+1}, thereby adding one extra bit, so we have to take
     // that into account here to avoid overflow inside the CIC.
-    localparam WCIC = `MAX(WIN, 2) + `CIC_BIT_GROWTH(RCIC, NCIC);
+    localparam integer WCIC = `MAX(WIN, 2) + `CIC_BIT_GROWTH(RCIC, NCIC);
     wire signed [WCIC-1:0] cic_in = {
         {(WCIC-WIN){in_data[WIN-1]}},           // sign extension
         (WIN > 1) ? in_data : {{WIN{1'b1}}}     // special case WIN=1: map 0==>+1, -1==>-1
@@ -184,8 +187,13 @@ module cic_decimator_fir#(
 
     // Remove excess bits from CIC safely with saturation and rounding.
     // The case of WIN=1 requires saturation as explained earlier.
-    localparam WSAT = WIN + `CIC_BIT_GROWTH(RCIC, NCIC);
-    localparam WF = (WSAT < WFIR) ? WSAT : WFIR;  // Avoid extension, it adds no new information.
+    // The widths are declared as integers because LSB below is allowed to go negative (see cast_signed_p), while
+    // `CIC_BIT_GROWTH is unsigned.
+    localparam integer WSAT = WIN + `CIC_BIT_GROWTH(RCIC, NCIC);
+    // Without the FIR, this cast produces the module output directly, so it targets WOUT; a negative LSB simply
+    // LSB-zero-pads the value, which is what the FIR output stage would have done in that case.
+    localparam integer WF = (NFIR > 0) ? ((WSAT < WFIR) ? WSAT : WFIR)  // Avoid extension, it adds no new information.
+                                       : WOUT;
     wire cast_out_valid;
     wire signed [(WF-1):0] cast_out;
     cast_signed_p#(
@@ -202,27 +210,35 @@ module cic_decimator_fir#(
     );
 
     // FIR filter stage.
-    // Our inputs are integers, but we treat them as fixed-point in the range [-1,+1).
-    // We assume that the period when u_fir.in_ready is low is shorter than the decimation rate; otherwise, the FIR
-    // will skip samples. This condition is trivial to ensure in all meaningful scenarios, no handling required:
-    // the FIR non-readiness spans only a few clk periods and the decimated signal rate is orders of magnitude slower.
-    // verilator lint_off PINCONNECTEMPTY
-    fir#(
-        .ORDER(NFIR),
-        .COEF_FILE(KERNEL),
-        .QIN  (1000 + WF   - 1),    // q1.(WF-1)
-        .QCOEF(1000 + WK   - 1),    // q1.(WK-1)
-        .QOUT (1000 + WOUT - 1)     // q1.(WOUT-1) using 1 integer bit here allows automatic extension
-    ) u_fir (
-        .clk(clk),
-        .rst(rst),
-        // Input sample from CIC after saturation and rounding.
-        .in_valid(cast_out_valid),
-        .in_ready(),
-        .in_data(cast_out),
-        // Filtered output.
-        .out_valid(out_valid),
-        .out_data(out_data)
-    );
-    // verilator lint_on PINCONNECTEMPTY
+    generate
+        if (NFIR > 0) begin : g_fir
+            // Our inputs are integers, but we treat them as fixed-point in the range [-1,+1).
+            // We assume that the period when u_fir.in_ready is low is shorter than the decimation rate; otherwise,
+            // the FIR will skip samples. This condition is trivial to ensure in all meaningful scenarios:
+            // the FIR busyness spans a few clk periods and the decimated signal rate is orders of magnitude slower.
+            // verilator lint_off PINCONNECTEMPTY
+            fir#(
+                .ORDER(NFIR),
+                .COEF_FILE(KERNEL),
+                .QIN  (1000 + WF   - 1),    // q1.(WF-1)
+                .QCOEF(1000 + WK   - 1),    // q1.(WK-1)
+                .QOUT (1000 + WOUT - 1)     // q1.(WOUT-1) using 1 integer bit here allows automatic extension
+            ) u_fir (
+                .clk(clk),
+                .rst(rst),
+                // Input sample from CIC after saturation and rounding.
+                .in_valid(cast_out_valid),
+                .in_ready(),
+                .in_data(cast_out),
+                // Filtered output.
+                .out_valid(out_valid),
+                .out_data(out_data)
+            );
+            // verilator lint_on PINCONNECTEMPTY
+        end else begin : g_bypass
+            // The FIR is disabled; the saturated and rounded CIC output is the final output. Here WF equals WOUT.
+            assign out_valid = cast_out_valid;
+            assign out_data  = cast_out;
+        end
+    endgenerate
 endmodule
