@@ -31,6 +31,7 @@ TARGETS = \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_impulse \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_phase \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_scale_delay \
+	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_bypass \
 	zubax:kulibin:online_integrator::sim \
 	zubax:kulibin:pwm::sim_up_down_pwm \
 	zubax:kulibin:sdadc_to_pwm::sim \

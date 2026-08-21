@@ -78,28 +78,28 @@ cic_decimator_fir_tb.dut.cast.out_data[16:0]
 -FIR internal
 @28
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.in_ready
+cic_decimator_fir_tb.dut.g_fir.u_fir.in_ready
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.in_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.in_valid
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.mul0_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.mul0_valid
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.mul1_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.mul1_valid
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.mul2_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.mul2_valid
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.acc_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.acc_valid
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.out_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.out_valid
 @20000
 -
 -
 @28
 [color] 3
-cic_decimator_fir_tb.dut.u_fir.out_valid
+cic_decimator_fir_tb.dut.g_fir.u_fir.out_valid
 @420
 [color] 1
-cic_decimator_fir_tb.dut.u_fir.out_data[15:0]
+cic_decimator_fir_tb.dut.g_fir.u_fir.out_data[15:0]
 @200
 -
 -CICFIR output

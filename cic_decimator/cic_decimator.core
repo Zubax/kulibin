@@ -71,6 +71,10 @@ filesets:
           file_type: user
           copyto: half2_q1_15.fir.memb
 
+  tb_cic_decimator_fir_bypass:
+    files: [tb/cic_decimator_fir_bypass_tb.v]
+    file_type: verilogSource
+
 targets:
   default:
     filesets: [rtl]
@@ -158,6 +162,14 @@ targets:
   sim_cic_decimator_fir_scale_delay:
     filesets: [rtl, tb_cic_decimator_fir_scale_delay]
     toplevel: cic_decimator_fir_scale_delay_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_fir_bypass:
+    filesets: [rtl, tb_cic_decimator_fir_bypass]
+    toplevel: cic_decimator_fir_bypass_tb
     default_tool: icarus
     tools:
       icarus:
