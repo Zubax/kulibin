@@ -15,11 +15,12 @@
 //
 // Configuration runs after reset and on each rising edge of cfg_apply, which exists for a DAC powered after
 // the FPGA, whose calibration would otherwise swallow the automatic sequence; both paths wait out
-// STARTUP_CYCLES first. Tying cfg_apply low is the right default. cfg_ref is captured when the edge arrives
-// rather than when it is served, and edges arriving while a request is outstanding fold into it. The sequence
-// opens with SW_RESET, which drives the outputs to the device's M/Z default -- zero scale when M/Z is low, mid
-// scale when high -- so follow a reconfiguration with an update if the outputs matter. A cfg_apply raised on
-// the same cycle as an accepted sample does not outrank it, so raise it when idle.
+// STARTUP_CYCLES first, and again after the SW_RESET that opens the sequence, because that reset re-arms the
+// same calibration. Tying cfg_apply low is the right default. cfg_ref is captured when the edge
+// arrives rather than when it is served, and edges arriving while a request is outstanding fold into it.
+// The sequence opens with SW_RESET, which drives the outputs to the device's M/Z default so follow a
+// reconfiguration with an update if the outputs matter.
+// A cfg_apply raised on the same cycle as an accepted sample does not outrank it, so raise it when idle.
 //
 // io_sclk is clk/SCLK_DIV and toggles only inside a frame, keeping digital noise off the outputs between
 // updates. io_mosi changes on the rising edge and the device samples it on the falling edge, so setup and
@@ -305,7 +306,12 @@ module max5725#(
                             state <= ST_IDLE;
                         end else begin
                             burst_idx <= burst_idx + 1'b1;
-                            gap_cnt   <= GAP_INIT;
+                            // SW_RESET simulates a power-on reset, so on some parts it re-arms the startup
+                            // calibration that swallows every command issued during it (Note 9). Wait it out
+                            // again rather than sending POWER/CONFIG/REF into it. One sample accepts a frame
+                            // 130 ns after the reset; another loses everything under ~100 us. Costs one
+                            // hold-off on the parts that do not need it.
+                            gap_cnt   <= (is_init && (burst_idx == {BST_W{1'b0}})) ? START_INIT : GAP_INIT;
                             state     <= ST_GAP;
                         end
                     end

@@ -21,9 +21,11 @@ module max5725_model#(
     parameter ID = 0,               // Reported in diagnostics
     parameter MZ = 0,               // State of the device's M/Z pin: 0 zero scale, 1 mid scale
     // Power-up calibration, during which every command is ignored (Note 9), so one arriving inside it is a
-    // driver defect. Measured on a MAX5725AWP+, only power-up arms this: frames 130 ns after a SW_RESET
-    // execute normally.
+    // driver defect. A MAX5725AWP+ arms this only on power-up -- frames 130 ns after a SW_RESET execute
+    // normally -- but another sample arms it on SW_RESET too, silently losing every register the sequence
+    // writes after that reset. CAL_SW_RESET_NS models the stricter part.
     parameter real CAL_NS = 0.0,
+    parameter real CAL_SW_RESET_NS = 0.0,
     // SPI timing limits from the MAX5723/MAX5724/MAX5725 data sheet, in nanoseconds, for VDDIO >= 2.7 V.
     parameter real T_SCLK_MIN = 20.0,
     parameter real T_CH_MIN   = 8.0,
@@ -209,7 +211,13 @@ module max5725_model#(
                                 dirty_m[k] = 1'b0;
                             end
                         end
-                        4'b0101: reset_state();                     // SW_RESET
+                        4'b0101: begin                              // SW_RESET
+                            reset_state();
+                            // "Simulating a power-on reset" extends to the calibration on some parts.
+                            if (($realtime + CAL_SW_RESET_NS) > t_ready) begin
+                                t_ready = $realtime + CAL_SW_RESET_NS;
+                            end
+                        end
                         default: bad("reserved", f);
                     endcase
                 end
@@ -458,7 +466,7 @@ module max5725_harness#(
     wire         m_gated;
     wire [7:0]   m_pwr_written;
 
-    max5725_model#(.ID(ID), .MZ(MZ), .CAL_NS(MODEL_CAL_NS)) m (
+    max5725_model#(.ID(ID), .MZ(MZ), .CAL_NS(MODEL_CAL_NS), .CAL_SW_RESET_NS(MODEL_CAL_NS)) m (
         .csb(io_cs_n), .sclk(io_sclk), .din(io_mosi),
         .dac_flat(m_dac), .code_flat(m_code), .log_flat(m_log), .exec_cnt(m_exec),
         .ref_mode(m_ref), .ref_pwr(m_rpwr), .pwr_flat(m_pwr), .cfg_flat(m_cfg),

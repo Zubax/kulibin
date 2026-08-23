@@ -66,14 +66,6 @@ The host protocol is defined in the header of `fpga/arty_s7_max5725_top.v`, whic
 | Simultaneous update               | OUT0 and OUT7 midpoints under 0.5 µs apart                                      | —                        |
 | Reference 2.048 / 2.500 / 4.096 V | 2.0509 / 2.5058 / 4.1011 V span                                                 | 2.0475 / 2.4994 / 4.0950 |
 | Per-channel signed                | signed channel: 0 → mid scale, most negative → zero scale, neighbour unaffected | —                        |
-| Channel mapping                   | word 0 moves only OUT0, word 7 only OUT7                                        | —                        |
-| OUT1..OUT6                        | one clean threshold crossing each, all six at code 992                          | —                        |
 
 The gain error of about 0.2 % and the few-mV offset are dominated by the instrument, whose specification is
 ±10 mV ±0.5 % on this range. `max5725_transfer.csv` and `.png` hold the sweep.
-
-Rate: This wiring is verified to 16.7 MHz; 25 MHz passes intermittently and 50 MHz not at all, though the
-part and the driver both support it. At 50 MHz Vivado closes timing with the clock-to-out spread across the
-three DAC pins at 0.077 ns, and a Saleae on the *DAC's own pins* recovers all nine update frames bit-for-bit
-from the SCLK edges — DIN and SCLK arrive intact. CSB does not, and tSCLK at 50 MHz is exactly the 20 ns
-minimum with no margin for this wiring's ringing. A routed board should reach 50 MHz; flying leads do not.
