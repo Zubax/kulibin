@@ -68,7 +68,7 @@ def cic_group_delay(f_s_cic, R_cic, N_cic, M_cic):
     return tau_cic_input_samples / f_s_cic
 
 
-def plot_response(*, R: int, M: int, N: int, f_s_in: float) -> None:
+def plot_response(*, R: int, M: int, N_values: tuple[int, ...], f_s_in: float) -> None:
     import matplotlib
     import numpy as np
 
@@ -77,18 +77,21 @@ def plot_response(*, R: int, M: int, N: int, f_s_in: float) -> None:
 
     frequencies = np.linspace(0.0, f_s_in * 0.1, 2**16 + 1)
     # The sinc ratio includes the DC limit and normalizes the gain to unity.
-    magnitude = np.abs(np.sinc(R * M * frequencies / f_s_in) / np.sinc(frequencies / f_s_in)) ** N
-    delay = cic_group_delay(f_s_cic=f_s_in, R_cic=R, N_cic=N, M_cic=M)
-    title = f"{f_s_in=:e} {R=} {M=} {N=} group delay={delay * 1e6:.3f}µs"
-    stem = f"cic_analysis.{f_s_in=:.0f},{R=},{M=},{N=}"
+    sinc_ratio = np.abs(np.sinc(R * M * frequencies / f_s_in) / np.sinc(frequencies / f_s_in))
+    title = f"{f_s_in=:e} {R=} {M=} N={','.join(map(str, N_values))}"
+    stem = f"cic_analysis.{f_s_in=:.0f},{R=},{M=},N={'-'.join(map(str, N_values))}"
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
-    axes[0].plot(frequencies * 1e-3, magnitude)
+    for N in N_values:
+        magnitude = sinc_ratio**N
+        delay = cic_group_delay(f_s_cic=f_s_in, R_cic=R, N_cic=N, M_cic=M)
+        label = f"{N=} (group delay={delay * 1e6:.3f}µs)"
+        axes[0].plot(frequencies * 1e-3, magnitude, label=label)
+        axes[1].plot(frequencies * 1e-3, 20 * np.log10(np.maximum(magnitude, 1e-12)), label=label)
     axes[0].set_ylabel("Magnitude [1]")
     axes[0].set_ylim(bottom=0.0)
     axes[0].set_xlabel("Frequency [kHz]")
     axes[0].set_xlim(0.0, frequencies[-1] * 1e-3)
-    axes[1].plot(frequencies * 1e-3, 20 * np.log10(np.maximum(magnitude, 1e-12)))
     axes[1].set_ylabel("Magnitude [dB]")
     axes[1].set_ylim(bottom=-150.0)
     axes[1].set_xlabel("Frequency [kHz]")
@@ -96,6 +99,7 @@ def plot_response(*, R: int, M: int, N: int, f_s_in: float) -> None:
     for ax in axes:
         ax.grid(True, which="both")
         ax.minorticks_on()
+        ax.legend()
     fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(Path(f"{stem}.png"), dpi=192, bbox_inches="tight")
@@ -103,16 +107,18 @@ def plot_response(*, R: int, M: int, N: int, f_s_in: float) -> None:
 
 
 def main():
-    R, M, N = 64, 1, 3
+    R, M = 64, 1
+    N_values = (2, 3, 4)
     f_s_in = 20e6
-    res = {
-        "W_out": cic_output_bit_width_signed(R=R, M=M, N=N),
-        "f_out": cic_output_frequency(R=R, f_s_in=f_s_in),
-        "f_c": cic_cutoff_frequency(R=R, M=M, N=N, f_s_in=f_s_in),
-        "tau": cic_group_delay(f_s_cic=f_s_in, R_cic=R, N_cic=N, M_cic=M),
-    }
-    print(f"{R=} {M=} {N=} {f_s_in=}; single-bit signed input: {res}")
-    plot_response(R=R, M=M, N=N, f_s_in=f_s_in)
+    for N in N_values:
+        res = {
+            "W_out": cic_output_bit_width_signed(R=R, M=M, N=N),
+            "f_out": cic_output_frequency(R=R, f_s_in=f_s_in),
+            "f_c": cic_cutoff_frequency(R=R, M=M, N=N, f_s_in=f_s_in),
+            "tau": cic_group_delay(f_s_cic=f_s_in, R_cic=R, N_cic=N, M_cic=M),
+        }
+        print(f"{R=} {M=} {N=} {f_s_in=}; single-bit signed input: {res}")
+    plot_response(R=R, M=M, N_values=N_values, f_s_in=f_s_in)
 
 
 if __name__ == "__main__":
