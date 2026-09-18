@@ -18,7 +18,8 @@ module reset_synchronizer#(
     genvar g_idx;
     generate
         for (g_idx = 0; g_idx < FANOUT; g_idx = g_idx + 1) begin : g_fanout
-            (* ASYNC_REG = "TRUE", SHREG_EXTRACT="NO" *)
+            // Replication is prohibited because Lattice LSE was observed to break the replicas; use FANOUT instead.
+            (* ASYNC_REG = "TRUE", SHREG_EXTRACT="NO", syn_preserve=1, syn_keep=1, syn_replicate=0 *)
             reg [DELAY-1:0] ff /* synthesis syn_async_reg=1 */;
             always @(posedge clk or posedge arst) begin
                 if (arst)             ff <= {DELAY{1'b1}};
