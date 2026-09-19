@@ -13,6 +13,11 @@ filesets:
       - tb/counter_tb.v
     file_type: verilogSource
 
+  tb_prescaler:
+    files:
+      - tb/counter_prescaler_tb.v
+    file_type: verilogSource
+
 targets:
   default:
     filesets: [rtl]
@@ -20,6 +25,14 @@ targets:
   sim:
     filesets: [rtl, tb]
     toplevel: counter_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_prescaler:
+    filesets: [rtl, tb_prescaler]
+    toplevel: counter_prescaler_tb
     default_tool: icarus
     tools:
       icarus:
