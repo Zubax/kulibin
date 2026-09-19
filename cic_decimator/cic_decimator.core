@@ -1,6 +1,6 @@
 CAPI=2:
 name: zubax:kulibin:cic_decimator:0
-description: CIC decimator and CIC+FIR cascade
+description: CIC decimators (single and multi-readout) and CIC+FIR cascade
 
 filesets:
   rtl:
@@ -9,6 +9,9 @@ filesets:
       - hdl/cic_comb_m1.v
       - hdl/cic_decimator.v
       - hdl/cic_decimator_fir.v
+      - hdl/cic_decimator_multi.v
+      - hdl/cic_decimator_multi.vh:
+          is_include_file: true
     file_type: verilogSource
 
   tb_comb_m1:
@@ -37,6 +40,10 @@ filesets:
 
   tb_cic_decimator_input_stagger:
     files: [tb/cic_decimator_input_stagger_tb.v]
+    file_type: verilogSource
+
+  tb_cic_decimator_multi:
+    files: [tb/cic_decimator_multi_tb.v]
     file_type: verilogSource
 
   tb_cic_decimator_fir:
@@ -130,6 +137,14 @@ targets:
   sim_cic_decimator_input_stagger:
     filesets: [rtl, tb_cic_decimator_input_stagger]
     toplevel: cic_decimator_input_stagger_tb
+    default_tool: icarus
+    tools:
+      icarus:
+        iverilog_options: [-Wall, -Wno-timescale]
+
+  sim_cic_decimator_multi:
+    filesets: [rtl, tb_cic_decimator_multi]
+    toplevel: cic_decimator_multi_tb
     default_tool: icarus
     tools:
       icarus:
