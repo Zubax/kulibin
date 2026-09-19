@@ -27,6 +27,7 @@ TARGETS = \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_response \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_min_width \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_input_stagger \
+	zubax:kulibin:cic_decimator::sim_cic_decimator_multi \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_impulse \
 	zubax:kulibin:cic_decimator::sim_cic_decimator_fir_phase \
