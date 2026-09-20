@@ -3,7 +3,7 @@
 ///
 /// A counter with PRESCALER=P must behave exactly like an unprescaled counter (exhaustively verified by counter_tb)
 /// that is enabled only on every (P+1)-th enabled cycle, as selected by an independent model here. With enable held
-/// high, at_top must then pulse every (top+1)*(P+1) cycles.
+/// high, at_top must then pulse every (top+1)*(P+1) cycles. The compare channels are gated the same way.
 
 `timescale 1ns/1ns
 `default_nettype none
@@ -20,6 +20,8 @@ module counter_prescaler_tb;
     reg         rst    = 1;
     reg         enable = 0;
     reg [W-1:0] top    = 0;
+    reg [2*W-1:0] cmp  = 0;
+    integer cmp_hits [0:PMAX];
 
     integer period_check = 0;   // nonzero while enable is held high with a constant top from reset
     integer ticks [0:PMAX];
@@ -41,27 +43,33 @@ module counter_prescaler_tb;
             wire [W-1:0] count;
             wire         at_top;
             wire         at_bot;
-            counter#(.W(W), .PRESCALER(p)) dut(
+            wire [1:0]   at_cmp;
+            counter#(.W(W), .PRESCALER(p), .NCHAN(2)) dut(
                 .clk(clk),
                 .rst(rst),
                 .enable(enable),
                 .top(top),
+                .cmp(cmp),
                 .count(count),
                 .at_top(at_top),
-                .at_bot(at_bot)
+                .at_bot(at_bot),
+                .at_cmp(at_cmp)
             );
 
             wire [W-1:0] ref_count;
             wire         ref_at_top;
             wire         ref_at_bot;
-            counter#(.W(W)) ref_counter(
+            wire [1:0]   ref_at_cmp;
+            counter#(.W(W), .NCHAN(2)) ref_counter(
                 .clk(clk),
                 .rst(rst),
                 .enable(tick),
                 .top(top),
+                .cmp(cmp),
                 .count(ref_count),
                 .at_top(ref_at_top),
-                .at_bot(ref_at_bot)
+                .at_bot(ref_at_bot),
+                .at_cmp(ref_at_cmp)
             );
 
             integer last_at_top = -1;
@@ -72,6 +80,9 @@ module counter_prescaler_tb;
                 `REQUIRE(count === ref_count);
                 `REQUIRE(at_top === ref_at_top);
                 `REQUIRE(at_bot === ref_at_bot);
+                `REQUIRE(at_cmp === ref_at_cmp);
+                `REQUIRE(!(|at_cmp) || tick);
+                if (|at_cmp) cmp_hits[p] = cmp_hits[p] + 1;
                 if (tick) ticks[p] = ticks[p] + 1;
                 if (period_check == 0) begin
                     last_at_top = -1;
@@ -98,7 +109,10 @@ module counter_prescaler_tb;
     integer i;
     integer c;
     initial begin
-        for (i = 0; i <= PMAX; i = i + 1) ticks[i] = 0;
+        for (i = 0; i <= PMAX; i = i + 1) begin
+            ticks[i] = 0;
+            cmp_hits[i] = 0;
+        end
         repeat (2) @(negedge clk);
 
         // Random enable, top changes, and occasional resets.
@@ -106,6 +120,10 @@ module counter_prescaler_tb;
             rst    = (rnd(500) == 0);
             enable = (rnd(4) != 0);
             if (rnd(50) == 0) top = rnd(1 << W);
+            if (rnd(20) == 0) begin
+                cmp[W-1:0]   = rnd(1 << W);
+                cmp[2*W-1:W] = rnd(1 << W);
+            end
             @(negedge clk);
         end
 
@@ -122,7 +140,8 @@ module counter_prescaler_tb;
             period_check = 0;
         end
 
-        // Each prescaler must divide the advancing rate by P+1.
+        // Each prescaler must divide the advancing rate by P+1; every configuration must see compare matches.
+        for (i = 0; i <= PMAX; i = i + 1) `REQUIRE(cmp_hits[i] > 0);
         for (i = 1; i <= PMAX; i = i + 1) begin
             `REQUIRE((ticks[i] * (i + 1)) > ((ticks[0] * 9) / 10));
             `REQUIRE((ticks[i] * (i + 1)) < ((ticks[0] * 11) / 10));

@@ -1,6 +1,6 @@
 CAPI=2:
 name: zubax:kulibin:counter:0
-description: Simple sampled-top counter
+description: Simple sampled-top counter with compare channels
 
 filesets:
   rtl:

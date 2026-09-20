@@ -1,4 +1,7 @@
 /// iverilog -Wall -Wno-timescale -y. counter_tb.v && vvp a.out
+///
+/// Exhaustive one-cycle transition check of the counter against a reference model, plus a randomized run of the
+/// compare channels (NCHAN=2) with coverage of matches at zero, mid-period, at the top, and of the sampled compare.
 
 `timescale 1ns/1ns
 `default_nettype none
@@ -15,12 +18,20 @@ module counter_tb;
     reg         rst    = 0;
     reg         enable = 0;
     reg [W-1:0] top    = 0;
+    reg [W-1:0] cmp0   = 0;
+    reg [W-1:0] cmp1   = 0;
 
     wire [W-1:0] count;
     wire         at_top;
     wire         at_bot;
     reg [W-1:0] expected_count = 0;
     reg [W-1:0] expected_top   = 0;
+    reg [W-1:0] expected_cmp0  = 0;
+    reg [W-1:0] expected_cmp1  = 0;
+    integer cov_cmp_zero   = 0;
+    integer cov_cmp_mid    = 0;
+    integer cov_cmp_top    = 0;
+    integer cov_cmp_sample = 0;
     reg [STATE_COUNT-1:0] seen [0:STATE_COUNT-1];
     integer clock_cycles_checked = 0;
     integer transition_cases_checked = 0;
@@ -28,15 +39,66 @@ module counter_tb;
     integer state_top;
     integer state_count;
 
+    // Stimulus randomness: a xorshift32 generator, as in counter_prescaler_tb.
+    reg [31:0] rng = 32'h2545F491;
+    function automatic integer rnd;  // uniform in [0, n)
+        input integer n;
+        begin
+            rng = rng ^ (rng << 13);
+            rng = rng ^ (rng >> 17);
+            rng = rng ^ (rng << 5);
+            rnd = rng % n;
+        end
+    endfunction
+
     counter#(.W(W)) dut(
         .clk(clk),
         .rst(rst),
         .enable(enable),
         .top(top),
+        .cmp({W{1'b0}}),
         .count(count),
         .at_top(at_top),
-        .at_bot(at_bot)
+        .at_bot(at_bot),
+        .at_cmp()
     );
+
+    // The compare channels must not change the base counter behavior.
+    wire [W-1:0] cmp_count;
+    wire         cmp_at_top;
+    wire         cmp_at_bot;
+    wire [1:0]   at_cmp;
+    counter#(.W(W), .NCHAN(2)) dut_cmp(
+        .clk(clk),
+        .rst(rst),
+        .enable(enable),
+        .top(top),
+        .cmp({cmp1, cmp0}),
+        .count(cmp_count),
+        .at_top(cmp_at_top),
+        .at_bot(cmp_at_bot),
+        .at_cmp(at_cmp)
+    );
+
+    task automatic require_cmp;
+        input integer         k;
+        input         [W-1:0] live;
+        input         [W-1:0] sampled;
+        reg           [W-1:0] active;
+        begin
+            active = (expected_count == 0) ? live : sampled;
+            `REQUIRE(at_cmp[k] === ((expected_count == active) && enable));
+            if (at_cmp[k]) begin
+                if (expected_count == 0) cov_cmp_zero = cov_cmp_zero + 1;
+                if ((expected_count > 0) && (expected_count < expected_top)) cov_cmp_mid = cov_cmp_mid + 1;
+                if ((expected_count > 0) && (expected_count == expected_top)) cov_cmp_top = cov_cmp_top + 1;
+            end
+            // A mid-period compare value change must not apply until the next period.
+            if (enable && (expected_count != 0) && (expected_count == live) && (live != sampled)) begin
+                cov_cmp_sample = cov_cmp_sample + 1;
+            end
+        end
+    endtask
 
     task automatic require_outputs;
         begin
@@ -45,6 +107,11 @@ module counter_tb;
             `REQUIRE(at_top === ((expected_count == expected_top) && enable));
             `REQUIRE(at_bot === ((expected_count == 0)            && enable));
             `REQUIRE(expected_count <= expected_top);
+            `REQUIRE(cmp_count === count);
+            `REQUIRE(cmp_at_top === at_top);
+            `REQUIRE(cmp_at_bot === at_bot);
+            require_cmp(0, cmp0, expected_cmp0);
+            require_cmp(1, cmp1, expected_cmp1);
             seen[expected_top][expected_count] = 1'b1;
         end
     endtask
@@ -52,18 +119,27 @@ module counter_tb;
     task automatic clock_and_check;
         reg [W-1:0] next_count;
         reg [W-1:0] next_top;
+        reg [W-1:0] next_cmp0;
+        reg [W-1:0] next_cmp1;
         reg [W-1:0] active_top;
         begin
             next_count = expected_count;
             next_top   = expected_top;
+            next_cmp0  = expected_cmp0;
+            next_cmp1  = expected_cmp1;
             active_top = (expected_count == 0) ? top : expected_top;
 
             if (rst) begin
                 next_count = 0;
                 next_top   = top;
+                next_cmp0  = cmp0;
+                next_cmp1  = cmp1;
             end else begin
-                if (expected_count == 0) begin
-                    next_top = top;
+                // The top and the compare values are sampled when the counter advances from zero.
+                if ((expected_count == 0) && enable) begin
+                    next_top  = top;
+                    next_cmp0 = cmp0;
+                    next_cmp1 = cmp1;
                 end
 
                 if (enable) begin
@@ -78,6 +154,8 @@ module counter_tb;
             @(posedge clk);
             expected_count = next_count;
             expected_top   = next_top;
+            expected_cmp0  = next_cmp0;
+            expected_cmp1  = next_cmp1;
             clock_cycles_checked = clock_cycles_checked + 1;
             require_outputs();
         end
@@ -91,6 +169,8 @@ module counter_tb;
             rst    = 1;
             enable = 0;
             top    = target_top;
+            cmp0   = target_count;
+            cmp1   = target_top;
             clock_and_check();
 
             rst    = 0;
@@ -120,6 +200,8 @@ module counter_tb;
                         rst    = reset_case;
                         enable = enable_case;
                         top    = input_top;
+                        cmp0   = input_top;
+                        cmp1   = (input_top * 7 + 3) % STATE_COUNT;
                         clock_and_check();
                         transition_cases_checked = transition_cases_checked + 1;
                     end
@@ -166,12 +248,31 @@ module counter_tb;
         end
 
         require_full_state_coverage();
+
+        // Randomized run of the compare channels with occasional resets, top and compare changes.
+        for (init_index = 0; init_index < 100000; init_index = init_index + 1) begin
+            rst    = rnd(1000) == 0;
+            enable = rnd(4) != 0;
+            if (rnd(40) == 0) top  = rnd(STATE_COUNT);
+            if (rnd(10) == 0) cmp0 = rnd(STATE_COUNT);
+            if (rnd(10) == 0) cmp1 = rnd(top + 1);
+            clock_and_check();
+        end
+        $display("compare matches at zero/mid/top: %0d/%0d/%0d; sampled compare held: %0d",
+                 cov_cmp_zero, cov_cmp_mid, cov_cmp_top, cov_cmp_sample);
+        `REQUIRE(cov_cmp_zero > 0);
+        `REQUIRE(cov_cmp_mid > 0);
+        `REQUIRE(cov_cmp_top > 0);
+        `REQUIRE(cov_cmp_sample > 0);
         $finish;
     end
 
-    initial begin
-        $dumpfile("counter_tb.vcd");
-        $dumpvars();
+    integer dump;
+    initial begin  // the exhaustive walk plus the randomized run make a large trace, so dumping is opt-in: +dump=1
+        if ($value$plusargs("dump=%d", dump) && (dump != 0)) begin
+            $dumpfile("counter_tb.vcd");
+            $dumpvars();
+        end
     end
 endmodule
 
