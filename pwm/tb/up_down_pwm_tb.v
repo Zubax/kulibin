@@ -71,6 +71,72 @@ module up_down_pwm_tb;
         .out(out_wave)
     );
 
+    // Carrier strobe semantics, on an instance with its own reset so the stimulus below is undisturbed.
+    // at_top and at_bot must mark the extrema of a running carrier only. The counter and the latched top are both
+    // zero under reset, which without qualification makes at_top a level for the whole of reset and emits one more
+    // spurious pulse at release, before the carrier has started -- an edge-counting consumer would miscount at
+    // every reset.
+    localparam [W-1:0] STROBE_TOP = 6;
+    reg rst_strobe = 1;
+    wire at_top_strobe;
+    wire at_bot_strobe;
+    up_down_pwm#(W) pwm_strobe (
+        .clk(clk),
+        .rst(rst_strobe),
+        .top(STROBE_TOP),
+        .compare({W{1'b0}}),
+        .at_top(at_top_strobe),
+        .at_bot(at_bot_strobe),
+        .out()
+    );
+
+    task automatic check_strobes_mark_a_running_carrier;
+        integer idx;
+        integer first_top;
+        integer first_bot;
+        integer width;
+        reg expect_top;
+        reg expect_bot;
+        begin
+            width = 0;
+            rst_strobe = 1;
+            repeat (2 * STROBE_TOP) @(negedge clk);
+            // Held in reset, neither strobe may assert at all -- not even as a level.
+            repeat (2 * STROBE_TOP) begin
+                `REQUIRE(at_top_strobe === 1'b0);
+                `REQUIRE(at_bot_strobe === 1'b0);
+                @(negedge clk);
+            end
+
+            // Every cycle from release is checked against where the strobes are required to be, rather than
+            // scanning for the first one and measuring intervals from there: a scan cannot tell a missing strobe
+            // from a late one, and in particular a carrier that simply never emitted its first bottom would pass.
+            // The carrier needs one cycle to latch its top, then a full up-ramp, so the extrema fall at
+            // STROBE_TOP, then every STROBE_TOP thereafter, alternating top/bottom, one cycle wide each.
+            rst_strobe = 0;
+            // The release cycle itself, which the negedge scan below cannot see: it starts one posedge later, by
+            // which time top_r has loaded and the raw extremum has fallen. Qualifying with !rst instead of
+            // top_r != 0 emits its spurious strobe entirely inside this window, so without this check that
+            // wrong-but-plausible variant passes the whole bench. #0 settles the continuous assignments first.
+            #0;
+            `REQUIRE(at_top_strobe === 1'b0);
+            `REQUIRE(at_bot_strobe === 1'b0);
+
+            first_top = STROBE_TOP;                  // index of the first top after release
+            first_bot = first_top + STROBE_TOP;      // and of the first bottom
+            for (idx = 0; idx < 5 * STROBE_TOP; idx = idx + 1) begin
+                @(negedge clk);
+                expect_top = (idx >= first_top) && (((idx - first_top) % (2 * STROBE_TOP)) == 0);
+                expect_bot = (idx >= first_bot) && (((idx - first_bot) % (2 * STROBE_TOP)) == 0);
+                `REQUIRE(at_top_strobe === expect_top);
+                `REQUIRE(at_bot_strobe === expect_bot);
+                if (at_top_strobe === 1'b1) width = width + 1;
+            end
+            // Sanity on the check itself: it must have seen actual strobes, not merely agreed on silence.
+            `REQUIRE(width >= 2);
+        end
+    endtask
+
     // Multi-channel equivalence: one NCHAN instance against that many independent single-channel instances driven
     // with the same top and the same per-channel compare. Sharing one counter must not make the channels interact,
     // so every channel must track its own reference cycle for cycle. The references stand in for the whole carrier
@@ -491,6 +557,8 @@ module up_down_pwm_tb;
         check_shadow_holds_output(8, 2);  // a latched forced-high duty (compare == top) must not drop
         check_shadow_holds_output(0, 4);  // a latched forced-low duty (compare == 0) must not rise
         check_shadow_holds_output_on_top_change(8, 4);  // a new top must not disturb a channel at 100% duty either
+
+        check_strobes_mark_a_running_carrier();
 
         // Reset must clear every channel, not just channel 0.
         drive_multi(4, 1, 3, 4, 8);

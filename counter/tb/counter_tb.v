@@ -87,7 +87,7 @@ module counter_tb;
         reg           [W-1:0] active;
         begin
             active = (expected_count == 0) ? live : sampled;
-            `REQUIRE(at_cmp[k] === ((expected_count == active) && enable));
+            `REQUIRE(at_cmp[k] === ((expected_count == active) && enable && !rst));
             if (at_cmp[k]) begin
                 if (expected_count == 0) cov_cmp_zero = cov_cmp_zero + 1;
                 if ((expected_count > 0) && (expected_count < expected_top)) cov_cmp_mid = cov_cmp_mid + 1;
@@ -104,8 +104,8 @@ module counter_tb;
         begin
             #1;
             `REQUIRE(count === expected_count);
-            `REQUIRE(at_top === ((expected_count == expected_top) && enable));
-            `REQUIRE(at_bot === ((expected_count == 0)            && enable));
+            `REQUIRE(at_top === ((expected_count == expected_top) && enable && !rst));
+            `REQUIRE(at_bot === ((expected_count == 0)            && enable && !rst));
             `REQUIRE(expected_count <= expected_top);
             `REQUIRE(cmp_count === count);
             `REQUIRE(cmp_at_top === at_top);
@@ -131,9 +131,9 @@ module counter_tb;
 
             if (rst) begin
                 next_count = 0;
-                next_top   = top;
-                next_cmp0  = cmp0;
-                next_cmp1  = cmp1;
+                next_top   = {W{1'b1}};  // reset samples no input; see the RTL header
+                next_cmp0  = {W{1'b1}};
+                next_cmp1  = {W{1'b1}};
             end else begin
                 // The top and the compare values are sampled when the counter advances from zero.
                 if ((expected_count == 0) && enable) begin
@@ -176,8 +176,19 @@ module counter_tb;
             rst    = 0;
             enable = 1;
             top    = target_top;
-            for (cycle = 0; cycle < target_count; cycle = cycle + 1) begin
-                clock_and_check();
+            // Reset leaves the latched top at all ones, and the counter samples the live top only on the cycle
+            // it leaves zero -- the same cycle the count advances. So a state whose count is nonzero is still
+            // reached by counting up to it, the first of those cycles doing the latching; but a state with the
+            // count back at zero needs a full period, since that is the only way to return to zero with the top
+            // already latched.
+            if (target_count == 0) begin
+                for (cycle = 0; cycle <= target_top; cycle = cycle + 1) begin
+                    clock_and_check();
+                end
+            end else begin
+                for (cycle = 0; cycle < target_count; cycle = cycle + 1) begin
+                    clock_and_check();
+                end
             end
 
             enable = 0;
@@ -207,6 +218,75 @@ module counter_tb;
                     end
                 end
             end
+        end
+    endtask
+
+    // Reset must not sample the inputs: the latched top and compares come up all ones whatever is applied while
+    // reset is held, and only the first sample at count zero replaces them. at_top is where that is observable --
+    // with a top of zero applied across reset, the old reset-sampling behavior latched zero, which the count at
+    // zero immediately equals, so at_top would assert straight out of reset.
+    task automatic check_reset_samples_no_input;
+        begin
+            rst    = 1;
+            enable = 1;
+            top    = 0;
+            cmp0   = 0;
+            cmp1   = 0;
+            clock_and_check();
+            `REQUIRE(dut.top_r === {W{1'b1}});
+            `REQUIRE(dut_cmp.cmp_r === {2*W{1'b1}});
+
+            rst = 0;
+            #1;  // still before the next edge, so this is the state reset itself established
+            `REQUIRE(at_top === 1'b0);
+            `REQUIRE(at_bot === 1'b1);  // the bottom does not depend on the latch, and must still be marked
+
+            clock_and_check();  // the first sample at count zero replaces the latch
+            `REQUIRE(dut.top_r === {W{1'b0}});
+            `REQUIRE(dut_cmp.cmp_r === {2*W{1'b0}});
+        end
+    endtask
+
+    // Held in reset with enable asserted, no strobe may fire: the count is pinned at zero and so is not
+    // advancing, and at_bot -- along with any compare channel set to zero -- would otherwise pulse every cycle.
+    task automatic check_strobes_are_silent_under_reset;
+        integer cycle;
+        begin
+            // Enter reset from the top, with the compares matching too. Reset holds the count, and on its first
+            // cycle the latched top and compares still carry their pre-reset values, so the unqualified extrema
+            // would all be asserting exactly there. Once reset has been held a cycle the latched top is all ones
+            // and at_top can no longer match on its own, which is why entering from the top is what exercises it.
+            go_to_state(3, 3);
+            rst    = 1;
+            enable = 1;
+            top    = 3;
+            cmp0   = 3;
+            cmp1   = 3;
+            #1;
+            `REQUIRE(at_top === 1'b0);
+            `REQUIRE(at_cmp === 2'b00);
+            `REQUIRE(cmp_at_top === 1'b0);
+            clock_and_check();
+
+            // And from the bottom, where at_bot and a zero compare would otherwise pulse on every reset cycle.
+            rst    = 1;
+            enable = 1;
+            top    = 0;
+            cmp0   = 0;
+            cmp1   = 0;
+            for (cycle = 0; cycle < 8; cycle = cycle + 1) begin
+                clock_and_check();
+                `REQUIRE(at_top === 1'b0);
+                `REQUIRE(at_bot === 1'b0);
+                `REQUIRE(at_cmp === 2'b00);
+                `REQUIRE(cmp_at_top === 1'b0);
+                `REQUIRE(cmp_at_bot === 1'b0);
+            end
+
+            // And they resume on the first enabled cycle after release, rather than staying suppressed.
+            rst = 0;
+            clock_and_check();
+            `REQUIRE(at_bot === 1'b1);
         end
     endtask
 
@@ -248,6 +328,9 @@ module counter_tb;
         end
 
         require_full_state_coverage();
+
+        check_strobes_are_silent_under_reset();
+        check_reset_samples_no_input();
 
         // Randomized run of the compare channels with occasional resets, top and compare changes.
         for (init_index = 0; init_index < 100000; init_index = init_index + 1) begin

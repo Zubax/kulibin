@@ -17,7 +17,9 @@ module deadtime_complementer_var_tb;
     localparam integer NEG_BIT = DTW + 2;
     localparam integer POS_BIT = DTW + 3;
 
-    localparam [STATE_BITS-1:0] RESET_STATE = {STATE_BITS{1'b0}};
+    // Blanked with the longest representable interval loaded: reset takes nothing from an input, so this is
+    // one fixed state again rather than a family of them indexed by the deadtime held at the time.
+    localparam [STATE_BITS-1:0] RESET_STATE = {1'b0, 1'b0, 1'b1, 1'b0, {DTW{1'b1}}};
 
     reg clk = 1'b0;
     reg rst = 1'b1;
@@ -149,7 +151,7 @@ module deadtime_complementer_var_tb;
                 pos_v = 1'b0;
                 neg_v = 1'b0;
                 target_v = 1'b0;
-                t_v = {DTW{1'b0}};
+                t_v = {DTW{1'b1}};  // longest interval, taken from no input; see the RTL header
             end else if (in_i != target_v) begin
                 target_v = in_i;
                 if (deadtime_i == {DTW{1'b0}}) begin
@@ -360,6 +362,7 @@ module deadtime_complementer_var_tb;
                     in = state_idx[0];
                     deadtime = state_idx[DTW-1:0];
 
+                    // Whatever the deadtime input says, reset lands in the one fixed blanked state.
                     @(posedge clk);
                     #1 require_public_state(RESET_STATE);
 
@@ -382,13 +385,17 @@ module deadtime_complementer_var_tb;
                 rst = 1'b1;
                 in = 1'b0;
                 deadtime = {DTW{1'b0}};
+                // Reset is input-independent, so every instance lands in the same blanked state regardless of
+                // its hardwired dead time, and all of them read active. The outputs are low, which is what matters.
                 for (deadtime_idx = 0; deadtime_idx < DT_COUNT; deadtime_idx = deadtime_idx + 1) begin
                     fixed_state[deadtime_idx] = RESET_STATE;
                 end
 
                 @(posedge clk);
                 #1;
-                `REQUIRE(active_var_fixed === {DT_COUNT{1'b0}});
+                `REQUIRE(pos_var_fixed === {DT_COUNT{1'b0}});
+                `REQUIRE(neg_var_fixed === {DT_COUNT{1'b0}});
+                `REQUIRE(active_var_fixed === {DT_COUNT{1'b1}});
 
                 @(negedge clk);
                 rst = 1'b0;
@@ -418,19 +425,45 @@ module deadtime_complementer_var_tb;
         end
     endtask
 
+    // The var module cannot know its dead time at reset -- it is an input, and reset must not sample one -- so it
+    // errs long and blanks for the longest representable interval, while the constant-parameter module blanks for
+    // exactly its DEADTIME, which it knows at elaboration. The two therefore differ legitimately until that first
+    // interval has run out; the equivalence checked across instances below is the steady-state one, so it is armed
+    // only once the longest possible initial blank cannot still be in progress. The break-before-make invariants
+    // above it hold at all times and stay armed throughout.
+    localparam integer SETTLE = (1 << DTW) + 1;
+    integer settle_count = 0;
+    always @(posedge clk) begin
+        if (rst) settle_count <= 0;
+        else if (settle_count < SETTLE) settle_count <= settle_count + 1;
+    end
+
     always @(posedge clk) begin
         #1;
         if (!rst) begin
             `REQUIRE((pos && neg) === 1'b0);
             `REQUIRE((|(pos_var_fixed & neg_var_fixed)) === 1'b0);
-            `REQUIRE(pos_var_fixed === pos_const_fixed);
-            `REQUIRE(neg_var_fixed === neg_const_fixed);
+            if (settle_count >= SETTLE) begin
+                `REQUIRE(pos_var_fixed === pos_const_fixed);
+                `REQUIRE(neg_var_fixed === neg_const_fixed);
+            end
         end
     end
 
     initial begin
         $dumpfile("deadtime_complementer_var_tb.vcd");
         $dumpvars();
+
+        // Before any clock edge, so this is the declaration initializers rather than the reset path: the module
+        // must come up blanked with an interval loaded, not settled. A device whose power-up state is all-zeros
+        // would otherwise start in the one state the reset path exists to avoid.
+        #0;
+        `REQUIRE(pos === 1'b0);
+        `REQUIRE(neg === 1'b0);
+        `REQUIRE(active === 1'b1);
+        `REQUIRE(pos_var_fixed === {DT_COUNT{1'b0}});
+        `REQUIRE(neg_var_fixed === {DT_COUNT{1'b0}});
+        `REQUIRE(active_var_fixed === {DT_COUNT{1'b1}});
 
         enumerate_reachable();
 

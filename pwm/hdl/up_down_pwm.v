@@ -1,7 +1,6 @@
 /// Basic pulse-width modulator with a bidirectional counter.
 /// The modulation frequency equals clk / (top * 2).
 /// Inputs top and compare are sampled according to SHADOW_RELOAD: 1 = top, 2 = bottom, 3 = both (default).
-/// The at_top and at_bot outputs indicate counter extrema independently of SHADOW_RELOAD.
 ///
 /// The NCHAN compare channels share one counter, hence one carrier period and phase; only the duty cycle is
 /// per-channel. Channel k is driven by compare[W*k +: W] and drives out[k]; the channels are otherwise independent.
@@ -9,6 +8,15 @@
 /// compare bus is latched together with top, so a coherent update of all channels requires no extra synchronization.
 /// A compare of zero holds its output low and a compare equal to the top holds it high, zero taking precedence when
 /// the top is zero too; a compare above the top never matches, so that channel freezes at the level it last held.
+///
+/// at_top and at_bot indicate the counter extrema independently of SHADOW_RELOAD, and only while the carrier is
+/// running: they stay low while the latched top is zero, which covers reset and the cycles until the first top is
+/// latched. Without that qualification the counter and the top both being zero would make at_top a level for the
+/// whole of reset rather than a pulse, and hold it through the release cycle as well. The internal reload still
+/// uses the unqualified extrema, since a zero latched top is exactly the state the reload has to escape from.
+/// Both are combinational and are meant to be sampled on clk. Like any combinational strobe they can show
+/// transient hazards -- the qualification itself reads the latched top through two paths, so the ports may glitch
+/// where the top changes -- so do not use them as a clock or an edge trigger, in RTL or in a testbench.
 
 module up_down_pwm#(
     parameter W             = 16,
@@ -32,20 +40,25 @@ module up_down_pwm#(
     localparam SHADOW_RELOAD_TOP = 1;
     localparam SHADOW_RELOAD_BOT = 2;
 
-    initial if ((SHADOW_RELOAD < 1) || (SHADOW_RELOAD > 3)) $fatal;
-
     generate
         if (NCHAN < 1) begin : g_chk_nchan
             up_down_pwm_error_NCHAN_lt_1 e();
         end
+        if ((SHADOW_RELOAD < 1) || (SHADOW_RELOAD > 3)) begin : g_chk_shadow_reload
+            up_down_pwm_error_SHADOW_RELOAD_out_of_range e();
+        end
     endgenerate
 
-    assign at_top = (counter == top_r) && !reverse;
-    assign at_bot = (counter == 0)     &&  reverse;
+    // The unqualified extrema drive the reload; the ports carry them qualified with a running carrier (see header).
+    wire at_top_raw = (counter == top_r) && !reverse;
+    wire at_bot_raw = (counter == 0)     &&  reverse;
+    assign at_top = at_top_raw && (top_r != 0);
+    assign at_bot = at_bot_raw && (top_r != 0);
 
     wire reload_at_top = (SHADOW_RELOAD & SHADOW_RELOAD_TOP) != 0;
     wire reload_at_bot = (SHADOW_RELOAD & SHADOW_RELOAD_BOT) != 0;
-    wire shadow_reload = (reload_at_top && at_top) || (reload_at_bot && at_bot) || ((top_r == 0) && !reload_at_top);
+    wire shadow_reload = (reload_at_top && at_top_raw) || (reload_at_bot && at_bot_raw) ||
+                         ((top_r == 0) && !reload_at_top);
 
     always @(posedge clk) begin
         if (rst) begin
@@ -59,10 +72,10 @@ module up_down_pwm#(
             if (top_r == 0) begin
                 reverse <= 0;
                 counter <= 0;
-            end else if (at_top) begin
+            end else if (at_top_raw) begin
                 reverse <= 1;
                 counter <= counter - 1;
-            end else if (at_bot) begin
+            end else if (at_bot_raw) begin
                 reverse <= 0;
                 counter <= counter + 1;
             end else begin
