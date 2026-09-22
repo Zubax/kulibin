@@ -71,6 +71,213 @@ module up_down_pwm_tb;
         .out(out_wave)
     );
 
+    // Multi-channel equivalence: one NCHAN instance against that many independent single-channel instances driven
+    // with the same top and the same per-channel compare. Sharing one counter must not make the channels interact,
+    // so every channel must track its own reference cycle for cycle. The references stand in for the whole carrier
+    // too: were NCHAN to perturb the counter, every channel at once would drift off its reference.
+    localparam NCHAN = 3;
+    reg [W-1:0]       top_multi     = 4;
+    reg [NCHAN*W-1:0] compare_multi = 0;
+
+    wire [NCHAN-1:0] out_multi;
+    up_down_pwm #(.W(W), .NCHAN(NCHAN)) pwm_multi (
+        .clk(clk),
+        .rst(rst),
+        .top(top_multi),
+        .compare(compare_multi),
+        .at_top(),
+        .at_bot(),
+        .out(out_multi)
+    );
+
+    wire [NCHAN-1:0] out_ref;
+    genvar g;
+    generate
+        for (g = 0; g < NCHAN; g = g + 1) begin : g_ref
+            up_down_pwm#(W) pwm_ref (
+                .clk(clk),
+                .rst(rst),
+                .top(top_multi),
+                .compare(compare_multi[W*g +: W]),
+                .at_top(),
+                .at_bot(),
+                .out(out_ref[g])
+            );
+        end
+    endgenerate
+
+    // Continuous equivalence check, plus coverage so that a vacuous (never-toggling) run cannot pass. Once armed it
+    // stays armed to the end of the run, so the later shadow-hold and reset stimulus is covered by it as well.
+    reg              check_multi    = 0;
+    reg  [NCHAN-1:0] out_multi_prev = 0;
+    integer multi_cycles_checked = 0;
+    integer cov_multi_toggle [0:NCHAN-1];
+
+    // Each process keeps its own loop variable: a shared one would be a race between them.
+    initial begin : cov_multi_init
+        integer chan;
+        for (chan = 0; chan < NCHAN; chan = chan + 1) begin
+            cov_multi_toggle[chan] = 0;
+        end
+    end
+
+    always @(negedge clk) begin : multi_equivalence_check
+        integer chan;
+        if (check_multi) begin
+            for (chan = 0; chan < NCHAN; chan = chan + 1) begin
+                `REQUIRE(out_multi[chan] === out_ref[chan]);
+                if (out_multi[chan] !== out_multi_prev[chan]) begin
+                    cov_multi_toggle[chan] = cov_multi_toggle[chan] + 1;
+                end
+            end
+            multi_cycles_checked = multi_cycles_checked + 1;
+        end
+        out_multi_prev <= out_multi;
+    end
+
+    // Applies the shared top and the per-channel compares, then holds them for the requested number of cycles.
+    // The compares are named one by one rather than packed by the caller, so a call site reads as a per-channel duty.
+    task automatic drive_multi;
+        input [W-1:0] top_value;
+        input [W-1:0] value_a;
+        input [W-1:0] value_b;
+        input [W-1:0] value_c;
+        input integer cycles;
+        integer idx;
+        begin
+            top_multi     = top_value;
+            compare_multi = {value_c, value_b, value_a};
+            for (idx = 0; idx < cycles; idx = idx + 1) begin
+                @(negedge clk);
+            end
+        end
+    endtask
+
+    // Shadow-hold coverage: a compare written mid-period must stay invisible on the output until the reload instant,
+    // which is the whole point of the shadow register; checking compare_r alone would not notice the output bypassing
+    // it. Bottom-only reload gives a hold window spanning a full period, so it covers the top, where a forced-high
+    // duty would otherwise be masked. The reference keeps the old compare and so embodies the duty the DUT must go on
+    // showing, whatever its shape.
+    reg [W-1:0] top_hold         = 8;
+    reg [W-1:0] top_hold_ref     = 8;
+    reg [W-1:0] compare_hold     = 0;
+    reg [W-1:0] compare_hold_ref = 0;
+
+    wire out_hold;
+    wire at_bot_hold;
+    up_down_pwm #(.W(W), .SHADOW_RELOAD(SHADOW_RELOAD_BOT)) pwm_hold (
+        .clk(clk),
+        .rst(rst),
+        .top(top_hold),
+        .compare(compare_hold),
+        .at_top(),
+        .at_bot(at_bot_hold),
+        .out(out_hold)
+    );
+
+    wire out_hold_ref;
+    up_down_pwm #(.W(W), .SHADOW_RELOAD(SHADOW_RELOAD_BOT)) pwm_hold_ref (
+        .clk(clk),
+        .rst(rst),
+        .top(top_hold_ref),
+        .compare(compare_hold_ref),
+        .at_top(),
+        .at_bot(),
+        .out(out_hold_ref)
+    );
+
+    task automatic check_shadow_holds_output;
+        input [W-1:0] old_compare;
+        input [W-1:0] new_compare;
+        integer guard;
+        integer held;
+        begin
+            // Settle both instances on the old compare, so they run in lockstep before the write.
+            compare_hold     = old_compare;
+            compare_hold_ref = old_compare;
+            top_hold_ref     = top_hold;
+            guard = 0;
+            while ((pwm_hold.compare_r !== old_compare) || (pwm_hold_ref.compare_r !== old_compare)) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+            repeat (2 * top_hold) @(negedge clk);
+
+            // Align just past a bottom reload edge, so the write misses it, then write without awaiting the latch.
+            guard = 0;
+            while (at_bot_hold !== 1'b1) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+            @(negedge clk);
+            compare_hold = new_compare;
+            `REQUIRE(pwm_hold.compare_r === old_compare);
+
+            held  = 0;
+            guard = 0;
+            while (pwm_hold.compare_r === old_compare) begin
+                `REQUIRE(out_hold === out_hold_ref);
+                held  = held + 1;
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+                @(negedge clk);
+            end
+            `REQUIRE(held > top_hold);  // the window must reach the top, not stop short of it
+        end
+    endtask
+
+    // The same deferral must hold for a new top. A channel at 100% duty (compare_r == top_r) is the exposed case:
+    // should the forced-high test consult the unlatched top, the channel falls through to the counter-match branch
+    // and drops low mid-period, which is exactly the glitch the shadow register exists to prevent.
+    // Runs last among the shadow checks: the reference keeps the old top, so afterwards the two instances no longer
+    // share a carrier phase and cannot be compared again.
+    task automatic check_shadow_holds_output_on_top_change;
+        input [W-1:0] old_top;
+        input [W-1:0] new_top;
+        integer guard;
+        integer held;
+        begin
+            // Settle both at 100% duty, which is what the forced-high branch drives.
+            top_hold         = old_top;
+            top_hold_ref     = old_top;
+            compare_hold     = old_top;
+            compare_hold_ref = old_top;
+            guard = 0;
+            while ((pwm_hold.top_r     !== old_top) || (pwm_hold.compare_r     !== old_top) ||
+                   (pwm_hold_ref.top_r !== old_top) || (pwm_hold_ref.compare_r !== old_top)) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+            repeat (2 * old_top) @(negedge clk);
+            `REQUIRE(out_hold === 1'b1);  // 100% duty, so the output is held high
+
+            // Align just past a bottom reload edge, so the write misses it, then write without awaiting the latch.
+            guard = 0;
+            while (at_bot_hold !== 1'b1) begin
+                @(negedge clk);
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+            end
+            @(negedge clk);
+            top_hold = new_top;  // the reference keeps the old top
+            `REQUIRE(pwm_hold.top_r === old_top);
+
+            held  = 0;
+            guard = 0;
+            while (pwm_hold.top_r === old_top) begin
+                `REQUIRE(out_hold === out_hold_ref);
+                held  = held + 1;
+                guard = guard + 1;
+                `REQUIRE(guard < 128);
+                @(negedge clk);
+            end
+            `REQUIRE(held > old_top);  // the window must reach the old top, where the fall-through would show
+        end
+    endtask
+
     task automatic wait_top_latched;
         integer guard;
         begin
@@ -190,6 +397,7 @@ module up_down_pwm_tb;
         $dumpvars();
 
         repeat (2) @(negedge clk);
+        `REQUIRE(out_multi === {NCHAN{1'b0}});  // every channel output clears under reset
         rst = 0;
         repeat (2) @(negedge clk);
 
@@ -254,6 +462,42 @@ module up_down_pwm_tb;
         check_wave_period(4, 4, 8);
         check_wave_hold(4, 6, 1'b1, 16);
         check_wave_hold(0, 3, 1'b1, 8);
+
+        // Multi-channel stimulus. Every channel hits each output branch, and each is moved while the others hold,
+        // so any cross-channel leakage would show up as a divergence from that channel's own reference.
+        check_multi = 1;
+        drive_multi(4, 0, 2, 4, 24);  // forced low, mid-range, forced high, simultaneously
+        drive_multi(4, 4, 0, 2, 24);  // rotate the roles
+        drive_multi(4, 2, 4, 0, 24);
+        drive_multi(4, 1, 3, 2, 25);  // all mid-range, all distinct; odd length breaks the carrier phase lock
+        drive_multi(4, 3, 3, 3, 24);  // all identical
+        drive_multi(4, 3, 3, 1, 24);  // move only channel c
+        drive_multi(4, 3, 1, 1, 24);  // move only channel b
+        drive_multi(4, 1, 1, 1, 24);  // move only channel a
+        drive_multi(6, 1, 1, 1, 32);  // change the shared top, compares held
+        drive_multi(0, 1, 2, 3, 16);  // degenerate top
+        drive_multi(5, 5, 0, 3, 32);
+        `REQUIRE(multi_cycles_checked > 250);
+        begin : cov_multi_check
+            integer chan;
+            for (chan = 0; chan < NCHAN; chan = chan + 1) begin
+                `REQUIRE(cov_multi_toggle[chan] > 30);
+            end
+        end
+
+        // A mid-period compare write must stay invisible on the output until the reload instant.
+        check_shadow_holds_output(2, 6);  // a latched mid-range duty must not jump to the new value
+        check_shadow_holds_output(6, 1);  // nor to a lower one
+        check_shadow_holds_output(8, 2);  // a latched forced-high duty (compare == top) must not drop
+        check_shadow_holds_output(0, 4);  // a latched forced-low duty (compare == 0) must not rise
+        check_shadow_holds_output_on_top_change(8, 4);  // a new top must not disturb a channel at 100% duty either
+
+        // Reset must clear every channel, not just channel 0.
+        drive_multi(4, 1, 3, 4, 8);
+        `REQUIRE(out_multi[NCHAN-1] === 1'b1);  // the top channel sits at the top, hence high, going in
+        rst = 1;
+        repeat (2) @(negedge clk);
+        `REQUIRE(out_multi === {NCHAN{1'b0}});
 
         $finish;
     end
